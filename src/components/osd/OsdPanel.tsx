@@ -38,7 +38,7 @@ export function OsdPanel({
 
   return (
     <div
-      className={`border border-white/12 bg-[#131312]/95 font-mono text-[12px] leading-none text-[#ECECE7] shadow-[0_24px_70px_-28px_rgba(0,0,0,0.55)] ${className}`}
+      className={`border border-white/12 bg-[#131312]/95 font-mono text-[12px] leading-none text-[#ECECE7] shadow-[0_0_0_1px_rgba(255,255,255,0.03),0_28px_80px_-28px_rgba(0,0,0,0.7)] ${className}`}
     >
       <div className="flex items-center justify-between border-b border-white/12 px-3.5 py-2.5">
         <span className="text-[11px] tracking-[0.2em] uppercase text-white/90">

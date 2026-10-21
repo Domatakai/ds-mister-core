@@ -62,7 +62,7 @@ export function DsScreen({
     >
       <div className="absolute inset-0 bg-[linear-gradient(to_bottom,#101010,#0a0a0a)]" />
       <div className="absolute inset-x-0 bottom-0 h-[46%] overflow-hidden">
-        <div className="dualis-floor absolute inset-x-[-60%] bottom-0 h-[300%] motion-safe:dualis-floor-anim" />
+        <div className="ndsm-floor absolute inset-x-[-60%] bottom-0 h-[300%] motion-safe:ndsm-floor-anim" />
       </div>
       <div className="absolute inset-x-0 top-[22%] flex flex-col items-center gap-1.5 px-4 text-center">
         {rom ? (
@@ -101,7 +101,7 @@ export function DsScreen({
       scanlines={scanlines}
       dimmed={osdOpen}
     >
-      <div className="dualis-dots absolute inset-0 bg-[#0b0b0a]" />
+      <div className="ndsm-dots absolute inset-0 bg-[#0b0b0a]" />
       <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
         <span className="text-[9px] tracking-[0.28em] text-white/25">TOUCH INPUT</span>
         <div className="flex gap-2 font-mono text-[9px] tracking-[0.14em] text-white/35">
@@ -213,6 +213,7 @@ function ScreenFrame({
             aria-hidden
           />
         )}
+        <div className="ndsm-vignette pointer-events-none absolute inset-0" aria-hidden />
       </div>
       <figcaption className="mt-1.5 font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground/70">
         {label}

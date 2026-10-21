@@ -3,6 +3,7 @@ import { OsdPanel } from "@/components/osd/OsdPanel";
 import { useAuth } from "@/hooks/use-auth";
 import {
   OSD_ROOT,
+  ROMS,
   activeCheats,
   defaultValues,
   loadedRom,
@@ -26,7 +27,7 @@ interface LogEntry {
   text: string;
 }
 
-const STORAGE_KEY = "dualis-osd-profile-v1";
+const STORAGE_KEY = "nds-mister-test-osd-profile-v1";
 
 const IDLE_STATUS = "↑↓ rows · ←→ values · OK open · ESC back";
 
@@ -128,6 +129,19 @@ export default function Dashboard() {
     const options = child.options;
     const current = options.indexOf(values[child.id] ?? options[0]);
     const next = options[(current + dir + options.length) % options.length];
+    if (child.id === "cart.rom" && next !== "— EMPTY —") {
+      setValues((prev) => ({ ...prev, [child.id]: next }));
+      const cart = ROMS.find((r) => r.title === next);
+      if (cart) {
+        const region = values["bios.region"] ?? "Auto";
+        pushLog(
+          region === "Auto"
+            ? `${cart.title} (${cart.region}) booted — region lock: none`
+            : `${cart.title} (${cart.region}) booted on ${region} region`,
+        );
+      }
+      return;
+    }
     setRowValue(child.id, next, child.label);
   };
 
@@ -269,8 +283,8 @@ export default function Dashboard() {
       <header className="sticky top-0 z-40 border-b border-border/80 bg-background/85 backdrop-blur-md">
         <div className="mx-auto flex h-14 w-full max-w-[1180px] items-center justify-between px-6 lg:px-10">
           <div className="flex items-baseline gap-3">
-            <Link to="/" className="text-[13px] font-semibold tracking-[0.22em] uppercase">
-              Dualis
+            <Link to="/" className="text-[14px] font-semibold tracking-[0.03em]">
+              NDS MiSTer Test
             </Link>
             <span className="label-mono text-muted-foreground">OSD Lab</span>
           </div>
@@ -301,8 +315,8 @@ export default function Dashboard() {
           <p className="mt-4 max-w-2xl text-[15px] leading-7 text-muted-foreground">
             Every control the core exposes — cartridge, video, audio, BIOS, input,
             emulation, cheats and diagnostics — running against a simulated video
-            output. Choices persist to a local profile, exactly as the core
-            persists them to the SD card.
+            output. Load any game from any region; choices persist to a local
+            profile exactly as the core persists them to the SD card.
           </p>
         </div>
 
@@ -366,7 +380,7 @@ export default function Dashboard() {
                   ["Cartridge", rom ? rom.title : "— empty —"],
                   ["Save type", values["cart.savetype"] ?? "Auto"],
                   ["Output", `${values["video.layout"] ?? "Auto"} · ${values["video.rotation"] ?? "0°"}`],
-                  ["Region", values["bios.region"] ?? "Auto"],
+                  ["Region lock", values["bios.region"] === "Auto" ? "none — auto" : `${values["bios.region"]} locked`],
                   ["Core speed", speed],
                   ["Cheats", cheatsOn > 0 ? `${cheatsOn} active` : "none"],
                   ["Measured", `${fps.toFixed(2)} fps`],
@@ -411,9 +425,11 @@ export default function Dashboard() {
             <section className="border border-border p-5">
               <h2 className="label-mono text-muted-foreground">About this lab</h2>
               <p className="mt-3 text-[13px] leading-6 text-muted-foreground">
-                A faithful front-end simulation: the same row order, value cycles
-                and status line the core draws over HDMI. No ROM images are
-                executed — video output is an abstract stand-in.
+                A faithful simulation of the shipping core: the same row order,
+                value cycles and status line it draws over HDMI. Cartridges here
+                span NTSC-U, NTSC-J and PAL — every one boots without a region
+                lock. No ROM images are executed; video output is an abstract
+                stand-in.
               </p>
             </section>
           </aside>

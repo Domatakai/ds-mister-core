@@ -1,5 +1,5 @@
 /**
- * Menu model for the Dualis OSD.
+ * Menu model for the NDS MiSTer Test OSD.
  *
  * Mirrors the structure the core exposes on real hardware: a numbered root
  * menu of groups, each group holding cyclical value rows, on/off toggles,
@@ -36,7 +36,7 @@ export type OsdSubmenu = Extract<OsdNode, { kind: "submenu" }>;
 export const OSD_ROOT: OsdSubmenu = {
   id: "root",
   kind: "submenu",
-  label: "Dualis NDS",
+  label: "NDS MiSTer Test",
   children: [
     {
       id: "cart",

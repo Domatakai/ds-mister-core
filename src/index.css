@@ -144,7 +144,7 @@
 }
 
 /* Wireframe floor used inside the simulated DS top screen. */
-.dualis-floor {
+.ndsm-floor {
   background-image: repeating-linear-gradient(
       to bottom,
       rgba(255, 255, 255, 0.16) 0 1px,
@@ -159,11 +159,11 @@
   transform-origin: bottom center;
 }
 
-.dualis-floor-anim {
-  animation: dualis-floor-scroll 5.5s linear infinite;
+.ndsm-floor-anim {
+  animation: ndsm-floor-scroll 5.5s linear infinite;
 }
 
-@keyframes dualis-floor-scroll {
+@keyframes ndsm-floor-scroll {
   from {
     background-position: 0 0, 0 0;
   }
@@ -172,7 +172,7 @@
   }
 }
 
-.dualis-dots {
+.ndsm-dots {
   background-image: radial-gradient(
     rgba(255, 255, 255, 0.13) 0.5px,
     transparent 0.5px
@@ -181,7 +181,17 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .dualis-floor-anim {
+  .ndsm-floor-anim {
     animation: none;
   }
+}
+
+/* Soft vignette over the simulated screens — keeps the dark surfaces feeling
+   like a lit display rather than a flat rectangle. */
+.ndsm-vignette {
+  background: radial-gradient(
+    ellipse at center,
+    transparent 52%,
+    rgba(0, 0, 0, 0.5) 100%
+  );
 }

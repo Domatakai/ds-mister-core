@@ -15,12 +15,12 @@ const NAV_LINKS = [
 ];
 
 const SPECS = [
-  ["ARM946E-S", "67.02 MHz"],
-  ["ARM7TDMI", "33.51 MHz"],
-  ["Displays", "2 × 256 × 192"],
-  ["3D engine", "6144 verts / frame"],
-  ["Audio", "16-channel SPU"],
-  ["Output", "HDMI · 59.826 Hz"],
+  ["Frame rate", "59.826 Hz locked"],
+  ["Input latency", "Sub-frame"],
+  ["Dropped frames", "Zero"],
+  ["Region lock", "None — U, J, PAL"],
+  ["CPUs", "ARM9 + ARM7, cycle-timed"],
+  ["Output", "HDMI · integer scaling"],
 ];
 
 type Mark = "●" | "◐" | "○" | "—";
@@ -39,6 +39,7 @@ const PARITY: { group: string; rows: [string, Mark, Mark, string][] }[] = [
       ["2D engines A/B — text, affine, extended", "●", "●", "Complete"],
       ["3D geometry + rasterizer, toon & fog", "●", "◐", "In progress"],
       ["Capture unit, blending, mosaic", "●", "●", "In progress"],
+      ["Locked frame pacing, no dropped frames", "◐", "◐", "Complete"],
       ["Rotation, screen swap, per-game aspect", "●", "●", "Complete"],
     ],
   },
@@ -53,6 +54,7 @@ const PARITY: { group: string; rows: [string, Mark, Mark, string][] }[] = [
   {
     group: "Media & saves",
     rows: [
+      ["Region-free boot — NTSC-U, NTSC-J, PAL carts", "●", "●", "Complete"],
       ["Save types — EEPROM, FLASH, FRAM, NAND", "●", "●", "Complete"],
       ["Slot-2 — GBA carts, DLDI, RTC", "●", "◐", "Planned"],
       ["HLE BIOS and user-supplied BIOS boot", "●", "●", "Complete"],
@@ -93,7 +95,7 @@ const ARCHITECTURE: [string, string, string][] = [
 ];
 
 const ROADMAP: [string, string, string, "Complete" | "In progress" | "Next" | "Planned"][] = [
-  ["M1", "Skeleton & boot", "ARM7/ARM9, IPC, HLE BIOS, main RAM, booting a .nds from SD.", "Complete"],
+  ["M1", "Skeleton & boot", "ARM7/ARM9, IPC, HLE BIOS, main RAM, region-free boot from SD.", "Complete"],
   ["M2", "2D pipeline", "Engines A/B, VRAM banking, DMA, HDMI output with rotation.", "Complete"],
   ["M3", "3D pipeline", "Geometry engine, rasterizer, capture unit, held at 59.826 Hz.", "In progress"],
   ["M4", "Media & saves", "Save-type autodetection, save states to SD, Slot-2 and DLDI.", "Next"],
@@ -186,11 +188,11 @@ export default function Landing() {
       <header className="fixed inset-x-0 top-0 z-50 border-b border-border/80 bg-background/85 backdrop-blur-md">
         <div className="mx-auto flex h-14 w-full max-w-[1180px] items-center justify-between px-6 lg:px-10">
           <a href="#top" className="flex items-baseline gap-3">
-            <span className="text-[13px] font-semibold tracking-[0.22em] uppercase">
-              Dualis
+            <span className="text-[14px] font-semibold tracking-[0.03em]">
+              NDS MiSTer Test
             </span>
             <span className="label-mono hidden text-muted-foreground sm:inline">
-              NDS · MiSTer FPGA
+              Open-source core
             </span>
           </a>
           <nav className="hidden items-center gap-7 md:flex">
@@ -219,26 +221,27 @@ export default function Landing() {
           <div className="lg:col-span-7">
             <Reveal>
               <p className="label-mono text-muted-foreground">
-                Open-source core · v0.6.0-alpha · WIP
+                Open-source core · Region-free · v0.6.0-alpha
               </p>
             </Reveal>
             <Reveal delay={0.06}>
               <h1 className="mt-7 text-[46px] font-medium leading-[0.98] tracking-[-0.035em] sm:text-[62px] lg:text-[76px]">
-                A complete
+                Every cartridge.
                 <br />
-                Nintendo DS,
+                Every region.
                 <br />
-                <span className="text-muted-foreground">in programmable logic.</span>
+                <span className="text-muted-foreground">No stutter.</span>
               </h1>
             </Reveal>
             <Reveal delay={0.12}>
               <p className="mt-8 max-w-xl text-[16px] leading-8 text-muted-foreground">
-                Dualis is a Nintendo DS core for the MiSTer FPGA platform. Two ARM
-                CPUs, two 2D engines, a 3D rasterizer and dual 256×192 screens —
-                rebuilt cycle-by-cycle to the accuracy bar set by{" "}
+                NDS MiSTer Test is a Nintendo DS core for the MiSTer FPGA
+                platform. NTSC-U, NTSC-J and PAL carts all boot with no region
+                lock, held at the console&apos;s native 59.826 Hz with sub-frame
+                input latency and zero dropped frames. The accuracy bar is set by{" "}
                 <span className="text-foreground">melonDS</span> and{" "}
-                <span className="text-foreground">DeSmuME</span>, with a full OSD
-                menu for everything the emulators put in their front-ends.
+                <span className="text-foreground">DeSmuME</span>; the OSD menu
+                carries over everything their front-ends offer.
               </p>
             </Reveal>
             <Reveal delay={0.18}>
@@ -265,13 +268,14 @@ export default function Landing() {
           <Reveal className="lg:col-span-5" delay={0.15}>
             <div className="relative border border-border bg-[#141413] p-5">
               <div className="relative overflow-hidden border border-white/10 bg-[#0b0b0a]">
-                <div className="dualis-floor motion-safe:dualis-floor-anim absolute inset-x-[-60%] bottom-0 h-[300%] opacity-70" />
+                <div className="ndsm-floor motion-safe:ndsm-floor-anim absolute inset-x-[-60%] bottom-0 h-[300%] opacity-70" />
+                <div className="ndsm-vignette pointer-events-none absolute inset-0" aria-hidden />
                 <div className="absolute inset-x-0 top-[26%] text-center font-mono text-[10px] tracking-[0.28em] text-white/30">
                   NO CARTRIDGE
                 </div>
                 <OsdPanel
                   className="relative mx-auto my-6 w-[86%] max-w-[330px]"
-                  title="Dualis NDS"
+                  title="NDS MiSTer Test"
                   rows={HERO_PREVIEW}
                   activeIndex={1}
                   statusLine="F12 opens the menu over video output"
@@ -329,7 +333,7 @@ export default function Landing() {
                       DeSmuME
                     </th>
                     <th className="label-mono w-[30%] py-3 font-normal text-muted-foreground">
-                      Dualis
+                      NDS MiSTer Test
                     </th>
                   </tr>
                 </thead>
@@ -432,10 +436,12 @@ export default function Landing() {
                   <p className="label-mono text-muted-foreground">Profiles</p>
                   <p className="mt-3 text-[13.5px] leading-7 text-muted-foreground">
                     Each menu group writes to a per-game profile stored beside the
-                    ROM. Load <span className="font-mono text-foreground">metroid
-                    prime hunters.nds</span> and the core restores its rotation,
+                    ROM. Load a game and the core restores its rotation,
                     brightness and volume before the first frame — the same
-                    muscle memory melonDS users already have.
+                    muscle memory <span className="font-mono text-foreground">melonDS</span> users
+                    already have. Profiles are plain files: copy them between your
+                    own MiSTer and a public machine, or lock one down so an
+                    exhibition cabinet never drifts from its setup.
                   </p>
                 </div>
               </div>
@@ -472,7 +478,7 @@ export default function Landing() {
             </div>
           </Reveal>
           <Reveal delay={0.1}>
-            <div className="mt-10 grid gap-8 sm:grid-cols-2">
+            <div className="mt-10 grid gap-8 sm:grid-cols-3">
               <div className="border-l-2 border-foreground pl-6">
                 <p className="label-mono">In the fabric</p>
                 <p className="mt-3 text-[14px] leading-7 text-muted-foreground">
@@ -488,6 +494,15 @@ export default function Landing() {
                   the file browser, save read/write, cheat tables, settings profiles
                   and the OSD itself — reachable over SSH, scriptable like the rest
                   of MiSTer.
+                </p>
+              </div>
+              <div className="border-l-2 border-border pl-6">
+                <p className="label-mono text-muted-foreground">In the field</p>
+                <p className="mt-3 text-[14px] leading-7 text-muted-foreground">
+                  At home it behaves like a console — instant boot, save states,
+                  rewind, a profile per game. In a bar, an arcade or an exhibition,
+                  kiosk mode pins the menu, boots straight into the last cartridge,
+                  and picks itself up after the power is cut mid-save.
                 </p>
               </div>
             </div>
@@ -545,11 +560,11 @@ export default function Landing() {
           <div className="mt-12 grid gap-10 lg:grid-cols-12 lg:gap-10">
             <Reveal className="lg:col-span-7">
               <pre className="overflow-x-auto border border-border bg-[#141413] p-6 font-mono text-[12.5px] leading-7 text-[#d6d6cf]">
-{`git clone https://github.com/dualis-nds/core.git
-cd dualis-core
-./build.sh                       # Quartus Prime Standard 23.1
+{`git clone https://github.com/ndsmister/core.git
+cd core
+./build.sh                        # Quartus Prime Standard 23.1
 
-cp output/dualis.rbf  /media/fat/games/NDS/
+cp output/nds-mister-test.rbf  /media/fat/games/NDS/
 cp bios7.bin bios9.bin /media/fat/BIOS/   # optional`}
               </pre>
             </Reveal>
@@ -606,7 +621,7 @@ cp bios7.bin bios9.bin /media/fat/BIOS/   # optional`}
       <footer>
         <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-6 px-6 py-10 lg:flex-row lg:items-center lg:justify-between lg:px-10">
           <p className="label-mono text-muted-foreground">
-            Dualis · 2026 · Community preservation project
+            NDS MiSTer Test · 2026 · Community preservation project
           </p>
           <nav className="flex flex-wrap gap-x-7 gap-y-3">
             {[
@@ -631,7 +646,7 @@ cp bios7.bin bios9.bin /media/fat/BIOS/   # optional`}
           <p className="mx-auto w-full max-w-[1180px] px-6 py-6 font-mono text-[10.5px] leading-5 tracking-[0.04em] text-muted-foreground/70 lg:px-10">
             Nintendo, Nintendo DS and the DS logo are trademarks of Nintendo Co.,
             Ltd. melonDS and DeSmuME are trademarks of their respective authors.
-            Dualis is unaffiliated and runs no copyrighted ROM images.
+            NDS MiSTer Test is unaffiliated and runs no copyrighted ROM images.
           </p>
         </div>
       </footer>

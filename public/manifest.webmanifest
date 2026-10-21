@@ -1,7 +1,7 @@
 {
-  "name": "freebuff.com application",
-  "short_name": "freebuff.com",
-  "description": "freebuff.com application",
+  "name": "NDS MiSTer Test",
+  "short_name": "NDS MiSTer Test",
+  "description": "Nintendo DS core for MiSTer FPGA — every game, every region, zero stutter.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
