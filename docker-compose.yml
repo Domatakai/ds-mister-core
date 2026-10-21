@@ -1,0 +1,36 @@
+# ──────────────────────────────────────────────────────────────────────
+# OmniRoute gateway — local AI gateway for NDS MiSTer Test
+# ──────────────────────────────────────────────────────────────────────
+#
+# Start:  docker compose up -d
+# Stop:   docker compose down
+# Logs:   docker compose logs -f omniroute
+#
+# The app connects to it through the Convex actions in
+# src/convex/omniroute.ts, which read OMNIROUTE_BASE_URL / OMNIROUTE_API_KEY
+# / OMNIROUTE_MODEL from the deployment environment (set them in the Freebuff
+# Keys tab). Defaults line up with this file: http://localhost:20128.
+#
+# Security notes (mirroring OmniRoute's own compose defaults):
+#   - The port is bound to 127.0.0.1 only. To serve other machines — e.g. a
+#     MiSTer on the LAN or a VPS install — change the binding to
+#     "0.0.0.0:20128:20128" AND set REQUIRE_API_KEY=true in the gateway's
+#     .env first, so the anonymous /v1 proxy is never exposed.
+#   - Provider credentials live in the gateway's own .env (copy
+#     .env.example from the OmniRoute repo); none are stored in this project.
+# ──────────────────────────────────────────────────────────────────────
+
+services:
+  omniroute:
+    image: diegosouzapw/omniroute:latest
+    container_name: nds-mister-test-omniroute
+    restart: unless-stopped
+    stop_grace_period: 40s
+    ports:
+      - "127.0.0.1:20128:20128"
+    volumes:
+      - ./omniroute-data:/app/data
+    environment:
+      - DATA_DIR=/app/data
+      - PORT=20128
+      - DASHBOARD_PORT=20128
