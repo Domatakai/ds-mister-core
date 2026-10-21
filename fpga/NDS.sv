@@ -19,6 +19,7 @@
 //   [14:13] scanlines        (VGA_SL 0..3)
 //   [15]    swap screens
 //   [18:16] brightness       (1..5)
+//   [53:52] refresh rate     (Native 59.82 / 59.95 / 60.00)
 //   [22:19] master volume    (0%..100%)
 //   [24:23] output mix       (Stereo/Mono/Headphones)
 //   [26:25] I2S latency      (1/2/4 frames)
@@ -84,6 +85,7 @@ localparam CONF_STR = {
 "P2O[14:13],Scanlines,Off,Soft,Medium,Hard;",
 "P2O[15],Swap screens,Off,On;",
 "P2O[18:16],Brightness,1,2,3,4,5;",
+"P2O[53:52],Refresh rate,Native 59.82,59.95,60.00;",
 "-;",
 "P3,Audio;",
 "P3O[22:19],Master volume,0%,10%,20%,30%,40%,50%,60%,70%,80%,90%,100%;",
@@ -192,6 +194,7 @@ wire  [2:0] aspect        = status[12:10];
 wire  [1:0] scanlines     = status[14:13];
 wire        swap_screens  = status[15];
 wire  [2:0] brightness    = status[18:16];
+wire  [1:0] refresh       = status[53:52];
 wire  [3:0] volume        = status[22:19];
 wire  [1:0] mix_mode      = status[24:23];
 wire  [1:0] i2s_latency   = status[26:25];
@@ -240,21 +243,26 @@ wire reset = reset_pending;
 
 //------------------------------------------------------------------
 // Video path: fixed 256x384 stacked frame (top screen above bottom).
-// 12.5 MHz CE, H_TOTAL 320, V_TOTAL 653  ->  59.8201 Hz (DS native is
-// 59.8261 Hz — within one frame every 16 minutes).
+// 12.5 MHz CE; the OSD "Refresh rate" option picks the frame totals:
+//   Native  320 x 653 -> 59.8201 Hz  (DS native is 59.8261 Hz)
+//   59.95   332 x 628 -> 59.9532 Hz
+//   60.00   320 x 651 -> 60.0038 Hz
 //------------------------------------------------------------------
+wire  [8:0] h_total = (refresh == 2'd1) ? 9'd332 : 9'd320;
+wire  [9:0] v_total = (refresh == 2'd1) ? 10'd628 :
+                      (refresh == 2'd2) ? 10'd651 : 10'd653;
+
 wire  [8:0] pix_x, pix_y;
 wire        pix_de, pix_hs, pix_vs;
 wire [15:0] pix_out;
 
-video_timing #(
-	.H_ACTIVE(256), .H_FRONT(8), .H_SYNC(32), .H_BACK(24),   // H_TOTAL 320
-	.V_ACTIVE(384), .V_FRONT(24), .V_SYNC(4),  .V_BACK(241)   // V_TOTAL 653
-) video_timing (
+video_timing video_timing (
 	.clk(clk_sys),
 	.ce(1'b1),
 	.pixel_ce(clk_pix_ce),
 	.reset(reset),
+	.h_total(h_total),
+	.v_total(v_total),
 	.x(pix_x),
 	.y(pix_y),
 	.de(pix_de),

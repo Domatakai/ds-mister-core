@@ -27,7 +27,8 @@ fpga/
   NDS.sdc                 timing constraints
   files.qip               source list — add new files HERE, never in the IDE
   rtl/
-    video/video_timing.sv     256x384 frame timing, 59.8201 Hz  [SIM-VERIFIED]
+    video/video_timing.sv     256x384 frame timing; selectable
+                              59.82 / 59.95 / 60.00 Hz      [SIM-VERIFIED]
     video/screen_composer.sv  dual-screen placement, rotation,
                               swap, brightness            [SIM-VERIFIED]
     video/engine_a.sv         2D engine A (top screen) — stub, boot pattern
@@ -68,8 +69,9 @@ put `bios7.bin` + `bios9.bin` in `/media/fat/BIOS/` and set
 cd fpga
 iverilog -g2012 -o /tmp/tb_vt tb/tb_video_timing.sv rtl/video/video_timing.sv
 vvp /tmp/tb_vt
-# tb_video_timing: refresh = 59.8201 Hz
-# tb_video_timing: active pixels/frame = 98304 (expect 98304)
+# tb_video_timing: native   320x653 -> 59.8201 Hz, 98304 active px
+# tb_video_timing: 59.95    332x628 -> 59.9532 Hz, 98304 active px
+# tb_video_timing: 60.00    320x651 -> 60.0038 Hz, 98304 active px
 # tb_video_timing: PASS
 
 iverilog -g2012 -o /tmp/tb_sc tb/tb_composer.sv \
@@ -83,8 +85,9 @@ vvp /tmp/tb_sc
 
 Drawn by the framework from `CONF_STR` in `NDS.sv`; values arrive in the
 128-bit `status` word. Groups: **Cartridge** (load `.nds`, save type,
-erase), **Video** (layout, rotation, aspect, scanlines, swap, brightness),
-**Audio** (volume, mix, I2S latency, SPU sync), **BIOS & Input** (HLE vs
+erase), **Video** (layout, rotation, aspect, scanlines, swap, brightness,
+refresh rate: Native 59.82 / 59.95 / 60.00), **Audio** (volume, mix,
+I2S latency, SPU sync), **BIOS & Input** (HLE vs
 real BIOS, firmware, region, stylus, mic, rumble, pad profile),
 **Emulation** (speed, frameskip, rewind), **Diagnostics** (FPS, frame
 graph, bus LEDs, log level), cheat file load (`F2,.CHT`), soft reset and
@@ -104,5 +107,6 @@ diagnostics overlay only — NTSC-U, NTSC-J and PAL carts all boot.
 | M5 | Microphone, rumble, local DS-to-DS wireless | planned |
 | M6 | Save states via DDR3, cheat engine, replay, OSD polish | planned |
 
-The video timing (59.8201 Hz measured, native 59.8261 Hz) and the OSD
-menu are already final; everything else fills in behind them.
+The OSD menu and all three refresh modes (59.82 / 59.95 / 60.00 Hz,
+simulation-verified) are already final; everything else fills in
+behind them.

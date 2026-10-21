@@ -1,31 +1,32 @@
 //============================================================================
 // NDS MiSTer Test — video timing generator
 //
-// Produces the scan structure for the composed frame. The default
-// parameters give a 256x384 frame (top screen stacked over bottom) with
-// an active picture rate of 59.8269 Hz from a 12.5 MHz pixel CE — the
-// Nintendo DS refreshes at 59.8261 Hz, so drift is one frame per ~16 min.
+// Produces the scan structure for the composed 256x384 frame (top screen
+// stacked over bottom). The 12.5 MHz pixel CE is derived from the 50 MHz
+// clock (removed with the PLL in M3, which will also add the
+// 67.02/33.51 MHz CPU clocks).
 //
-//   H_TOTAL = 256 + 8 + 32 + 24  = 320
-//   V_TOTAL = 384 + 24 + 4 + 241  = 653
-//   rate    = 12.5e6 / (320 * 653) = 59.8201 Hz
+// The OSD "Refresh rate" option selects one of three modes by changing
+// the frame totals; the active area stays 256x384 in all of them:
 //
-// The 12.5 MHz CE itself is produced here (clk_sys / 4) until the PLL
-// lands in M3, which will also provide the 67.02/33.51 MHz CPU clocks.
+//   mode    H_TOTAL  V_TOTAL  rate (12.5e6 / (H*V))   error vs target
+//   native    320      653    59.8201 Hz (DS 59.8261)  -100 ppm
+//   59.95     332      628    59.9532 Hz               +53 ppm
+//   60.00     320      651    60.0038 Hz               +63 ppm
+//
+// H_FRONT/H_SYNC and V_FRONT/V_SYNC stay fixed across modes; the tail of
+// each blanking interval absorbs the difference, so sync polarity and
+// width never change and the HDMI scaler re-locks cleanly.
 //============================================================================
-module video_timing #(
-	parameter H_ACTIVE = 256,
-	parameter H_FRONT  = 8,
-	parameter H_SYNC   = 32,
-	parameter H_BACK   = 24,
-	parameter V_ACTIVE = 384,
-	parameter V_FRONT  = 24,
-	parameter V_SYNC   = 4,	parameter V_BACK  = 241
-) (
+module video_timing (
 	input            clk,
 	input            ce,       // optional external enable on the CE divider
 	output           pixel_ce, // derived 12.5 MHz pixel enable
 	input            reset,
+
+	input      [8:0] h_total,  // OSD-selected line length
+	input     [9:0]  v_total,  // OSD-selected frame height (incl. blanking)
+
 	output reg [8:0] x,
 	output reg [8:0] y,
 	output reg       de,
@@ -34,8 +35,12 @@ module video_timing #(
 	output           frame_start
 );
 
-localparam H_TOTAL = H_ACTIVE + H_FRONT + H_SYNC + H_BACK;
-localparam V_TOTAL = V_ACTIVE + V_FRONT + V_SYNC + V_BACK;
+localparam H_ACTIVE = 256;
+localparam H_FRONT  = 8;
+localparam H_SYNC   = 32;
+localparam V_ACTIVE = 384;
+localparam V_FRONT  = 24;
+localparam V_SYNC   = 4;
 
 // Derive the 12.5 MHz pixel CE from a 50 MHz clock while the core still
 // runs on a single domain. Removed with the PLL in M3.
@@ -55,9 +60,9 @@ always @(posedge clk) begin
 		h_cnt <= 0;
 		v_cnt <= 0;
 	end else if (pix_ce) begin
-		if (h_cnt == H_TOTAL - 1) begin
+		if (h_cnt == h_total - 1'd1) begin
 			h_cnt <= 0;
-			v_cnt <= (v_cnt == V_TOTAL - 1) ? 10'd0 : v_cnt + 1'd1;
+			v_cnt <= (v_cnt == v_total - 1'd1) ? 10'd0 : v_cnt + 1'd1;
 		end else begin
 			h_cnt <= h_cnt + 1'd1;
 		end
@@ -84,7 +89,7 @@ always @(posedge clk) begin
 end
 
 // First active pixel of a frame — resets the CPU pipeline and paces the
-// SPU mix at the DS's native frame rate.
+// SPU mix at the frame rate.
 assign frame_start = pix_ce && (h_cnt == 0) && (v_cnt == 0);
 
 endmodule
