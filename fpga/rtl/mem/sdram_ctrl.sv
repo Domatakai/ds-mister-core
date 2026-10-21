@@ -134,7 +134,7 @@ always @(posedge clk) begin
 	end
 	S_ACT: begin
 		// ACTIVE: nRAS low only, then honour tRCD before read/write
-		op <= OP_ACT; ba <= a_lat[10:9]; a <= a_lat[24:11];
+		op <= OP_ACT; ba <= a_lat[10:9]; a <= a_lat[23:11];
 		wait_cnt <= 3'd2;
 		state <= S_RCD;
 	end

@@ -41,6 +41,10 @@
 //   [48]    frame graph
 //   [49]    bus activity LEDs
 //   [51:50] log level
+//   [55:54] stylus tap button(L2/R2/L3/R3)
+//   [56]    face buttons     (standard / swapped)
+//   [57]    shoulders        (normal / swapped)
+//   [59:58] CPU overclock    (Normal / ARM7 x2 / ARM7 x4)
 //============================================================================
 module emu
 (
@@ -52,7 +56,7 @@ assign ADC_BUS = 'Z;
 assign USER_OUT = '1;
 assign {UART_RTS, UART_TXD, UART_DTR} = 0;
 assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
-assign {DDRAM_CLK, DDRAM_BURSTCNT, DDRAM_ADDR, DDRAM_DIN, DDRAM_BE, DDRAM_RD, DDRAM_WE} = '0;
+// DDRAM is driven by the cart slot (ROM image in DDR3)
 assign VGA_DISABLE = 0;
 assign HDMI_FREEZE = 0;
 assign HDMI_BLACKOUT = 0;
@@ -99,13 +103,17 @@ localparam CONF_STR = {
 "P4O[30],Skip intro logo,Off,On;",
 "P4O[32:31],Region,Auto,NTSC-U,NTSC-J,PAL;",
 "P4-,",
-"P4O[34:33],Stylus mode,D-pad,Touch pad,Off;",
+"P4O[34:33],Stylus cursor,Off,D-pad,Left stick;",
+"P4O[55:54],Stylus tap,L2,R2,L3,R3;",
+"P4O[56],Face buttons,Standard,Swapped;",
+"P4O[57],Shoulders,Normal,Swapped;",
 "P4O[36:35],Microphone,Off,Button,Host device;",
 "P4O[37],Rumble pak,Off,On;",
 "P4O[39:38],Pad profile,Default,Left-hand,Arcade stick;",
 "-;",
 "P5,Emulation;",
 "P5O[41:40],Core speed,100%,150%,200%,Max;",
+"P5O[59:58],CPU overclock,Normal,ARM7 x2,ARM7 x4;",
 "P5O[43:42],Frameskip,Off,1,2,3;",
 "P5O[44],Auto frameskip,Off,On;",
 "P5O[46:45],Rewind buffer,Off,5 s,15 s,30 s;",
@@ -139,7 +147,7 @@ wire  [26:0] ioctl_addr;
 wire  [15:0] ioctl_dout;
 wire         ioctl_wr;
 wire  [15:0] ioctl_index;
-wire   [3:0] sd_rd, sd_wr;
+wire   [0:0] sd_rd, sd_wr;
 wire  [31:0] sd_lba [1];
 wire   [5:0] sd_blk_cnt [1];
 wire  [15:0] sd_buff_dout;
@@ -149,6 +157,8 @@ wire  [15:0] sd_buff_din [1];
 wire   [0:0] sd_ack;
 wire   [0:0] img_mounted;
 wire  [63:0] img_size;
+wire         ioctl_wait;   // cart slot backpressure -> HPS
+wire  [15:0] stick0;       // left analog stick (stylus cursor mode)
 
 assign sd_blk_cnt[0] = 0; // single 512-byte block per request
 
@@ -161,17 +171,21 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1), .VDNUM(1)) hps_io
 	.forced_scandoubler(forced_scandoubler),
 	.buttons(buttons),
 	.status(status),
+	.status_menumask(16'd0), // no conditional menu entries yet (H0/d0)
 	.ps2_key(ps2_key),
 	.joystick_0(joystick_0),
 	.joystick_1(joystick_1),
+	.joystick_l_analog_0(stick0),
 	.ioctl_download(ioctl_download),
 	.ioctl_addr(ioctl_addr),
 	.ioctl_dout(ioctl_dout),
 	.ioctl_wr(ioctl_wr),
 	.ioctl_index(ioctl_index),
+	.ioctl_wait(ioctl_wait),
 	.sd_rd(sd_rd),
 	.sd_wr(sd_wr),
 	.sd_lba(sd_lba),
+	.sd_blk_cnt(sd_blk_cnt),
 	.sd_buff_dout(sd_buff_dout),
 	.sd_buff_addr(sd_buff_addr),
 	.sd_buff_wr(sd_buff_wr),
@@ -215,6 +229,10 @@ wire        show_fps      = status[47];
 wire        frame_graph   = status[48];
 wire        bus_leds      = status[49];
 wire  [1:0] log_level     = status[51:50];
+wire  [1:0] tap_sel       = status[55:54];
+wire        face_swap     = status[56];
+wire        shoulder_swap = status[57];
+wire  [1:0] oc_mode       = status[59:58];
 
 //------------------------------------------------------------------
 // Clocks
@@ -321,13 +339,16 @@ assign VIDEO_ARX = (scr_layout == 3'd0) ? 13'd2 : (scr_layout == 3'd1) ? 13'd8 :
 assign VIDEO_ARY = (scr_layout == 3'd0) ? 13'd3 : (scr_layout == 3'd1) ? 13'd3 : 13'd3;
 
 //------------------------------------------------------------------
-// SDRAM: 64 MB shared by cart ROM, main RAM, save data, VRAM overflow
+// SDRAM: main RAM (4 MB), save data, palette/OAM/VRAM overflow.
+// Cart ROM lives in DDR3 (see cart slot) so 256 Mbit+ carts fit.
 //------------------------------------------------------------------
 wire [24:0] mem_addr;
 wire [15:0] mem_dout;
 wire        mem_rd, mem_wr;
 wire [15:0] mem_din;
 wire        mem_rd_done, mem_wr_done;
+
+assign mem_rd = 1'b0; // read master arrives with main RAM (M1)
 
 sdram_ctrl sdram_ctrl (
 	.clk(clk_sys),
@@ -353,9 +374,11 @@ sdram_ctrl sdram_ctrl (
 );
 
 //------------------------------------------------------------------
-// Cart slot: .nds download into SDRAM, header capture, save plumbing
+// Cart slot: .nds download into DDR3 (all cart sizes up to 4 Gbit),
+// header + capacity detection, CPU window bridge, save plumbing (M4)
 //------------------------------------------------------------------
 wire        cart_loaded;
+wire [27:0] rom_bytes;
 
 cart_slot cart_slot (
 	.clk(clk_sys),
@@ -365,13 +388,57 @@ cart_slot cart_slot (
 	.ioctl_dout(ioctl_dout),
 	.ioctl_wr(ioctl_wr),
 	.ioctl_index(ioctl_index),
+	.ioctl_wait(ioctl_wait),
+	.ddr_burstcnt(DDRAM_BURSTCNT),
+	.ddr_addr(DDRAM_ADDR),
+	.ddr_din(DDRAM_DIN),
+	.ddr_be(DDRAM_BE),
+	.ddr_we(DDRAM_WE),
+	.ddr_rd(DDRAM_RD),
+	.ddr_busy(DDRAM_BUSY),
+	.ddr_dout_ready(DDRAM_DOUT_READY),
+	.ddr_dout(DDRAM_DOUT),
+	.win_req(1'b0),          // CPU fetch path: wire to main_bus in M1
+	.win_addr(26'd0),
+	.win_valid(),
+	.win_data(),
 	.mem_addr(mem_addr),
 	.mem_din(mem_din),
 	.mem_wr(mem_wr),
 	.mem_wr_done(mem_wr_done),
 	.erase_save(erase_save),
 	.save_type(save_type),
-	.cart_loaded(cart_loaded)
+	.cart_loaded(cart_loaded),
+	.rom_bytes(rom_bytes)
+);
+
+assign DDRAM_CLK = clk_sys;
+
+//------------------------------------------------------------------
+// Input: DS keys (KEYINPUT), stylus position/press, microphone
+//------------------------------------------------------------------
+wire [11:0] ds_keys;
+wire  [8:0] touch_x;
+wire  [7:0] touch_y;
+wire        touch_down;
+wire        mic_pressed;
+
+input_mapper input_mapper (
+	.clk(clk_sys),
+	.reset(reset),
+	.joy0(joystick_0),
+	.joy1(joystick_1),
+	.stick0(stick0),
+	.stylus_cursor(stylus_mode),
+	.tap_sel(tap_sel),
+	.face_swap(face_swap),
+	.shoulder_swap(shoulder_swap),
+	.mic_source(mic_source),
+	.keys(ds_keys),
+	.touch_x(touch_x),
+	.touch_y(touch_y),
+	.touch_down(touch_down),
+	.mic_pressed(mic_pressed)
 );
 
 //------------------------------------------------------------------
@@ -380,19 +447,26 @@ cart_slot cart_slot (
 //------------------------------------------------------------------
 main_bus main_bus (
 	.clk(clk_sys),
-	.reset(reset)
+	.reset(reset),
+	.ds_keys(ds_keys),
+	.touch_x(touch_x),
+	.touch_y(touch_y),
+	.touch_down(touch_down),
+	.mic_in(mic_pressed)
 );
 
 arm9_core arm9 (
 	.clk(clk_sys),
 	.reset(reset),
-	.ce(1'b1)
+	.ce(1'b1),
+	.oc_mode(oc_mode)
 );
 
 arm7_core arm7 (
 	.clk(clk_sys),
 	.reset(reset),
-	.ce(1'b1)
+	.ce(1'b1),
+	.oc_mode(oc_mode)
 );
 
 //------------------------------------------------------------------
@@ -418,10 +492,11 @@ assign LED_USER = bus_leds ? led_cnt[22] : (ioctl_download ? led_cnt[20] : led_c
 
 // Unused-in-skeleton outputs
 wire _unused = &{1'b0, aspect, bios_real, firmware_dump, skip_logo, region,
-                 stylus_mode, mic_source, rumble, pad_profile, core_speed,
-                 frameskip, autoskip, rewind_buf, show_fps, frame_graph,
-                 log_level, i2s_latency, spu_sync, ps2_key, joystick_1,
-                 img_mounted, img_size, cart_loaded, HDMI_WIDTH, HDMI_HEIGHT,
-                 1'b0};
+                 rumble, pad_profile, core_speed, frameskip, autoskip,
+                 rewind_buf, show_fps, frame_graph, log_level, i2s_latency,
+                 spu_sync, ps2_key, img_mounted, img_size, cart_loaded,
+                 rom_bytes, mem_dout, mem_rd_done, sd_rd, sd_wr,
+                 sd_buff_dout, sd_buff_addr, sd_buff_wr, sd_ack,
+                 HDMI_WIDTH, HDMI_HEIGHT, 1'b0};
 
 endmodule

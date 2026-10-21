@@ -23,11 +23,11 @@ always_comb begin
 	if (!on) begin
 		rgb555 = 16'h0000;
 	end else if (y < 8'd16) begin
-		rgb555 = {5'd28, 5'd28, 5'd28};                 // header band
+		rgb555 = {1'b0, 5'd28, 5'd28, 5'd28};           // header band
 	end else if (y[3:0] == 0 || x[3:0] == 0) begin
-		rgb555 = {5'd8, 5'd8, 5'd10};                   // hairline grid
+		rgb555 = {1'b0, 5'd8, 5'd8, 5'd10};             // hairline grid
 	end else begin
-		rgb555 = {y[7:3], y[7:3], 5'd16};               // vertical ramp
+		rgb555 = {1'b0, y[7:3], y[7:3], 5'd16};         // vertical ramp
 	end
 end
 

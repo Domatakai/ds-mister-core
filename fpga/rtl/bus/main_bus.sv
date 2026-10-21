@@ -24,7 +24,15 @@
 //============================================================================
 module main_bus (
 	input clk,
-	input reset
+	input reset,
+
+	// input state from input_mapper — served as KEYINPUT (0x04000130,
+	// active low: 0=Pressed) and the touch/mic SPI devices in M1
+	input     [11:0] ds_keys,
+	input      [8:0] touch_x,
+	input      [7:0] touch_y,
+	input            touch_down,
+	input            mic_in
 );
 
 // 64 KB shared WRAM and 64 KB ARM7 WRAM as inferred block RAM — filled
@@ -32,6 +40,7 @@ module main_bus (
 reg [7:0] wram_shared [0:65535];
 reg [7:0] wram_arm7   [0:65535];
 
-wire _unused = &{1'b0, clk, reset, wram_shared[0], wram_arm7[0]};
+wire _unused = &{1'b0, clk, reset, ds_keys, touch_x, touch_y, touch_down,
+                 mic_in, wram_shared[0], wram_arm7[0]};
 
 endmodule

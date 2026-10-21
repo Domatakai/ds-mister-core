@@ -15,7 +15,11 @@
 module arm9_core (
 	input            clk,
 	input            reset,
-	input            ce
+	input            ce,
+	// OSD "CPU overclock": 0 normal, 1 ARM7 x2, 2 ARM7 x4 (melonDS-style
+	// headroom for demanding titles). The M3 PLL turns this into faster
+	// clock enables; the ARM9 domain stays at 67.02 MHz nominal.
+	input      [1:0] oc_mode
 );
 
 // Bus master interface (wired in M1):
@@ -23,6 +27,6 @@ module arm9_core (
 //   input  [31:0] bus_rd_data; input bus_ack;
 reg [31:0] pc = 32'hFFFF0000; // reset vector
 
-wire _unused = &{1'b0, clk, reset, ce, pc};
+wire _unused = &{1'b0, clk, reset, ce, oc_mode, pc};
 
 endmodule

@@ -1,62 +1,135 @@
 //============================================================================
-// NDS MiSTer Test — Slot-1 cartridge interface
+// NDS MiSTer Test — Slot-1 cartridge
 //
-// Responsibilities (growing through the milestones):
-//   M1  stream the .nds from the HPS into SDRAM, capture the header
-//   M4  save types (EEPROM/FLASH/FRAM/NAND) with .sav read/write,
-//       save erase, cart data reads back toward the CPUs
+// Pure DS support, region-free: any .nds boots regardless of header
+// region, and the whole ROM lives in the DE10-Nano's DDR3 so 256 Mbit
+// (32 MB) carts — and anything up to the DS's 4 Gbit maximum — fit
+// without banking tricks:
 //
-// Region policy: none. The header's game code is captured for the
-// diagnostics overlay only — every cart boots regardless of region.
+//   DDR3:  cart ROM (full image, up to 512 MB)
+//   SDRAM: main RAM, save data, palette/OAM/VRAM overflow
+//
+// The download stream is decoupled from DDR3 by a 64-line FIFO; when the
+// FIFO fills, ioctl_wait asks the HPS to pause the transfer — no bytes
+// can be lost regardless of DDR3 contention with the scaler.
+//
+// TODO(M1): prefetch FIFO on the read side to satisfy cart waitstates.
+// TODO(M4): save sector path via sd_* into SDRAM, save erase, and the
+//           cart unlock command sequence (0x00000555/0x00000AAA) that
+//           some 256 Mbit+ carts issue before large reads.
 //============================================================================
 module cart_slot (
 	input            clk,
 	input            reset,
 
-	// HPS download stream (F1 -> .nds, index 1). WIDE=1: one 16-bit
-	// word per write, ioctl_addr counts bytes and steps by 2.
+	// HPS download stream (F1 -> .nds, index 1). WIDE=1: one 16-bit word
+	// per write, ioctl_addr counts bytes and steps by 2.
 	input            ioctl_download,
 	input     [26:0] ioctl_addr,
 	input     [15:0] ioctl_dout,
 	input            ioctl_wr,
 	input     [15:0] ioctl_index,
+	output           ioctl_wait,  // -> hps_io: pause the transfer
 
-	// write port towards SDRAM (ROM window at 0x000000)
+	// DE10-Nano DDR3 (framework DDRAM interface)
+	output reg [7:0]  ddr_burstcnt,
+	output reg [28:0] ddr_addr,   // unit: 8-byte line (byte addr >> 3)
+	output reg [63:0] ddr_din,
+	output reg [7:0]  ddr_be,
+	output reg        ddr_we,
+	output reg        ddr_rd,
+	input             ddr_busy,
+	input             ddr_dout_ready,
+	input      [63:0] ddr_dout,
+
+	// CPU cart-window read port (byte offset into the ROM image)
+	input             win_req,
+	input      [25:0] win_addr,
+	output reg        win_valid,
+	output reg [15:0] win_data,
+
+	// save control (M4 implements the sd_* sector path)
+	input             erase_save,
+	input       [2:0] save_type,
+
+	// SDRAM master, reserved for save data (M4)
 	output reg [24:0] mem_addr,
 	output reg [15:0] mem_din,
 	output reg        mem_wr,
 	input             mem_wr_done,
 
-	// OSD-driven save control
-	input             erase_save,
-	input       [2:0] save_type,
-
-	output reg        cart_loaded
+	output reg        cart_loaded,
+	output reg [27:0] rom_bytes   // detected ROM size in bytes
 );
 
-localparam ROM_BASE  = 25'h000000;
 localparam SAVE_BASE = 25'h280000;
-
 wire is_rom = ioctl_index[3:0] == 4'd1;
 
 //------------------------------------------------------------------
-// In wide mode every write is a full ROM word; capture the first
-// eight words (16 header bytes: title + game code + maker code).
+// line FIFO: 16-bit words -> 64-bit DDR3 lines
 //------------------------------------------------------------------
-reg [15:0] hdr_words [7:0];
+localparam FIFO_DEPTH = 64;
+reg [63:0] fifo_data [0:FIFO_DEPTH-1];
+reg [28:0] fifo_line [0:FIFO_DEPTH-1];
+reg  [5:0] wr_ptr = 0;
+reg  [5:0] rd_ptr = 0;
+
+wire [5:0] fifo_used = wr_ptr - rd_ptr;
+wire       fifo_empty = (wr_ptr == rd_ptr);
+wire       fifo_full  = (fifo_used >= 6'd60); // pause download near full
+
+assign ioctl_wait = fifo_full;
+
+reg [15:0] pack [3:0];
+reg  [1:0] pack_idx = 0;
+reg [28:0] line_no = 0;
 
 always @(posedge clk) begin
-	mem_wr <= 0;
-
-	if (ioctl_wr && is_rom) begin
-		mem_wr   <= 1;
-		mem_din  <= ioctl_dout;
-		mem_addr <= ROM_BASE + {2'b00, ioctl_addr[26:2]};
-
-		if (ioctl_addr < 27'd16) hdr_words[ioctl_addr[3:1]] <= ioctl_dout;
+	if (ioctl_wr && is_rom && !fifo_full) begin
+		pack[pack_idx] <= ioctl_dout;
+		if (pack_idx == 2'd3) begin
+			fifo_data[wr_ptr] <= {ioctl_dout, pack[2], pack[1], pack[0]};
+			fifo_line[wr_ptr] <= line_no;
+			wr_ptr  <= wr_ptr + 1'd1;
+			line_no <= line_no + 1'd1;
+			pack_idx <= 0;
+		end else begin
+			pack_idx <= pack_idx + 1'd1;
+		end
 	end
+end
 
-	if (mem_wr && mem_wr_done) mem_wr <= 0;
+//------------------------------------------------------------------
+// FIFO -> DDR3 drain (respects BUSY, one burst at a time)
+//------------------------------------------------------------------
+reg draining = 0;
+always @(posedge clk) begin
+	ddr_we <= 0;
+	if (ddr_we && !ddr_busy) draining <= 0;
+
+	if (!fifo_empty && !ddr_we && !draining && !ddr_busy) begin
+		ddr_burstcnt <= 8'd1;
+		ddr_be       <= 8'hFF;
+		ddr_addr     <= fifo_line[rd_ptr];
+		ddr_din      <= fifo_data[rd_ptr];
+		ddr_we       <= 1;
+		draining     <= 1;
+		rd_ptr       <= rd_ptr + 1'd1;
+	end
+end
+
+//------------------------------------------------------------------
+// Device capacity: header byte 0x80 -> rom_bytes = 128 KB << cap,
+// clamped to the DS's 4 Gbit (512 MB) ceiling.
+//------------------------------------------------------------------
+wire [7:0] cap_raw = ioctl_dout[7:0];
+wire [7:0] cap = (cap_raw > 8'd12) ? 8'd12 : cap_raw;
+
+always @(posedge clk) begin
+	if (reset) rom_bytes <= 28'd0;
+	else if (ioctl_wr && is_rom && ioctl_addr == 27'h80) begin
+		rom_bytes <= 28'd131072 << cap;
+	end
 end
 
 //------------------------------------------------------------------
@@ -65,23 +138,65 @@ end
 reg dl_d = 0;
 always @(posedge clk) begin
 	dl_d <= ioctl_download;
-	if (ioctl_download && !dl_d) cart_loaded <= 0;
+	if (ioctl_download && !dl_d) begin
+		cart_loaded <= 0;
+		line_no     <= 0;
+		pack_idx    <= 0;
+	end
 	if (!ioctl_download && dl_d) cart_loaded <= 1;
 	if (reset) cart_loaded <= 0;
 end
 
 //------------------------------------------------------------------
-// Save control
-//
-// TODO(M4): erase_save pulses a state machine that zeroes SAVE_BASE
-// for the detected type's size; sd_rd/sd_wr from hps_io move .sav
-// sectors in and out of the same region. save_type currently overrides
-// autodetection from the header byte at 0x140.
+// Cart window read bridge: one outstanding DDR3 line at a time,
+// little-endian halfwords (byte_addr[2:1]).
 //------------------------------------------------------------------
-wire [24:0] save_base = SAVE_BASE;
-wire [2:0]  save_kind = save_type;
-wire        erase_req = erase_save;
+localparam R_IDLE = 2'd0, R_WAIT = 2'd1, R_DONE = 2'd2;
+reg  [1:0] rstate = R_IDLE;
+reg [63:0] rline = 0;
 
-wire _unused = &{1'b0, save_base, save_kind, erase_req, hdr_words[0], hdr_words[7]};
+always @(posedge clk) begin
+	win_valid <= 0;
+	case (rstate)
+	R_IDLE: begin
+		if (win_req && !ddr_busy) begin
+			ddr_rd   <= 1;
+			ddr_addr <= {6'd0, win_addr[25:3]};
+			rstate   <= R_WAIT;
+		end
+	end
+	R_WAIT: begin
+		ddr_rd <= 0;
+		if (ddr_dout_ready) begin
+			rline  <= ddr_dout;
+			rstate <= R_DONE;
+		end
+	end
+	R_DONE: begin
+		win_valid <= 1;
+		case (win_addr[2:1])
+		2'd0: win_data <= rline[15:0];
+		2'd1: win_data <= rline[31:16];
+		2'd2: win_data <= rline[47:32];
+		default: win_data <= rline[63:48];
+		endcase
+		rstate <= R_IDLE;
+	end
+	endcase
+	if (reset) begin
+		rstate <= R_IDLE;
+		ddr_rd <= 0;
+	end
+end
+
+//------------------------------------------------------------------
+// Save control (M4)
+//------------------------------------------------------------------
+wire        erase_req = erase_save;
+wire  [2:0] save_kind = save_type;
+wire [24:0] save_hint = SAVE_BASE;
+
+wire _unused = &{1'b0, erase_req, save_kind, save_hint, mem_addr[0],
+                 mem_din[0], mem_wr, mem_wr_done};
 
 endmodule

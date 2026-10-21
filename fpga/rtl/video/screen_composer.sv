@@ -158,6 +158,6 @@ wire [4:0] r5 = scale555(pix[14:10], gain);
 wire [4:0] g5 = scale555(pix[9:5],   gain);
 wire [4:0] b5 = scale555(pix[4:0],   gain);
 
-assign rgb555 = {r5, g5, b5};
+assign rgb555 = {1'b0, r5, g5, b5}; // BGR555, bit 15 unused
 
 endmodule
