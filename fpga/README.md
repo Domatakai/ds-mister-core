@@ -29,7 +29,7 @@ fpga/
   rtl/
     video/video_timing.sv     256x384 frame timing, 59.8201 Hz  [SIM-VERIFIED]
     video/screen_composer.sv  dual-screen placement, rotation,
-                              swap, brightness                   [FUNCTIONAL]
+                              swap, brightness            [SIM-VERIFIED]
     video/engine_a.sv         2D engine A (top screen) — stub, boot pattern
     video/engine_b.sv         2D engine B (touch screen) — stub
     video/vram_arbiter.sv     VRAMCNT bank map + grant scheduler — stub
@@ -42,6 +42,7 @@ fpga/
     cart/cart_slot.sv         .nds download, header capture, save control
     audio/spu.sv              16-channel SPU — stub with correct framing
   tb/tb_video_timing.sv   self-checking testbench (Icarus Verilog)
+  tb/tb_composer.sv        composer placement testbench
 ```
 
 ## Build
@@ -70,6 +71,12 @@ vvp /tmp/tb_vt
 # tb_video_timing: refresh = 59.8201 Hz
 # tb_video_timing: active pixels/frame = 98304 (expect 98304)
 # tb_video_timing: PASS
+
+iverilog -g2012 -o /tmp/tb_sc tb/tb_composer.sv \
+         rtl/video/screen_composer.sv rtl/video/engine_a.sv \
+         rtl/video/engine_b.sv
+vvp /tmp/tb_sc
+# tb_composer: PASS   (stacked, swap, side-by-side, rotation, clip)
 ```
 
 ## OSD menu

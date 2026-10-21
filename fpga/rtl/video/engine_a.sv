@@ -19,7 +19,7 @@ module engine_a (
 	output reg [15:0] rgb555
 );
 
-always @(*) begin
+always_comb begin
 	if (!on) begin
 		rgb555 = 16'h0000;
 	end else if (y < 8'd16) begin

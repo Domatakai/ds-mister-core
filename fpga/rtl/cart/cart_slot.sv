@@ -13,12 +13,13 @@ module cart_slot (
 	input            clk,
 	input            reset,
 
-	// HPS download stream (F1 -> .nds, index 1)
+	// HPS download stream (F1 -> .nds, index 1). WIDE=1: one 16-bit
+	// word per write, ioctl_addr counts bytes and steps by 2.
 	input            ioctl_download,
-	input     [24:0] ioctl_addr,
+	input     [26:0] ioctl_addr,
 	input     [15:0] ioctl_dout,
 	input            ioctl_wr,
-	input      [7:0] ioctl_index,
+	input     [15:0] ioctl_index,
 
 	// write port towards SDRAM (ROM window at 0x000000)
 	output reg [24:0] mem_addr,
@@ -39,28 +40,20 @@ localparam SAVE_BASE = 25'h280000;
 wire is_rom = ioctl_index[3:0] == 4'd1;
 
 //------------------------------------------------------------------
-// Assemble the byte stream into 16-bit SDRAM words
+// In wide mode every write is a full ROM word; capture the first
+// eight words (16 header bytes: title + game code + maker code).
 //------------------------------------------------------------------
-reg [7:0] lo_byte = 0;
-reg [7:0] title [11:0];
-reg [7:0] game_code [3:0];
+reg [15:0] hdr_words [7:0];
 
 always @(posedge clk) begin
 	mem_wr <= 0;
 
 	if (ioctl_wr && is_rom) begin
-		if (!ioctl_addr[0]) begin
-			lo_byte <= ioctl_dout[7:0];
-		end else begin
-			mem_wr   <= 1;
-			mem_din  <= {ioctl_dout[7:0], lo_byte};
-			mem_addr <= ROM_BASE + {1'b0, ioctl_addr[24:1]};
-		end
+		mem_wr   <= 1;
+		mem_din  <= ioctl_dout;
+		mem_addr <= ROM_BASE + {2'b00, ioctl_addr[26:2]};
 
-		// header: 0x00-0x0B title, 0x0C-0x0F game code
-		if (ioctl_addr < 25'd12)  title[ioctl_addr[3:0]]     <= ioctl_dout[7:0];
-		if (ioctl_addr >= 25'd12 && ioctl_addr < 25'd16)
-			game_code[ioctl_addr[1:0]] <= ioctl_dout[7:0];
+		if (ioctl_addr < 27'd16) hdr_words[ioctl_addr[3:1]] <= ioctl_dout;
 	end
 
 	if (mem_wr && mem_wr_done) mem_wr <= 0;
@@ -89,6 +82,6 @@ wire [24:0] save_base = SAVE_BASE;
 wire [2:0]  save_kind = save_type;
 wire        erase_req = erase_save;
 
-wire _unused = &{1'b0, save_base, save_kind, erase_req, title[0], game_code[0], 1'b0};
+wire _unused = &{1'b0, save_base, save_kind, erase_req, hdr_words[0], hdr_words[7]};
 
 endmodule

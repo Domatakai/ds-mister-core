@@ -50,44 +50,40 @@ module screen_composer (
 reg [7:0] sx;        // x within the 256-wide screen box
 reg [7:0] sy;        // y within the 192-tall screen box
 reg       use_top;   // which screen
-reg       in_range;  // inside that screen's box after rotation
+reg       box_hit;   // inside that screen's box
 
-always @(*) begin
+always_comb begin
 	sx = 8'd0;
 	sy = 8'd0;
 	use_top = 1'b1;
-	in_range = 1'b0;
+	box_hit = 1'b0;
 
 	case (layout)
 	3'd1: begin // side by side, decimated to 128 wide
 		sy = y[7:0] - 8'd96;              // centred vertically
-		if (x < 9'd128) begin
-			sx = {1'b0, x[7:1]};          // decimate x
-			use_top = 1'b1;
-		end else begin
-			sx = {1'b0, x[7:1]};
-			use_top = 1'b0;
-		end
-		in_range = (y >= 9'd96) && (y < 9'd288);
-		if (swap) use_top = ~use_top;
+		sx = {1'b0, x[7:1]};              // decimate x
+		use_top = (x < 9'd128) ^ swap;
+		box_hit = (y >= 9'd96) && (y < 9'd288);
 	end
 	3'd2: begin // top only
 		sx = x[7:0];
 		sy = y[7:0] - 8'd96;
 		use_top = ~swap;
-		in_range = (y >= 9'd96) && (y < 9'd288);
+		box_hit = (y >= 9'd96) && (y < 9'd288);
 	end
 	3'd3: begin // bottom only
 		sx = x[7:0];
 		sy = y[7:0] - 8'd96;
 		use_top = swap;
-		in_range = (y >= 9'd96) && (y < 9'd288);
+		box_hit = (y >= 9'd96) && (y < 9'd288);
 	end
 	default: begin // stacked
 		sx = x[7:0];
+		// the box (upper/lower half) sets the local y; swap only
+		// chooses which engine fills each box
+		sy = (y < 9'd192) ? y[7:0] : (y[7:0] - 8'd192);
 		use_top = (y < 9'd192) ^ swap;
-		sy = use_top ? y[7:0] : (y[7:0] - 8'd192);
-		in_range = 1'b1;
+		box_hit = 1'b1;
 	end
 	endcase
 end
@@ -97,12 +93,14 @@ end
 // transposed; pixels outside the native 256x192 area read as backdrop.
 //------------------------------------------------------------------
 reg [7:0] nx, ny;
-always @(*) begin
+reg       rot_ok;
+always_comb begin
+	rot_ok = 1'b1;
 	case (rotation)
 	2'd1: begin // 90 deg CW: (x,y) -> (y, 255-x)
 		nx = sy;
 		ny = 8'd255 - sx;
-		in_range = in_range && (sx < 8'd192); // rotated height = 192
+		rot_ok = (sx < 8'd192); // rotated height = 192
 	end
 	2'd2: begin // 180: (x,y) -> (255-x, 191-y)
 		nx = 8'd255 - sx;
@@ -111,7 +109,7 @@ always @(*) begin
 	2'd3: begin // 270 deg CW: (x,y) -> (191-y, x)
 		nx = 8'd191 - sy;
 		ny = sx;
-		in_range = in_range && (sx < 8'd192);
+		rot_ok = (sx < 8'd192);
 	end
 	default: begin
 		nx = sx;
@@ -119,6 +117,8 @@ always @(*) begin
 	end
 	endcase
 end
+
+wire in_range = box_hit & rot_ok;
 
 assign na_on = ce & de & in_range &  use_top;
 assign nb_on = ce & de & in_range & ~use_top;
@@ -131,7 +131,7 @@ assign nb_y  = ny;
 // Brightness: OS brightness 1..5 -> fixed-point gain
 //------------------------------------------------------------------
 reg [9:0] gain;
-always @(*) begin
+always_comb begin
 	case (brightness)
 	3'd1:    gain = 10'd164; // 0.64
 	3'd2:    gain = 10'd192; // 0.75

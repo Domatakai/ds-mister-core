@@ -131,23 +131,26 @@ wire [127:0] status;
 wire   [1:0] buttons;
 wire         forced_scandoubler;
 wire  [10:0] ps2_key;
-wire  [15:0] joystick_0, joystick_1;
+wire  [31:0] joystick_0, joystick_1;
 wire         ioctl_download;
-wire  [24:0] ioctl_addr;
+wire  [26:0] ioctl_addr;
 wire  [15:0] ioctl_dout;
 wire         ioctl_wr;
-wire   [7:0] ioctl_index;
+wire  [15:0] ioctl_index;
 wire   [3:0] sd_rd, sd_wr;
-wire  [31:0] sd_lba[4];
+wire  [31:0] sd_lba [1];
+wire   [5:0] sd_blk_cnt [1];
 wire  [15:0] sd_buff_dout;
-wire   [7:0] sd_buff_addr;
+wire  [12:0] sd_buff_addr;
 wire         sd_buff_wr;
-wire  [15:0] sd_buff_din[4];
-wire         sd_ack[4];
-wire   [1:0] img_mounted;
+wire  [15:0] sd_buff_din [1];
+wire   [0:0] sd_ack;
+wire   [0:0] img_mounted;
 wire  [63:0] img_size;
 
-hps_io #(.CONF_STR(CONF_STR)) hps_io
+assign sd_blk_cnt[0] = 0; // single 512-byte block per request
+
+hps_io #(.CONF_STR(CONF_STR), .WIDE(1), .VDNUM(1)) hps_io
 (
 	.clk_sys(clk_sys),
 	.HPS_BUS(HPS_BUS),

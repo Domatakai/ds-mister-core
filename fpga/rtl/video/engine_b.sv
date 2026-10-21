@@ -13,7 +13,7 @@ module engine_b (
 	output reg [15:0] rgb555
 );
 
-always @(*) begin
+always_comb begin
 	if (!on) begin
 		rgb555 = 16'h0000;
 	end else if (x < 8'd4 || y < 8'd4 || x > 8'd251 || y > 8'd187) begin
