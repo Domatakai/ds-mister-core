@@ -52,11 +52,12 @@ module cart_slot (
 	input             erase_save,
 	input       [2:0] save_type,
 
-	// SDRAM master, reserved for save data (M4)
-	output reg [24:0] mem_addr,
-	output reg [15:0] mem_din,
-	output reg        mem_wr,
-	input             mem_wr_done,
+	// SDRAM master for save data (via mem_arbiter, M4 drives requests)
+	output           save_req,
+	output           save_wr,
+	output    [24:0] save_addr,
+	output    [15:0] save_din,
+	input            save_done,
 
 	output reg        cart_loaded,
 	output reg [27:0] rom_bytes   // detected ROM size in bytes
@@ -154,14 +155,23 @@ end
 localparam R_IDLE = 2'd0, R_WAIT = 2'd1, R_DONE = 2'd2;
 reg  [1:0] rstate = R_IDLE;
 reg [63:0] rline = 0;
+reg [25:0] a_lat = 0;      // latched request address
+reg        pending_req = 0; // win_req pulse arrived while DDR busy
+
+wire [25:0] req_a = win_req ? win_addr : a_lat;
 
 always @(posedge clk) begin
 	win_valid <= 0;
 	case (rstate)
 	R_IDLE: begin
-		if (win_req && !ddr_busy) begin
+		if (win_req) begin
+			a_lat       <= win_addr;
+			pending_req <= 1;
+		end
+		if ((pending_req || win_req) && !ddr_busy) begin
 			ddr_rd   <= 1;
-			ddr_addr <= {6'd0, win_addr[25:3]};
+			ddr_addr <= {6'd0, req_a[25:3]};
+			pending_req <= 0;
 			rstate   <= R_WAIT;
 		end
 	end
@@ -174,7 +184,7 @@ always @(posedge clk) begin
 	end
 	R_DONE: begin
 		win_valid <= 1;
-		case (win_addr[2:1])
+		case (a_lat[2:1])
 		2'd0: win_data <= rline[15:0];
 		2'd1: win_data <= rline[31:16];
 		2'd2: win_data <= rline[47:32];
@@ -182,10 +192,12 @@ always @(posedge clk) begin
 		endcase
 		rstate <= R_IDLE;
 	end
+	default: rstate <= R_IDLE;
 	endcase
 	if (reset) begin
 		rstate <= R_IDLE;
 		ddr_rd <= 0;
+		pending_req <= 0;
 	end
 end
 
@@ -196,7 +208,12 @@ wire        erase_req = erase_save;
 wire  [2:0] save_kind = save_type;
 wire [24:0] save_hint = SAVE_BASE;
 
-wire _unused = &{1'b0, erase_req, save_kind, save_hint, mem_addr[0],
-                 mem_din[0], mem_wr, mem_wr_done};
+wire _unused = &{1'b0, erase_req, save_kind, save_hint, save_done};
+
+// Save master idle until M4 implements SRAM/EEPROM/Flash handshakes.
+assign save_req  = 1'b0;
+assign save_wr   = 1'b0;
+assign save_addr = 25'd0;
+assign save_din  = 16'd0;
 
 endmodule

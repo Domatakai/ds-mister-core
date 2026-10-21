@@ -159,6 +159,8 @@ wire   [0:0] img_mounted;
 wire  [63:0] img_size;
 wire         ioctl_wait;   // cart slot backpressure -> HPS
 wire  [15:0] stick0;       // left analog stick (stylus cursor mode)
+wire   [7:0] f2_dout;      // F2 cheat text stream (hps_io -> engine)
+wire         f2_wr;
 
 assign sd_blk_cnt[0] = 0; // single 512-byte block per request
 
@@ -182,6 +184,8 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1), .VDNUM(1)) hps_io
 	.ioctl_wr(ioctl_wr),
 	.ioctl_index(ioctl_index),
 	.ioctl_wait(ioctl_wait),
+	.f2_wr(f2_wr),           // F2 cheat text (.cht / .xml GS codes)
+	.f2_dout(f2_dout),
 	.sd_rd(sd_rd),
 	.sd_wr(sd_wr),
 	.sd_lba(sd_lba),
@@ -339,27 +343,62 @@ assign VIDEO_ARX = (scr_layout == 3'd0) ? 13'd2 : (scr_layout == 3'd1) ? 13'd8 :
 assign VIDEO_ARY = (scr_layout == 3'd0) ? 13'd3 : (scr_layout == 3'd1) ? 13'd3 : 13'd3;
 
 //------------------------------------------------------------------
-// SDRAM: main RAM (4 MB), save data, palette/OAM/VRAM overflow.
+// SDRAM cluster: two masters — the bus RAM window and the cart save
+// path — through mem_arbiter into sdram_ctrl (per-byte write masks).
 // Cart ROM lives in DDR3 (see cart slot) so 256 Mbit+ carts fit.
 //------------------------------------------------------------------
-wire [24:0] mem_addr;
-wire [15:0] mem_dout;
-wire        mem_rd, mem_wr;
-wire [15:0] mem_din;
-wire        mem_rd_done, mem_wr_done;
+wire        bus_ram_req, bus_ram_wr, bus_ram_done;
+wire [24:0] bus_ram_addr;
+wire [15:0] bus_ram_wdata;
+wire  [1:0] bus_ram_be;
 
-assign mem_rd = 1'b0; // read master arrives with main RAM (M1)
+wire        save_req, save_wr, save_done;
+wire [24:0] save_addr;
+wire [15:0] save_din;
+
+wire        arb_req, arb_wr;
+wire [24:0] arb_addr;
+wire [15:0] arb_wdata;
+wire  [1:0] arb_be;
+wire        arb_rd_done, arb_wr_done;
+wire [15:0] arb_rdata;
+
+mem_arbiter mem_arbiter (
+	.clk(clk_sys),
+	.reset(reset),
+	.bus_req(bus_ram_req),
+	.bus_wr(bus_ram_wr),
+	.bus_addr(bus_ram_addr),
+	.bus_wdata(bus_ram_wdata),
+	.bus_be(bus_ram_be),
+	.bus_ready(bus_ram_done),
+	.save_req(save_req),
+	.save_wr(save_wr),
+	.save_addr(save_addr),
+	.save_wdata(save_din),
+	.save_be(2'b11),       // save writes are halfword-wide (M4 refines)
+	.save_ready(save_done),
+	.sdram_req(arb_req),
+	.sdram_wr(arb_wr),
+	.sdram_addr(arb_addr),
+	.sdram_wdata(arb_wdata),
+	.sdram_be(arb_be),
+	.sdram_rd_done(arb_rd_done),
+	.sdram_wr_done(arb_wr_done),
+	.sdram_rdata(arb_rdata)
+);
 
 sdram_ctrl sdram_ctrl (
 	.clk(clk_sys),
 	.reset(reset),
-	.addr(mem_addr),
-	.din(mem_din),
-	.rd(mem_rd),
-	.wr(mem_wr),
-	.dout(mem_dout),
-	.rd_done(mem_rd_done),
-	.wr_done(mem_wr_done),
+	.addr(arb_addr),
+	.din(arb_wdata),
+	.be(arb_be),
+	.rd(arb_req && !arb_wr),
+	.wr(arb_req &&  arb_wr),
+	.dout(arb_rdata),
+	.rd_done(arb_rd_done),
+	.wr_done(arb_wr_done),
 	.SDRAM_CLK(SDRAM_CLK),
 	.SDRAM_CKE(SDRAM_CKE),
 	.SDRAM_A(SDRAM_A),
@@ -398,14 +437,15 @@ cart_slot cart_slot (
 	.ddr_busy(DDRAM_BUSY),
 	.ddr_dout_ready(DDRAM_DOUT_READY),
 	.ddr_dout(DDRAM_DOUT),
-	.win_req(1'b0),          // CPU fetch path: wire to main_bus in M1
-	.win_addr(26'd0),
-	.win_valid(),
-	.win_data(),
-	.mem_addr(mem_addr),
-	.mem_din(mem_din),
-	.mem_wr(mem_wr),
-	.mem_wr_done(mem_wr_done),
+	.win_req(win_req),          // CPU fetch path <- main_bus cart window
+	.win_addr(win_addr),
+	.win_valid(win_valid),
+	.win_data(win_data),
+	.save_req(save_req),
+	.save_wr(save_wr),
+	.save_addr(save_addr),
+	.save_din(save_din),
+	.save_done(save_done),
 	.erase_save(erase_save),
 	.save_type(save_type),
 	.cart_loaded(cart_loaded),
@@ -445,6 +485,25 @@ input_mapper input_mapper (
 // CPUs + bus — stubs (M1). The bus keeps the NDS memory map; both CPUs
 // idle until their pipelines are implemented.
 //------------------------------------------------------------------
+//------------------------------------------------------------------
+// Main bus + cheat engine + VRAM register file
+//------------------------------------------------------------------
+wire [25:0] win_addr;
+wire        win_req, win_valid;
+wire [15:0] win_data;
+
+wire        bus_vramcnt_we;
+wire  [3:0] bus_vramcnt_addr;
+wire  [7:0] bus_vramcnt_data;
+
+wire        cheat_chk_en, cheat_hit;
+wire [31:0] cheat_chk_addr;
+wire [15:0] cheat_chk_data, cheat_patch;
+
+wire [15:0] dispcnt_a, dispcnt_b;
+wire        irq_me;
+wire [31:0] irq_en, irq_fl;
+
 main_bus main_bus (
 	.clk(clk_sys),
 	.reset(reset),
@@ -452,8 +511,93 @@ main_bus main_bus (
 	.touch_x(touch_x),
 	.touch_y(touch_y),
 	.touch_down(touch_down),
-	.mic_in(mic_pressed)
+	.mic_in(mic_pressed),
+	.m9_addr(m9_addr),
+	.m9_wdata(m9_wdata),
+	.m9_be(m9_be),
+	.m9_rd(m9_rd),
+	.m9_wr(m9_wr),
+	.m9_ready(),              // consumed by the ARM9 core (M1)
+	.m9_rdata(m9_rdata),
+	.m7_addr(m7_addr),
+	.m7_wdata(m7_wdata),
+	.m7_be(m7_be),
+	.m7_rd(m7_rd),
+	.m7_wr(m7_wr),
+	.m7_ready(),              // consumed by the ARM7 core (M1)
+	.m7_rdata(m7_rdata),
+	.cart_req(win_req),
+	.cart_addr(win_addr),
+	.cart_valid(win_valid),
+	.cart_rdata(win_data),
+	.ram_req(bus_ram_req),
+	.ram_wr(bus_ram_wr),
+	.ram_addr(bus_ram_addr),
+	.ram_wdata(bus_ram_wdata),
+	.ram_be(bus_ram_be),
+	.ram_done(bus_ram_done),
+	.ram_rdata(arb_rdata),
+	.vramcnt_we(bus_vramcnt_we),
+	.vramcnt_addr(bus_vramcnt_addr),
+	.vramcnt_data(bus_vramcnt_data),
+	.cheat_chk_en(cheat_chk_en),
+	.cheat_chk_addr(cheat_chk_addr),
+	.cheat_chk_data(cheat_chk_data),
+	.cheat_patch(cheat_patch),
+	.cheat_hit(cheat_hit),
+	.dispcnt_a(dispcnt_a),
+	.dispcnt_b(dispcnt_b),
+	.irq_master_enable(irq_me),
+	.irq_enable(irq_en),
+	.irq_flags(irq_fl)
 );
+
+vram_arbiter vram_arbiter (
+	.clk(clk_sys),
+	.reset(reset),
+	.reg_we(bus_vramcnt_we),
+	.reg_addr(bus_vramcnt_addr),
+	.reg_data(bus_vramcnt_data),
+	.req_cpu9(1'b0),          // engines + CPUs land in M2
+	.req_cpu7(1'b0),
+	.req_eng_a(1'b0),
+	.req_eng_b(1'b0),
+	.req_raster(1'b0),
+	.grant()
+);
+
+cheat_engine cheat_engine (
+	.clk(clk_sys),
+	.reset(reset),
+	.f2_wr(f2_wr),
+	.f2_dout(f2_dout),
+	.f2_last(1'b0),              // trailing line w/o newline: dropped
+	.chk_en(cheat_chk_en),
+	.chk_addr(cheat_chk_addr),
+	.chk_data(cheat_chk_data),
+	.hit(cheat_hit),
+	.patch(cheat_patch)
+);
+
+//------------------------------------------------------------------
+// CPU stubs (M1). The bus master ports below are what the pipelines
+// will drive: address, write data, byte enables, rd/wr strobes; the
+// bus answers with ready + rdata. Idle stubs hold the request lines
+// low so the bus fabric stays quiet.
+//------------------------------------------------------------------
+wire [31:0] m9_addr  = 32'h0;
+wire [31:0] m9_wdata = 32'h0;
+wire  [3:0] m9_be    = 4'h0;
+wire        m9_rd    = 1'b0;
+wire        m9_wr    = 1'b0;
+wire [31:0] m9_rdata;
+
+wire [31:0] m7_addr  = 32'h0;
+wire [31:0] m7_wdata = 32'h0;
+wire  [3:0] m7_be    = 4'h0;
+wire        m7_rd    = 1'b0;
+wire        m7_wr    = 1'b0;
+wire [31:0] m7_rdata;
 
 arm9_core arm9 (
 	.clk(clk_sys),
@@ -495,7 +639,8 @@ wire _unused = &{1'b0, aspect, bios_real, firmware_dump, skip_logo, region,
                  rumble, pad_profile, core_speed, frameskip, autoskip,
                  rewind_buf, show_fps, frame_graph, log_level, i2s_latency,
                  spu_sync, ps2_key, img_mounted, img_size, cart_loaded,
-                 rom_bytes, mem_dout, mem_rd_done, sd_rd, sd_wr,
+                 rom_bytes, m9_rdata, m7_rdata, dispcnt_a, dispcnt_b,
+                 irq_me, irq_en, irq_fl, sd_rd, sd_wr,
                  sd_buff_dout, sd_buff_addr, sd_buff_wr, sd_ack,
                  HDMI_WIDTH, HDMI_HEIGHT, 1'b0};
 

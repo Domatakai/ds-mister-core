@@ -23,6 +23,7 @@ module sdram_ctrl (
 	input            reset,
 	input     [24:0] addr,
 	input     [15:0] din,
+	input      [1:0] be,     // byte enable: {DQMH, DQML} = {byte1, byte0}
 	input            rd,
 	input            wr,
 	output reg [15:0] dout,
@@ -52,7 +53,7 @@ localparam OP_PRE  = 4'b0010;
 localparam OP_REF  = 4'b0001;
 localparam OP_LMR  = 4'b0000;
 localparam OP_ACT  = 4'b0110;reg [3:0]  op = OP_NOP;
-reg        dqm = 1'b1;
+reg  [1:0] dqm = 2'b11;   // {DQMH, DQML} per-byte write mask
 reg        drive_dq = 1'b0;
 reg [12:0] a;
 reg [1:0]  ba;
@@ -63,8 +64,8 @@ assign SDRAM_CKE = 1'b1;
 assign SDRAM_A   = a;
 assign SDRAM_BA  = ba;
 assign SDRAM_DQ  = drive_dq ? dq_out : 16'hzzzz;
-assign SDRAM_DQML = dqm;
-assign SDRAM_DQMH = dqm;
+assign SDRAM_DQML = dqm[0];
+assign SDRAM_DQMH = dqm[1];
 assign {SDRAM_nCS, SDRAM_nCAS, SDRAM_nRAS, SDRAM_nWE} = op;
 
 //------------------------------------------------------------------
@@ -107,7 +108,7 @@ always @(posedge clk) begin
 
 	case (state)
 	S_INIT: begin
-		op <= OP_NOP; dqm <= 1; drive_dq <= 0;
+		op <= OP_NOP; dqm <= 2'b11; drive_dq <= 0;
 		if (init_cnt == INIT_WAIT) state <= S_PRE0;
 		else init_cnt <= init_cnt + 1'd1;
 	end
@@ -121,7 +122,7 @@ always @(posedge clk) begin
 		else wait_cnt <= wait_cnt - 1'd1;
 	end
 	S_IDLE: begin
-		op <= OP_NOP; dqm <= 0; drive_dq <= 0;
+		op <= OP_NOP; dqm <= 2'b00; drive_dq <= 0;
 		if (ref_due) begin
 			op <= OP_REF; ref_due <= 0; state <= S_REFRESH;
 		end else if (rd || wr) begin
@@ -145,7 +146,7 @@ always @(posedge clk) begin
 	end
 	S_READ: begin
 		op <= OP_READ; ba <= a_lat[10:9]; a <= {4'd0, a_lat[8:0]}; a[10] <= 0;
-		dqm <= 0; wait_cnt <= 3'd3; // CL=3
+		dqm <= 2'b00; wait_cnt <= 3'd3; // CL=3
 		state <= S_RCV;
 	end
 	S_RCV: begin
@@ -158,7 +159,7 @@ always @(posedge clk) begin
 	end
 	S_WRITE: begin
 		op <= OP_WRIT; ba <= a_lat[10:9]; a <= {4'd0, a_lat[8:0]}; a[10] <= 0;
-		dq_out <= din; drive_dq <= 1; dqm <= 0;
+		dq_out <= din; drive_dq <= 1; dqm <= ~be; // per-byte write mask
 		wr_done <= 1;
 		state <= S_IDLE;
 	end

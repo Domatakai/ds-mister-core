@@ -15,6 +15,8 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/cpu/arm9_core.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cpu/arm7_core.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/bus/main_bus.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/mem/sdram_ctrl.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/mem/mem_arbiter.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cart/cart_slot.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/cart/cheat_engine.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/input/input_mapper.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio/spu.sv
