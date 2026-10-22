@@ -40,9 +40,10 @@ module cheat_engine (
 	input            clk,
 	input            reset,
 
-	// F2 text stream (8-bit ASCII bytes)
+	// F2 text stream (8-bit ASCII bytes, split from the WIDE ioctl pipe)
 	input            f2_wr,
 	input      [7:0] f2_dout,
+	input            f2_dl,      // F2 download active (rising edge = new file)
 
 	// OSD "Disable all cheats" trigger (status[125])
 	input            clr_cheats,
@@ -76,46 +77,66 @@ reg        lockout = 0;   // "Disable all cheats"
 reg [7:0]  line [0:63];
 reg [5:0]  line_len = 0;
 reg        in_digit = 0;
-reg [31:0] d1 = 0;
-reg        have_d1 = 0;
-
-// end-of-file detection: f2 activity gap separates successive loads
-reg [15:0] gap = 0;
-reg        in_load = 0;
 
 integer i;
 
-function [3:0] hexv;
+// hex digit -> {valid, value}. Valid 'F' must not collide with invalid.
+function [4:0] hexv;
 	input [7:0] ch;
 	reg   [7:0] t;
+	reg         ok;
 	begin
+		ok = 1'b1; t = 8'd0;
 		if      (ch >= "0" && ch <= "9") t = ch - "0";
 		else if (ch >= "a" && ch <= "f") t = ch - "a" + 8'd10;
 		else if (ch >= "A" && ch <= "F") t = ch - "A" + 8'd10;
-		else                             t = 8'hFF;
-		hexv = t[3:0];
+		else                             ok = 1'b0;
+		hexv = {ok, t[3:0]};
+	end
+endfunction
+
+// accepted bytes: hex digits, space/tab (separator), CR, LF.
+// everything else (NUL padding of odd words, UTF-8 BOM, comment
+// junk) is dropped so it can never poison a line buffer.
+function accept;
+	input [7:0] ch;
+	begin
+		accept = ((ch >= "0" && ch <= "9") || (ch >= "a" && ch <= "f") ||
+		          (ch >= "A" && ch <= "F") || ch == " " || ch == 8'h09 ||
+		          ch == "\n" || ch == "\r");
 	end
 endfunction
 
 task parse_line;
 	reg [31:0] w0, w1;
-	reg  [3:0] nib;
-	reg        ok;
-	integer    k;
+	reg  [4:0] h;
+	reg        ok, sep;
+	integer    k, p;
 	begin
 		if (line_len >= 6'd8 && in_digit) begin
 			w0 = 32'd0; w1 = 32'd0; ok = 1'b1;
 			for (k = 0; k < 8; k = k + 1) begin
-				nib = hexv(line[k]);
-				if (nib == 4'hF) ok = 1'b0;
-				w0 = {w0[27:0], nib};
+				h = hexv(line[k]);
+				if (!h[4]) ok = 1'b0;
+				w0 = {w0[27:0], h[3:0]};
 			end
 			if (ok) begin
-				if (line_len >= 6'd17 && line[8] == " ") begin
+				// separator: position 8 must be a space; tolerate extras
+				// (statically bounded scan for the data word start)
+				p = 8; sep = 1'b0;
+				if (line_len > 6'd8 && line[8] == " ") begin
+					for (k = 8; k < 56; k = k + 1)
+						if (!sep && k < line_len && line[k] != " ") begin
+							p = k; sep = 1'b1;
+						end
+					if (!sep) p = 8;  // all spaces: length check below fails
+				end else
+					ok = 1'b0;       // need the single-space format
+				if (ok && p + 8 <= line_len) begin
 					for (k = 0; k < 8; k = k + 1) begin
-						nib = hexv(line[9 + k]);
-						if (nib == 4'hF) ok = 1'b0;
-						w1 = {w1[27:0], nib};
+						h = hexv(line[p + k]);
+						if (!h[4]) ok = 1'b0;
+						w1 = {w1[27:0], h[3:0]};
 					end
 				end else
 					ok = 1'b0;                 // need the data word too
@@ -134,30 +155,33 @@ task parse_line;
 	end
 endtask
 
+reg f2_dl_d;
+wire f2_start = f2_dl & ~f2_dl_d;   // new file
+wire f2_end   = ~f2_dl &  f2_dl_d;   // file finished
+
 always @(posedge clk) begin
+	f2_dl_d <= f2_dl;
 	if (reset) begin
-		line_len <= 6'd0; in_digit <= 0; have_d1 <= 0;
-		gap <= 0; in_load <= 0;
-	end else begin
-		if (f2_wr) begin
-			// first byte after an idle gap = new file: clear codes
-			if (!in_load) begin
-				c_count <= 0;
-				for (i = 0; i < 32; i = i + 1) c_valid[i] <= 1'b0;
-			end
-			in_load <= 1'b1;
-			gap     <= 16'hFFFF;
-			if (f2_dout == "\n") begin
-				parse_line;
-			end else if (f2_dout != "\r" && line_len < 6'd40) begin
-				if (f2_dout >= "0" && f2_dout <= "9") in_digit <= 1'b1;
-				line[line_len] <= f2_dout;
-				line_len <= line_len + 6'd1;
-			end
-		end else if (gap != 0) begin
-			gap <= gap - 16'd1;
-		end else
-			in_load <= 1'b0;
+		line_len <= 6'd0; in_digit <= 0; f2_dl_d <= 0;
+	end else if (f2_start) begin
+		c_count <= 0;
+		for (i = 0; i < 32; i = i + 1) c_valid[i] <= 1'b0;
+		line_len <= 6'd0;
+		in_digit <= 1'b0;
+	end else if (f2_end) begin
+		// flush a final line with no trailing newline
+		if (line_len >= 6'd8 && in_digit) parse_line;
+	end else if (f2_wr && accept(f2_dout)) begin
+		if (f2_dout == "\n") begin
+			parse_line;
+		end else if (line_len < 6'd56) begin
+			if ((f2_dout >= "0" && f2_dout <= "9") ||
+			    (f2_dout >= "a" && f2_dout <= "f") ||
+			    (f2_dout >= "A" && f2_dout <= "F")) in_digit <= 1'b1;
+			// tab acts as a word separator like space
+			line[line_len] <= (f2_dout == 8'h09) ? " " : f2_dout;
+			line_len <= line_len + 6'd1;
+		end
 	end
 end
 
@@ -212,15 +236,13 @@ always @(*) begin
 			end
 		end
 	end
-end
-
-// persist the block decision; new-file load resets guard + lockout
+end// persist the block decision; new-file load resets guard + lockout
 always @(posedge clk) begin
 	if (reset) begin
 		blk_reg <= 1'b0;
 		lockout <= 1'b0;
 	end else begin
-		if (f2_wr && !in_load) begin
+		if (f2_start) begin
 			blk_reg <= 1'b0;
 			lockout <= 1'b0;
 		end else

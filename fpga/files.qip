@@ -3,6 +3,7 @@
 # WARNING: do not add files through the Quartus IDE (it rewrites the .qsf);
 # add one line per file here instead.
 # --------------------------------------------------------------------------
+set_global_assignment -name SDC_FILE NDS.sdc
 set_global_assignment -name SYSTEMVERILOG_FILE NDS.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/video_timing.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/screen_composer.sv

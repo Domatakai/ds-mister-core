@@ -163,10 +163,36 @@ wire   [0:0] img_mounted;
 wire  [63:0] img_size;
 wire         ioctl_wait;   // cart slot backpressure -> HPS
 wire  [15:0] stick0;       // left analog stick (stylus cursor mode)
-wire   [7:0] f2_dout;      // F2 cheat text stream (hps_io -> engine)
-wire         f2_wr;
 
 assign sd_blk_cnt[0] = 0; // single 512-byte block per request
+
+// no SD block-device saves yet: keep HPS request inputs deasserted
+assign sd_rd        = 1'b0;
+assign sd_wr        = 1'b0;
+assign sd_lba[0]    = 32'd0;
+assign sd_buff_din[0] = 16'd0;
+
+//------------------------------------------------------------------
+// F2 (.cht) text path: secondary files share the ioctl pipe, keyed by
+// ioctl_index (F1 -> 1, F2 -> 2). WIDE=1 delivers two ASCII bytes per
+// 16-bit word, low byte first; the high byte of an odd final word is
+// zero padding and is filtered by the engine.
+//------------------------------------------------------------------
+wire        cheat_dl = ioctl_download & (ioctl_index[5:0] == 6'd2);
+wire        cheat_wr = cheat_dl & ioctl_wr;
+
+reg   [7:0] cht_hi;
+reg         cht_pend;
+wire        f2_wr   = cheat_wr | cht_pend;
+wire  [7:0] f2_dout = cht_pend ? cht_hi : ioctl_dout[7:0];
+
+always @(posedge clk_sys) begin
+	if (cheat_wr) begin
+		cht_hi   <= ioctl_dout[15:8];
+		cht_pend <= 1'b1;
+	end else
+		cht_pend <= 1'b0;
+end
 
 hps_io #(.CONF_STR(CONF_STR), .WIDE(1), .VDNUM(1)) hps_io
 (
@@ -188,8 +214,10 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1), .VDNUM(1)) hps_io
 	.ioctl_wr(ioctl_wr),
 	.ioctl_index(ioctl_index),
 	.ioctl_wait(ioctl_wait),
-	.f2_wr(f2_wr),           // F2 cheat text (.cht / .xml GS codes)
-	.f2_dout(f2_dout),
+	.ioctl_din(16'd0),            // no save upload
+	.ioctl_upload_req(1'b0),
+	.ioctl_upload_index(8'd0),
+
 	.sd_rd(sd_rd),
 	.sd_wr(sd_wr),
 	.sd_lba(sd_lba),
@@ -200,7 +228,29 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1), .VDNUM(1)) hps_io
 	.sd_buff_din(sd_buff_din),
 	.sd_ack(sd_ack),
 	.img_mounted(img_mounted),
-	.img_size(img_size)
+	.img_size(img_size),
+
+	// no block-device saves yet: keep the SD request inputs low
+	.status_in(128'd0),
+	.status_set(1'b0),
+	.info_req(1'b0),
+	.info(8'd0),
+	.new_vmode(1'b0),
+	.video_rotated(1'b0),
+
+	.ps2_kbd_clk_in(1'b1),
+	.ps2_kbd_data_in(1'b1),
+	.ps2_kbd_led_status(3'd0),
+	.ps2_kbd_led_use(3'd0),
+	.ps2_mouse_clk_in(1'b1),
+	.ps2_mouse_data_in(1'b1),
+
+	.joystick_0_rumble(16'd0),
+	.joystick_1_rumble(16'd0),
+	.joystick_2_rumble(16'd0),
+	.joystick_3_rumble(16'd0),
+	.joystick_4_rumble(16'd0),
+	.joystick_5_rumble(16'd0)
 );
 
 //------------------------------------------------------------------
@@ -609,6 +659,7 @@ cheat_engine cheat_engine (
 	.reset(reset),
 	.f2_wr(f2_wr),
 	.f2_dout(f2_dout),
+	.f2_dl(cheat_dl),
 	.clr_cheats(status[125]),   // OSD: Disable all cheats (until next load)
 	.chk_en(cheat_chk_en),
 	.chk_addr(cheat_chk_addr),

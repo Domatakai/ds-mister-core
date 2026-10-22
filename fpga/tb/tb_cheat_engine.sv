@@ -20,6 +20,7 @@ always #10 clk = ~clk; // 50 MHz
 reg reset = 1;
 reg f2_wr = 0;
 reg [7:0] f2_dout = 0;
+reg f2_dl = 0;
 reg clr_cheats = 0;
 
 reg         chk_en = 0;
@@ -33,6 +34,7 @@ cheat_engine dut (
 	.reset(reset),
 	.f2_wr(f2_wr),
 	.f2_dout(f2_dout),
+	.f2_dl(f2_dl),
 	.clr_cheats(clr_cheats),
 	.chk_en(chk_en),
 	.chk_addr(chk_addr),
@@ -64,6 +66,25 @@ task send_byte;
 		f2_wr   <= 1;
 		@(posedge clk);
 		f2_wr   <= 0;
+	end
+endtask
+
+// begin/end bracket each "file" exactly like ioctl_download does:
+// the download-active edge clears codes, the falling edge flushes
+// a tail line with no trailing newline.
+task file_open;
+	begin
+		@(posedge clk);
+		f2_dl <= 1;
+		@(posedge clk);
+	end
+endtask
+
+task file_close;
+	begin
+		@(posedge clk);
+		f2_dl <= 0;
+		repeat (2) @(posedge clk);
 	end
 endtask
 
@@ -105,6 +126,7 @@ initial begin
 
 	// ---- file 1
 	// 02000100 00000042   type0 write32
+	file_open;
 	send_str("; infinite hearts", 16); send_byte("\n");
 	send_str("02000100 00000042", 17); send_byte("\n");
 	send_str("12000104 00000055", 17); send_byte("\n"); // type1 write16
@@ -112,7 +134,7 @@ initial begin
 	send_str("2200010B 000000CC", 17); send_byte("\n"); // type2 odd lane
 	send_str("02000120 00000099", 17); send_byte("\n"); // guard THEN-write
 	send_str("52000120 00000010", 17); send_byte("\n"); // type5 guard (EQ)
-	repeat (20) @(posedge clk);
+	file_close;
 
 	// type 0: both halves patched
 	q(32'h0200_0100, 32'h1111_2222);
@@ -170,10 +192,10 @@ initial begin
 	check("disable all cheats -> no hits", hit === 1'b0);
 	q_done;
 
-	// ---- new file reload: clear old codes + lockout (gap > 65536 clk)
-	repeat (70000) @(posedge clk);
+	// ---- new file reload: clear old codes + lockout
+	file_open;
 	send_str("02000100 00000077", 17); send_byte("\n");
-	repeat (20) @(posedge clk);
+	file_close;
 
 	q(32'h0200_0100, 32'h1111_2222);
 	check("reload: new code value 0x0077", hit === 1'b1 && patch === 16'h0077);
@@ -185,6 +207,36 @@ initial begin
 
 	q(32'h0200_0100, 32'h0000_0010);
 	check("reload: lockout cleared", hit === 1'b1);
+	q_done;
+
+	// ---- file 3: format robustness
+	file_open;
+	// 'F' hex digits must parse (hexv invalid-vs-'F' collision)
+	send_str("02000FFF FFFFFFFF", 17); send_byte("\n");
+	// tab separator + BOM bytes before the line
+	send_byte(8'hEF); send_byte(8'hBB); send_byte(8'hBF);
+	send_str("12000104\t0000FFFF", 17); send_byte("\n");
+	// double space separator
+	send_str("22000108  000000EE", 18); send_byte("\n");
+	// tail line WITHOUT trailing newline -> flushed on file_close
+	send_str("0200010C 000000DD", 17);
+	file_close;
+	repeat (10) @(posedge clk);
+
+	q(32'h0200_0FFF, 32'h1234_5678);
+	check("F-hex digits: addr+data parsed", hit === 1'b1 && patch === 16'hFFFF && patch_hi_en === 1'b1 && patch_hi === 16'hFFFF);
+	q_done;
+
+	q(32'h0200_0104, 32'h1111_2222);
+	check("BOM skipped + tab separator", hit === 1'b1 && patch === 16'hFFFF);
+	q_done;
+
+	q(32'h0200_0108, 32'h3434_0000);
+	check("double space separator", hit === 1'b1 && patch === 16'h00EE);
+	q_done;
+
+	q(32'h0200_010C, 32'h0000_0000);
+	check("tail line flushed w/o newline", hit === 1'b1 && patch === 16'h00DD);
 	q_done;
 
 	if (errors == 0) $display("tb_cheat_engine: PASS");

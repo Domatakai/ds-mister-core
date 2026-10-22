@@ -1,10 +1,8 @@
-# NDS MiSTer Test — timing constraints
-create_clock -name CLOCK_50M -period 20 [get_ports {CLK_50M}]
-create_clock -name CLOCK_24M -period 40.690 [get_ports {CLK_AUDIO}]
-
+# NDS MiSTer Test — core-specific timing constraints.
+# All top-level clocks (FPGA_CLK*_50, HPS SPI) and the framework false
+# paths are constrained by sys/sys_top.sdc; nothing in the core creates
+# its own clock, so this file only mirrors the Template additions.
 derive_pll_clocks
 derive_clock_uncertainty
 
-# HPS_BUS is an async interface handled inside the framework.
-set_false_path -from [get_ports {HPS_BUS*}]
-set_false_path -to   [get_ports {HPS_BUS*}]
+# core specific constraints
