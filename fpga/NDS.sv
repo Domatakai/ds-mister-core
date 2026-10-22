@@ -78,7 +78,7 @@ localparam CONF_STR = {
 "-;",
 "P1,Cartridge;",
 "P1F1,NDS;",
-"P1-,",
+"P1-;",
 "P1O[4:2],Save type,Auto,EEPROM 512K,EEPROM 8K,FLASH 512K,FLASH 1M,FRAM,NAND;",
 "P1T[126],Erase save data;",
 "-;",
@@ -106,7 +106,7 @@ localparam CONF_STR = {
 "P4O[29],Firmware,HLE,Flash dump;",
 "P4O[30],Skip intro logo,Off,On;",
 "P4O[32:31],Region,Auto,NTSC-U,NTSC-J,PAL;",
-"P4-,",
+"P4-;",
 "P4O[34:33],Stylus cursor,Off,D-pad,Left stick;",
 "P4O[55:54],Stylus tap,L2,R2,L3,R3;",
 "P4O[56],Face buttons,Standard,Swapped;",
@@ -121,7 +121,7 @@ localparam CONF_STR = {
 "P5O[43:42],Frameskip,Off,1,2,3;",
 "P5O[44],Auto frameskip,Off,On;",
 "P5O[46:45],Rewind buffer,Off,5 s,15 s,30 s;",
-"P5-,",
+"P5-;",
 "P5-,Diagnostics;",
 "P5O[47],Show FPS,Off,On;",
 "P5O[48],Frame graph,Off,On;",
@@ -336,7 +336,9 @@ video_timing video_timing (
 	.clk(clk_sys),
 	.ce(1'b1),
 	.pixel_ce(clk_pix_ce),
-	.reset(reset),
+	// free-running: holding video_timing in reset would freeze ce_div,
+	// so frame_start could never fire and reset_pending would deadlock
+	.reset(1'b0),
 	.h_total(h_total),
 	.v_total(v_total),
 	.x(pix_x),
@@ -497,7 +499,7 @@ sdram_ctrl sdram_ctrl (
 // header + capacity detection, CPU window bridge, save plumbing (M4)
 //------------------------------------------------------------------
 wire        cart_loaded;
-wire [27:0] rom_bytes;
+wire [31:0] rom_bytes;
 
 cart_slot cart_slot (
 	.clk(clk_sys),

@@ -60,9 +60,11 @@ always @(posedge clk) begin
 		h_cnt <= 0;
 		v_cnt <= 0;
 	end else if (pix_ce) begin
-		if (h_cnt == h_total - 1'd1) begin
+		// >= so an OSD refresh switch that shortens the totals mid-frame
+		// re-locks on the next boundary instead of counting to 2^N-1
+		if (h_cnt >= h_total - 1'd1) begin
 			h_cnt <= 0;
-			v_cnt <= (v_cnt == v_total - 1'd1) ? 10'd0 : v_cnt + 1'd1;
+			v_cnt <= (v_cnt >= v_total - 1'd1) ? 10'd0 : v_cnt + 1'd1;
 		end else begin
 			h_cnt <= h_cnt + 1'd1;
 		end

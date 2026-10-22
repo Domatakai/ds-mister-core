@@ -5,10 +5,16 @@
 //            rtl/cart/cart_slot.sv && vvp /tmp/tb_cart
 //
 // Drives a simulated .nds download into the line FIFO, models the DDRAM
-// handshake (including BUSY periods), then exercises the CPU window read
-// bridge: pulse-style requests, data capture, and the pending latch that
-// keeps a request alive across DDR busy. Checks 256 Mbit capacity
-// detection (header byte 0x80 = 8 -> 128 KB << 8 = 32 MB).
+// handshake with Avalon waitrequest semantics (a write/read is accepted
+// only on a cycle with BUSY low), and verifies:
+//   - packing of full 64-bit lines and the partial-line tail flush
+//     (download size not a multiple of 8 bytes) with byte enables
+//   - hold-until-accept: a strobe granted just before BUSY rises must
+//     be held, never dropped (regression: a lost write wedged the drain)
+//   - header byte 0x80 capacity detection, 32-bit (128 KB << 12 = 512 MB)
+//   - CPU window reads, including a request whose accept cycle is
+//     covered by BUSY (RD held until the controller takes it)
+//   - the pending latch that keeps a request alive across DDR busy
 //============================================================================
 `timescale 1ns / 1ps
 
@@ -45,7 +51,7 @@ wire save_req, save_wr;
 wire [24:0] save_addr;
 wire [15:0] save_din;
 wire cart_loaded;
-wire [27:0] rom_bytes;
+wire [31:0] rom_bytes;
 
 cart_slot dut (
 	.clk(clk), .reset(reset),
@@ -64,13 +70,16 @@ cart_slot dut (
 );
 
 //------------------------------------------------------------------
-// behavioral DDR3: accepts writes when !busy, returns lines on read
+// behavioral DDR3: accepts strobes only on cycles with !busy
+// (Avalon waitrequest), returns lines on read; captures byte enables
 //------------------------------------------------------------------
 reg [63:0] mem [0:255];
+reg  [7:0] mem_be [0:255];
 integer wr_beats = 0;
 always @(posedge clk) begin
 	if (ddr_we && !ddr_busy) begin
-		mem[ddr_addr[7:0]] <= ddr_din;
+		mem[ddr_addr[7:0]]    <= ddr_din;
+		mem_be[ddr_addr[7:0]] <= ddr_be;
 		wr_beats = wr_beats + 1;
 	end
 	ddr_dout_ready <= 0;
@@ -125,27 +134,44 @@ endtask
 
 integer i;
 initial begin
-	for (i = 0; i < 256; i = i + 1) mem[i] = 64'd0;
+	for (i = 0; i < 256; i = i + 1) begin
+		mem[i] = 64'd0;
+		mem_be[i] = 8'd0;
+	end
 
 	repeat (5) @(posedge clk);
 	reset = 0;
 	repeat (2) @(posedge clk);
 
-	// --- download 8 words = 2 lines: pattern 0x1000+k
+	// --- download with BUSY covering the drain window except one cycle:
+	//     the grant lands on the free cycle and the accept cycle is
+	//     busy — the strobe must be HELD, not dropped.
 	@(posedge clk); ioctl_download <= 1;
-	for (i = 0; i < 8; i = i + 1) send_word(i * 2, 16'h1000 + i[15:0]);
-	// capacity byte: header 0x80 lives at byte 0x80 (word index 0x40)
+	ddr_busy = 1;
+	for (i = 0; i < 4; i = i + 1) send_word(i * 2, 16'h1000 + i[15:0]);
+	repeat (2) @(posedge clk);
+	@(posedge clk); ddr_busy <= 0;  // one cycle visible-low: grant lands here
+	@(posedge clk); ddr_busy <= 1;  // accept cycle is busy: must be held
+	repeat (4) @(posedge clk);
+	@(posedge clk); ddr_busy <= 0;
+
+	// second line + header word (byte 0x80 -> capacity 8 = 256 Mbit)
+	for (i = 4; i < 8; i = i + 1) send_word(i * 2, 16'h1000 + i[15:0]);
 	send_word(27'h80, 16'h0008); // 128 KB << 8 = 32 MB = 256 Mbit
 	@(posedge clk); ioctl_download <= 0;
 	repeat (400) @(posedge clk);
 
-	check("download -> 2 DDR lines", wr_beats == 2);
+	check("download -> 3 DDR lines (2 full + tail)", wr_beats == 3);
 	check("line 0 packing {w3,w2,w1,w0}",
 		mem[0] === {16'h1003, 16'h1002, 16'h1001, 16'h1000});
 	check("line 1 packing {w7,w6,w5,w4}",
 		mem[1] === {16'h1007, 16'h1006, 16'h1005, 16'h1004});
+	check("full lines carry BE=FF", mem_be[0] === 8'hFF && mem_be[1] === 8'hFF);
+	check("tail line flush {0,header word}",
+		mem[2] === {48'd0, 16'h0008});
+	check("tail line BE=03 (one word)", mem_be[2] === 8'h03);
 	check("cart loaded", cart_loaded === 1'b1);
-	check("256 Mbit capacity detected", rom_bytes == 28'd33554432);
+	check("256 Mbit capacity detected", rom_bytes == 32'd33554432);
 
 	// --- window read: byte 4 -> line0 halfword2 = 0x1002
 	win_read(26'd4);
@@ -171,9 +197,33 @@ initial begin
 	check("pending request survives DDR busy", win_data === 16'h1000);
 	@(posedge clk);
 
+	// --- post-grant BUSY: RD is granted with BUSY low, then BUSY
+	//     covers the accept cycle — RD must be held, not dropped.
+	repeat (4) @(posedge clk);
+	@(posedge clk);
+	win_addr <= 26'd4;
+	win_req  <= 1;
+	@(posedge clk);        // FSM grants here (ddr_rd goes high)
+	win_req  <= 0;
+	ddr_busy <= 1;         // accept cycle is busy: must be held
+	repeat (3) @(posedge clk);
+	@(posedge clk); ddr_busy <= 0;
+	wait (win_valid);
+	check("RD held across post-grant BUSY", win_data === 16'h1002);
+	@(posedge clk);
+
 	// --- save master stays idle until M4
 	repeat (4) @(posedge clk);
 	check("save master idle", save_req === 1'b0 && save_wr === 1'b0);
+
+	// --- second load: capacity byte 0x80 = 12 -> 128 KB << 12 = 512 MB.
+	//     A 28-bit rom_bytes would truncate this to 0 (regression).
+	@(posedge clk); ioctl_download <= 1;
+	send_word(27'h80, 16'h000C);
+	@(posedge clk); ioctl_download <= 0;
+	repeat (100) @(posedge clk);
+	check("reload sets cart_loaded", cart_loaded === 1'b1);
+	check("512 MB capacity detected (32-bit)", rom_bytes == 32'd536870912);
 
 	if (errors == 0) $display("tb_cart_slot: PASS");
 	else             $display("tb_cart_slot: FAIL (%0d errors)", errors);

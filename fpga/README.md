@@ -182,7 +182,8 @@ iverilog -g2012 -o /tmp/tb_in tb/tb_input_mapper.sv rtl/input/input_mapper.sv
 vvp /tmp/tb_in
 # tb_input_mapper: PASS
 
-# 4. cart — DDR3 line FIFO, 256 Mbit capacity, window reads
+# 4. cart — DDR3 line FIFO (BUSY hold-until-accept), partial-line tail
+#     flush, 256 Mbit + 512 MB capacity, window reads
 iverilog -g2012 -o /tmp/tb_cart tb/tb_cart_slot.sv rtl/cart/cart_slot.sv
 vvp /tmp/tb_cart
 # tb_cart_slot: PASS
