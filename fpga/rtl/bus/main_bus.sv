@@ -82,8 +82,10 @@ module main_bus (
 	// ---- cheat hook ----
 	output reg       cheat_chk_en,
 	output reg [31:0] cheat_chk_addr,
-	output reg [15:0] cheat_chk_data,
+	output reg [31:0] cheat_chk_word,
 	input     [15:0] cheat_patch,
+	input            cheat_patch_hi_en,
+	input     [15:0] cheat_patch_hi,
 	input            cheat_hit,
 
 	// ---- engine / system observations (M2 consumers) ----
@@ -127,12 +129,15 @@ localparam S_IDLE  = 3'd0,
            S_WAIT_A= 3'd3,
            S_REQ_B = 3'd4,
            S_WAIT_B= 3'd5,
-           S_RESP  = 3'd6;
+           S_RESP  = 3'd6,
+           S_CPATCH= 3'd7;
 
 reg [2:0]  state = S_IDLE;
 reg        turn = 0;      // fairness: alternates when both request
 reg        m9_active = 0;
 reg        m7_active = 0;
+reg        m9_block = 0;  // served until the master drops its strobe
+reg        m7_block = 0;
 reg        is_read = 0;
 reg        need_b = 0;
 reg [15:0] lo_half = 0;
@@ -192,6 +197,17 @@ always @(*) begin
 	// VRAM reads 0 until bank storage lands (M2)
 end
 
+// WRAM BRAMs answer with a registered read (one cycle, captured before
+// S_CPATCH consumes it); the shared index/idx are stable per transaction.
+reg [31:0] wram_q, wram7_q;
+always @(posedge clk) begin
+	wram_q  <= wram_shared[shared_idx];
+	wram7_q <= wram_arm7[a7_idx];
+end
+
+wire [31:0] priv_data = is_shared ? wram_q :
+                        is_a7wram ? wram7_q : rd_word;
+
 //------------------------------------------------------------------
 // Address/word helpers
 //------------------------------------------------------------------
@@ -202,8 +218,9 @@ wire [9:0]  pal_idx    = a[10:1];
 wire [15:0] w_lane_lo = wdata[15:0];
 wire [15:0] w_lane_hi = wdata[31:16];
 
-// main RAM: byte 0x02000000+offset -> SDRAM word 0x200000+ (4 MB window)
-wire [24:0] ram_word_lo = {3'd0, 1'b1, 1'b0, a[21:2]};
+// main RAM: byte 0x02xxxxxx -> SDRAM halfword 0x2xxxxx + byte/2, so a
+// 32-bit word spans halves {k, k+1} (never overlapping its neighbour).
+wire [24:0] ram_word_lo = {3'd0, 1'b1, a[21:1]};
 wire [24:0] ram_word_hi = ram_word_lo + 25'd1;
 
 //------------------------------------------------------------------
@@ -220,20 +237,23 @@ always @(posedge clk) begin
 	case (state)
 
 	S_IDLE: begin
-		if (m9_req && m7_req) begin
+		cheat_chk_en <= 0;
+		if (!m9_req) m9_block <= 0;
+		if (!m7_req) m7_block <= 0;
+		if (m9_req && !m9_block && m7_req && !m7_block) begin
 			if (turn) begin m7_active <= 1; m9_active <= 0; end
 			else      begin m9_active <= 1; m7_active <= 0; end
 			state <= S_PRIV;
-		end else if (m9_req) begin
+		end else if (m9_req && !m9_block) begin
 			m9_active <= 1; m7_active <= 0; state <= S_PRIV;
-		end else if (m7_req) begin
+		end else if (m7_req && !m7_block) begin
 			m7_active <= 1; m9_active <= 0; state <= S_PRIV;
 		end
 	end
 
 	S_PRIV: begin
 		is_read  <= m_rd;
-		need_b   <= |be[3:2] && (is_ram || is_shared || is_a7wram ||
+		need_b   <= |be[3:2] && (is_ram || is_cart || is_shared || is_a7wram ||
 		                         is_pal || is_oam || is_io);
 		lo_half  <= 16'h0000;
 		hi_half  <= 16'h0000;
@@ -339,31 +359,36 @@ always @(posedge clk) begin
 	end
 
 	S_RESP: begin
+		// Offer the read to the cheat engine; the patched value lands
+		// one cycle later in S_CPATCH.
+		cheat_chk_en   <= is_read && !m_wr && is_ram;
+		cheat_chk_addr <= a;
+		cheat_chk_word <= {hi_half, lo_half};
+		state          <= S_CPATCH;
+	end
+
+	S_CPATCH: begin
 		if (m9_active) begin
-			if (is_read && !m_wr) begin
-				m9_rdata <= is_private ? rd_word :
-				            is_ram     ? {hi_half, lo_half} :
+			if (is_read && !m_wr)
+				m9_rdata <= is_private ? priv_data :
+				            is_ram     ? {cheat_hit && cheat_patch_hi_en ? cheat_patch_hi : hi_half,
+				                          cheat_hit ? cheat_patch : lo_half} :
 				            is_cart    ? {hi_half, lo_half} : 32'h0;
-				cheat_chk_en   <= is_ram;
-				cheat_chk_addr <= a;
-				cheat_chk_data <= lo_half;
-			end
 			m9_ready <= 1;
+			m9_block <= 1;
 		end else if (m7_active) begin
-			if (is_read && !m_wr) begin
-				m7_rdata <= is_private ? rd_word :
-				            is_ram     ? {hi_half, lo_half} :
+			if (is_read && !m_wr)
+				m7_rdata <= is_private ? priv_data :
+				            is_ram     ? {cheat_hit && cheat_patch_hi_en ? cheat_patch_hi : hi_half,
+				                          cheat_hit ? cheat_patch : lo_half} :
 				            is_cart    ? {hi_half, lo_half} : 32'h0;
-				cheat_chk_en   <= is_ram;
-				cheat_chk_addr <= a;
-				cheat_chk_data <= lo_half;
-			end
 			m7_ready <= 1;
+			m7_block <= 1;
 		end
-		turn      <= ~turn;
-		m9_active <= 0;
-		m7_active <= 0;
-		state     <= S_IDLE;
+		turn       <= ~turn;
+		m9_active  <= 0;
+		m7_active  <= 0;
+		state      <= S_IDLE;
 	end
 
 	default: state <= S_IDLE;
@@ -372,6 +397,7 @@ always @(posedge clk) begin
 	if (reset) begin
 		state <= S_IDLE;
 		m9_active <= 0; m7_active <= 0;
+		m9_block <= 0; m7_block <= 0;
 		m9_ready  <= 0; m7_ready  <= 0;
 		vramcnt_we_r <= 0; cheat_chk_en <= 0;
 		cart_req <= 0; ram_req <= 0; ram_wr <= 0;
@@ -385,7 +411,6 @@ end
 
 // cheat_patch is applied by the CPU read service in M1; touch/mic and
 // observations are consumed as the engines land.
-wire _unused = &{1'b0, touch_x, touch_y, touch_down, mic_in,
-                 cheat_patch, cheat_hit};
+wire _unused = &{1'b0, touch_x, touch_y, touch_down, mic_in};
 
 endmodule

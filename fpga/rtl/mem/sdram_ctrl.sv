@@ -9,14 +9,14 @@
 //   addr[23:11] row      (8192)
 //
 // Regions carved out by the core (see main_bus.sv):
-//   0x000000..0x1FFFFF  cart ROM window   (up to 2 MB banked; full cart
-//                                           banking lands with M4)
-//   0x200000..0x27FFFF  main RAM (4 MB, the DS's 32-bit main memory
-//                        presented as 16-bit words)
-//   0x280000..0x283FFF  save data (up to 1 MB in later milestones)
+//   0x000000..0x0FFFFF  save data (up to 1 MB; cart_slot save master,
+//                        M4 completes the handshakes)
+//   0x200000..0x3FFFFF  main RAM (4 MB of the DS's 32-bit main memory
+//                        as 16-bit halfwords: base + byte_offset/2)
+//   0x400000..0x4FFFFF  palette/OAM overflow (M2)
 //
-// One requester at a time for now; main_bus.sv is where arbitration
-// between ARM9, ARM7, DMA and the video path gets added.
+// One requester at a time behind mem_arbiter (bus window port A, save
+// port B); the CPU/video/DMA arbitration above that lands in M2.
 //============================================================================
 module sdram_ctrl (
 	input            clk,

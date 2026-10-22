@@ -90,12 +90,16 @@ localparam CONF_STR = {
 "P2O[15],Swap screens,Off,On;",
 "P2O[18:16],Brightness,1,2,3,4,5;",
 "P2O[53:52],Refresh rate,Native 59.82,59.95,60.00;",
+"P2O[62:60],Video filter,Off,Soft,Smooth,Sharp;",
+"P2O[65:63],Palette,Original,DS LCD,Vivid,Warm,Cool,Grayscale;",
 "-;",
 "P3,Audio;",
 "P3O[22:19],Master volume,0%,10%,20%,30%,40%,50%,60%,70%,80%,90%,100%;",
 "P3O[24:23],Output mix,Stereo,Mono,Headphones;",
 "P3O[26:25],I2S latency,1 frame,2 frames,4 frames;",
 "P3O[27],SPU sync,Off,On;",
+"P3O[67:66],Audio filter,Off,Warm,Bright,Bass;",
+"P3O[69:68],Stereo width,Off,Soft,Strong;",
 "-;",
 "P4,BIOS & Input;",
 "P4O[28],Slot-1 BIOS,HLE,Real;",
@@ -237,6 +241,10 @@ wire  [1:0] tap_sel       = status[55:54];
 wire        face_swap     = status[56];
 wire        shoulder_swap = status[57];
 wire  [1:0] oc_mode       = status[59:58];
+wire  [2:0] vfilter       = status[62:60]; // Video filter
+wire  [2:0] palette_sel   = status[65:63]; // Colour palette
+wire  [1:0] afilter       = status[67:66]; // Audio filter
+wire  [1:0] stereo_width  = status[69:68]; // Stereo width
 
 //------------------------------------------------------------------
 // Clocks
@@ -322,14 +330,40 @@ screen_composer screen_composer (
 engine_a engine_a (.clk(clk_sys), .x(na_x), .y(na_y), .on(na_on), .rgb555(pix_top));
 engine_b engine_b (.clk(clk_sys), .x(nb_x), .y(nb_y), .on(nb_on), .rgb555(pix_bot));
 
-// RGB555 -> RGB888 for the framework
-wire [4:0] out_r = pix_out[14:10], out_g = pix_out[9:5], out_b = pix_out[4:0];
-assign VGA_R = pix_de ? {out_r, out_r[4:2]} : 8'd0;
-assign VGA_G = pix_de ? {out_g, out_g[4:2]} : 8'd0;
-assign VGA_B = pix_de ? {out_b, out_b[4:2]} : 8'd0;
-assign VGA_HS = pix_hs;
-assign VGA_VS = pix_vs;
-assign VGA_DE = pix_de;
+// Spatial filter (exactly 1 CE latency, sync delayed to match) then
+// the colour profile, then RGB888 for the framework.
+wire [15:0] filt_out, pal_out;
+wire        f_de, f_hs, f_vs;
+
+video_filter video_filter (
+	.clk(clk_sys),
+	.ce(clk_pix_ce),
+	.mode(vfilter),
+	.x(pix_x),
+	.y(pix_y),
+	.de(pix_de),
+	.hs(pix_hs),
+	.vs(pix_vs),
+	.rgb_in(pix_out),
+	.rgb_o(filt_out),
+	.de_o(f_de),
+	.hs_o(f_hs),
+	.vs_o(f_vs)
+);
+
+palette palette (
+	.mode(palette_sel),
+	.rgb_in(filt_out),
+	.rgb_o(pal_out)
+);
+
+wire [4:0] out_r = pal_out[14:10], out_g = pal_out[9:5], out_b = pal_out[4:0];
+assign VGA_R = f_de ? {out_r, out_r[4:2]} : 8'd0;
+assign VGA_G = f_de ? {out_g, out_g[4:2]} : 8'd0;
+assign VGA_B = f_de ? {out_b, out_b[4:2]} : 8'd0;
+assign VGA_HS = f_hs;
+assign VGA_VS = f_vs;
+assign VGA_DE = f_de;
 assign VGA_F1 = 0;
 assign VGA_SL = scanlines;
 assign VGA_SCALER = 0;
@@ -498,7 +532,9 @@ wire  [7:0] bus_vramcnt_data;
 
 wire        cheat_chk_en, cheat_hit;
 wire [31:0] cheat_chk_addr;
-wire [15:0] cheat_chk_data, cheat_patch;
+wire [31:0] cheat_chk_word;
+wire [15:0] cheat_patch, cheat_patch_hi;
+wire        cheat_patch_hi_en;
 
 wire [15:0] dispcnt_a, dispcnt_b;
 wire        irq_me;
@@ -542,8 +578,10 @@ main_bus main_bus (
 	.vramcnt_data(bus_vramcnt_data),
 	.cheat_chk_en(cheat_chk_en),
 	.cheat_chk_addr(cheat_chk_addr),
-	.cheat_chk_data(cheat_chk_data),
+	.cheat_chk_word(cheat_chk_word),
 	.cheat_patch(cheat_patch),
+	.cheat_patch_hi_en(cheat_patch_hi_en),
+	.cheat_patch_hi(cheat_patch_hi),
 	.cheat_hit(cheat_hit),
 	.dispcnt_a(dispcnt_a),
 	.dispcnt_b(dispcnt_b),
@@ -571,12 +609,14 @@ cheat_engine cheat_engine (
 	.reset(reset),
 	.f2_wr(f2_wr),
 	.f2_dout(f2_dout),
-	.f2_last(1'b0),              // trailing line w/o newline: dropped
+	.clr_cheats(status[125]),   // OSD: Disable all cheats (until next load)
 	.chk_en(cheat_chk_en),
 	.chk_addr(cheat_chk_addr),
-	.chk_data(cheat_chk_data),
+	.chk_word(cheat_chk_word),
 	.hit(cheat_hit),
-	.patch(cheat_patch)
+	.patch(cheat_patch),
+	.patch_hi_en(cheat_patch_hi_en),
+	.patch_hi(cheat_patch_hi)
 );
 
 //------------------------------------------------------------------
@@ -616,6 +656,10 @@ arm7_core arm7 (
 //------------------------------------------------------------------
 // Audio: 16-channel SPU stub (M4) -> I2S at frame rate
 //------------------------------------------------------------------
+wire [15:0] spu_l, spu_r;
+reg         frame_s = 0;
+always @(posedge clk_sys) frame_s <= frame_start; // sample after SPU latches
+
 spu spu (
 	.clk(clk_sys),
 	.clk_audio(CLK_AUDIO),
@@ -623,8 +667,20 @@ spu spu (
 	.volume(volume),
 	.mix_mode(mix_mode),
 	.frame_start(frame_start),
-	.audio_l(AUDIO_L),
-	.audio_r(AUDIO_R)
+	.audio_l(spu_l),
+	.audio_r(spu_r)
+);
+
+audio_filter audio_filter (
+	.clk(clk_sys),
+	.reset(reset),
+	.strobe(frame_s),
+	.mode(afilter),
+	.width(stereo_width),
+	.in_l(spu_l),
+	.in_r(spu_r),
+	.out_l(AUDIO_L),
+	.out_r(AUDIO_R)
 );
 
 //------------------------------------------------------------------

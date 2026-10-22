@@ -6,7 +6,9 @@
 //
 // Drives a simulated .nds download into the line FIFO, models the DDRAM
 // handshake (including BUSY periods), then exercises the CPU window read
-// bridge. Checks 256 Mbit capacity detection (header byte 0x80 = 8).
+// bridge: pulse-style requests, data capture, and the pending latch that
+// keeps a request alive across DDR busy. Checks 256 Mbit capacity
+// detection (header byte 0x80 = 8 -> 128 KB << 8 = 32 MB).
 //============================================================================
 `timescale 1ns / 1ps
 
@@ -39,9 +41,9 @@ wire [15:0] win_data;
 
 reg erase_save = 0;
 reg [2:0] save_type = 0;
-wire [24:0] mem_addr;
-wire [15:0] mem_din;
-wire mem_wr;
+wire save_req, save_wr;
+wire [24:0] save_addr;
+wire [15:0] save_din;
 wire cart_loaded;
 wire [27:0] rom_bytes;
 
@@ -56,8 +58,8 @@ cart_slot dut (
 	.win_req(win_req), .win_addr(win_addr),
 	.win_valid(win_valid), .win_data(win_data),
 	.erase_save(erase_save), .save_type(save_type),
-	.mem_addr(mem_addr), .mem_din(mem_din), .mem_wr(mem_wr),
-	.mem_wr_done(1'b0),
+	.save_req(save_req), .save_wr(save_wr),
+	.save_addr(save_addr), .save_din(save_din), .save_done(1'b0),
 	.cart_loaded(cart_loaded), .rom_bytes(rom_bytes)
 );
 
@@ -80,7 +82,7 @@ end
 
 integer errors = 0;
 task check;
-	input [8*32:1] name;
+	input [8*40:1] name;
 	input cond;
 	begin
 		if (!cond) begin
@@ -102,6 +104,22 @@ task send_word;
 		ioctl_wr   <= 1;
 		@(posedge clk);
 		ioctl_wr   <= 0;
+	end
+endtask
+
+// one-cycle request pulse, then wait for the response
+reg [15:0] got;
+task win_read;
+	input [25:0] a;
+	begin
+		@(posedge clk);
+		win_addr <= a;
+		win_req  <= 1;
+		@(posedge clk);
+		win_req  <= 0;
+		wait (win_valid);
+		got = win_data;
+		@(posedge clk);
 	end
 endtask
 
@@ -130,23 +148,32 @@ initial begin
 	check("256 Mbit capacity detected", rom_bytes == 28'd33554432);
 
 	// --- window read: byte 4 -> line0 halfword2 = 0x1002
-	@(posedge clk);
-	win_addr <= 26'd4;
-	win_req  <= 1;
-	@(posedge clk);
-	wait (win_valid);
-	check("window byte 4 -> 0x1002", win_data === 16'h1002);
-	@(posedge clk); win_req <= 0;
+	win_read(26'd4);
+	check("window byte 4 -> 0x1002", got === 16'h1002);
 
 	// --- window read: byte 8 -> line1 halfword0 = 0x1004
 	repeat (4) @(posedge clk);
+	win_read(26'd8);
+	check("window byte 8 -> 0x1004", got === 16'h1004);
+
+	// --- busy backpressure: request arrives while DDR is busy; the
+	//     pending latch must carry it through and answer correctly.
+	repeat (4) @(posedge clk);
+	ddr_busy = 1;
 	@(posedge clk);
-	win_addr <= 26'd8;
+	win_addr <= 26'd0;
 	win_req  <= 1;
 	@(posedge clk);
+	win_req  <= 0;
+	repeat (8) @(posedge clk);
+	ddr_busy = 0;
 	wait (win_valid);
-	check("window byte 8 -> 0x1004", win_data === 16'h1004);
-	@(posedge clk); win_req <= 0;
+	check("pending request survives DDR busy", win_data === 16'h1000);
+	@(posedge clk);
+
+	// --- save master stays idle until M4
+	repeat (4) @(posedge clk);
+	check("save master idle", save_req === 1'b0 && save_wr === 1'b0);
 
 	if (errors == 0) $display("tb_cart_slot: PASS");
 	else             $display("tb_cart_slot: FAIL (%0d errors)", errors);
