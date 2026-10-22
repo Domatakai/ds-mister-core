@@ -152,31 +152,27 @@ wire  [15:0] ioctl_dout;
 wire         ioctl_wr;
 wire  [15:0] ioctl_index;
 wire   [0:0] sd_rd, sd_wr;
-wire  [31:0] sd_lba [1];
-wire   [5:0] sd_blk_cnt [1];
 wire  [15:0] sd_buff_dout;
 wire  [12:0] sd_buff_addr;
 wire         sd_buff_wr;
-wire  [15:0] sd_buff_din [1];
 wire   [0:0] sd_ack;
 wire   [0:0] img_mounted;
 wire  [63:0] img_size;
 wire         ioctl_wait;   // cart slot backpressure -> HPS
 wire  [15:0] stick0;       // left analog stick (stylus cursor mode)
 
-assign sd_blk_cnt[0] = 0; // single 512-byte block per request
-
 // no SD block-device saves yet: keep HPS request inputs deasserted
-assign sd_rd        = 1'b0;
-assign sd_wr        = 1'b0;
-assign sd_lba[0]    = 32'd0;
-assign sd_buff_din[0] = 16'd0;
+assign sd_rd = 1'b0;
+assign sd_wr = 1'b0;
 
 //------------------------------------------------------------------
 // F2 (.cht) text path: secondary files share the ioctl pipe, keyed by
 // ioctl_index (F1 -> 1, F2 -> 2). WIDE=1 delivers two ASCII bytes per
 // 16-bit word, low byte first; the high byte of an odd final word is
 // zero padding and is filtered by the engine.
+// The split takes 2 clk_sys cycles per word; HPS SPI spaces words
+// >= 16 SCK (~160 ns @100 MHz) apart vs 40 ns needed, so back-to-back
+// words can never collide in cht_pend.
 //------------------------------------------------------------------
 wire        cheat_dl = ioctl_download & (ioctl_index[5:0] == 6'd2);
 wire        cheat_wr = cheat_dl & ioctl_wr;
@@ -220,12 +216,12 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1), .VDNUM(1)) hps_io
 
 	.sd_rd(sd_rd),
 	.sd_wr(sd_wr),
-	.sd_lba(sd_lba),
-	.sd_blk_cnt(sd_blk_cnt),
+	.sd_lba('{32'd0}),
+	.sd_blk_cnt('{6'd0}),
 	.sd_buff_dout(sd_buff_dout),
 	.sd_buff_addr(sd_buff_addr),
 	.sd_buff_wr(sd_buff_wr),
-	.sd_buff_din(sd_buff_din),
+	.sd_buff_din('{16'd0}),
 	.sd_ack(sd_ack),
 	.img_mounted(img_mounted),
 	.img_size(img_size),

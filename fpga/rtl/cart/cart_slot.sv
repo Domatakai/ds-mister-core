@@ -138,13 +138,15 @@ end
 //------------------------------------------------------------------
 reg dl_d = 0;
 always @(posedge clk) begin
-	dl_d <= ioctl_download;
-	if (ioctl_download && !dl_d) begin
+	// only the F1 ROM stream owns the load lifecycle — a later F2
+	// (.cht) download on the shared pipe must not clear cart state
+	dl_d <= ioctl_download && is_rom;
+	if (ioctl_download && is_rom && !dl_d) begin
 		cart_loaded <= 0;
 		line_no     <= 0;
 		pack_idx    <= 0;
 	end
-	if (!ioctl_download && dl_d) cart_loaded <= 1;
+	if (!(ioctl_download && is_rom) && dl_d) cart_loaded <= 1;
 	if (reset) cart_loaded <= 0;
 end
 

@@ -53,9 +53,15 @@ fpga/
   NDS.sv                  core top (module emu): OSD menu, status decode,
                           instantiates everything below
   NDS.qpf / NDS.qsf       Quartus project (adapted from Template_MiSTer)
-  NDS.sdc                 timing constraints
+  NDS.sdc                 timing constraints (Template-style; top-level
+                          clocks come from sys/sys_top.sdc)
   files.qip               source list — add new files HERE, never in the IDE
+  sys/                    MiSTer framework vendored from Template_MiSTer
+                          (hps_io, osd, scaler, sys_top, PLLs, pins) —
+                          keep in sync with upstream, do not edit
   rtl/
+    pll.qip / pll.v       core PLL wrapper required by the framework
+                          (sys/pll_q17.qip references it)
     video/video_timing.sv     256x384 frame timing; selectable
                               59.82 / 59.95 / 60.00 Hz      [SIM-VERIFIED]
     video/screen_composer.sv  dual-screen placement, rotation,
@@ -77,8 +83,9 @@ fpga/
     mem/mem_arbiter.sv        two-master SDRAM arbiter (bus + save)
     cart/cart_slot.sv         ROM -> DDR3 with line FIFO + backpressure,
                               capacity detection, CPU window bridge
+                              [SIM-VERIFIED]
     cart/cheat_engine.sv      Action Replay DS parser (GBATEK types
-                              0-8) + RAM read patching       [SIM-VERIFIED]
+                              0-A) + RAM read patching       [SIM-VERIFIED]
     input/input_mapper.sv     MiSTer pad -> DS KEYINPUT, stylus, mic
     audio/audio_filter.sv     EQ presets (warm/bright/bass) +
                               mid/side stereo width          [SIM-VERIFIED]
@@ -96,20 +103,61 @@ fpga/
 
 ## Build
 
-Prerequisites: **Quartus Prime 17.0.2 or 23.1 Standard Edition**, and the
-MiSTer framework:
+Prerequisites: **Quartus Prime 17.0.x** — the MiSTer project mandates
+17.0.x (17.0.2 recommended, Lite or Standard license; newer versions
+introduce project-setting incompatibilities with no benefit for the
+Cyclone V). The MiSTer framework is **already vendored** in `fpga/sys/`
+(hps_io, osd, scaler, sys_top, PLLs, pin map) exactly as shipped by
+Template_MiSTer — no copy step needed.
 
 ```bash
-git clone --depth 1 https://github.com/MiSTer-devel/Template_MiSTer.git
-cp -r Template_MiSTer/sys  fpga/sys      # framework (hps_io, osd, scaler…)
 cd fpga
 quartus_sh --flow compile NDS            # or open NDS.qpf in the IDE
-cp output_files/NDS.rbf  /media/fat/games/NDS/
 ```
 
-The `.rbf` appears on the MiSTer's Games/NDS folder. Optional real BIOS:
-put `bios7.bin` + `bios9.bin` in `/media/fat/BIOS/` and set
-**BIOS & Input → Slot-1 BIOS → Real** (HLE boots without them).
+First full compile (analysis + fit + ASM + timing) takes roughly
+10–20 min on a modern multicore machine (`NUM_PARALLEL_PROCESSORS ALL`
+is set). Success criteria:
+
+- `output_files/NDS.rbf` exists (GENERATE_RBF_FILE is on),
+- TimeQuest reports no failing paths on the 50 MHz `FPGA_CLK2_50` /
+  `clk_sys` domain (`derive_pll_clocks` covers the HDMI/audio PLLs;
+  `NDS.sdc` + `sys/sys_top.sdc` are both registered),
+- Warnings to watch for: any **error** mentioning a missing file (a
+  `files.qip` entry) or a port name on `hps_io` — the port list was
+  verified against the framework source, so that would mean `sys/`
+  drifted from Template_MiSTer.
+
+Deploy to the DE10-Nano:
+
+```bash
+cp output_files/NDS.rbf  /media/fat/games/NDS/NDS.rbf
+```
+
+The core appears as **NDS MiSTer Test** in the MiSTer menu. Optional
+real BIOS: put `bios7.bin` + `bios9.bin` in `/media/fat/BIOS/` and set
+**BIOS & Input → Slot-1 BIOS → Real** (HLE boots without them). With a
+USB-Blaster attached, `jtag.cdf` (generated at compile time) can push
+the SOF straight to the board without an SD round-trip.
+
+### First hardware bring-up — what "working" looks like today
+
+The skeleton compiles to a stable, testable system even though games
+cannot boot yet (CPUs are stubs — M1). On first boot you should see:
+
+| Check | Expected |
+|---|---|
+| HDMI output | stable dual-screen frame at the selected refresh (59.82 native default), no flicker/desync |
+| Screens | engine A/B boot test patterns, correctly placed by layout/rotation/swap |
+| OSD menu | every row listed under **OSD menu** below opens and changes video/audio live |
+| `.nds` load (F1) | progress bar completes for any ROM size; cart LED activity; no freezes (ioctl_wait backpressure holds under DDR3 contention) |
+| `.cht` load (F2) | accepted without wedging; codes parsed (they take effect at M1 bus level — RAM patches are simulated, not yet exercised by a running game) |
+| Input | D-pad/buttons/keys move KEYINPUT (visible via Diagnostics bus LEDs) |
+| Audio | silence is expected — SPU is a framing stub until M4 |
+
+
+If HDMI is dead: check the compile warnings first, then confirm the
+`pll_hdmi` megafunction was generated for your Quartus patch level.
 
 ### Simulation
 
@@ -165,10 +213,28 @@ iverilog -g2012 -o /tmp/tb_af tb/tb_audio_filter.sv rtl/audio/audio_filter.sv
 vvp /tmp/tb_af
 # TB AUDIO FILTER PASS
 
-# 10. whole-top elaboration lint (Verilator 5+) — zero warnings
-verilator --lint-only -sv --top-module emu -I<framework-stub> \
-  NDS.sv <hps_io-stub> rtl/**/*.sv     # clean
+# 10. whole-top elaboration lint (Verilator 5+) against the REAL
+#     framework in sys/ — core + framework, warning classes disabled
+#     are the framework's own known Verilator complaints (legal SV,
+#     Quartus-clean) plus unused-signal style noise:
+mkdir -p /tmp/lintstub && printf '`define BUILD_DATE 25010100\n' > /tmp/lintstub/build_id.v
+SRC=$(awk '/SYSTEMVERILOG_FILE/ {print $NF}' files.qip | tr '\n' ' ')
+SYS=$(find sys -name '*.sv' -o -name '*.v' | grep -v 'hdmi/' \
+      | grep -v 'sys_top' | grep -v 'mcp23009' | tr '\n' ' ')
+verilator --lint-only -sv --top-module emu \
+  -Wno-BLKANDNBLK -Wno-PROCASSWIRE -Wno-IMPLICIT \
+  -Wno-TIMESCALEMOD -Wno-WIDTH -Wno-WIDTHCONCAT -Wno-PINMISSING \
+  -Wno-CASEX -Wno-CASEINCOMPLETE -Wno-UNOPTFLAT -Wno-DECLFILENAME \
+  -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-VARHIDDEN -Wno-SYNCASYNCNET \
+  -I/tmp/lintstub -Irtl -Irtl/cpu -Irtl/bus -Irtl/cart -Irtl/mem \
+  -Irtl/video -Irtl/audio -Irtl/input \
+  $SRC $SYS        # exits 0, no output
 ```
+
+`sys_top`, `mcp23009` and `hdmi/` are excluded from the lint: Verilator
+5.006 cannot parse two constructs in them (unpacked-array initializer,
+altera primitives) that Quartus accepts — they are framework files
+compiled by Quartus, not by this lint.
 
 ## Controls
 
