@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 const SCANLINE_OVERLAY: Record<string, string> = {
   Off: "",
   Soft: "repeating-linear-gradient(to bottom, rgba(0,0,0,0.16) 0 1px, transparent 1px 3px)",
+  Medium: "repeating-linear-gradient(to bottom, rgba(0,0,0,0.25) 0 1px, transparent 1px 3px)",
   Hard: "repeating-linear-gradient(to bottom, rgba(0,0,0,0.34) 0 2px, transparent 2px 4px)",
 };
 
@@ -37,7 +38,7 @@ export function DsScreen({
   frameMs: number;
   frameTimes: number[];
 }) {
-  const layout = values["video.layout"] ?? "Auto";
+  const layout = values["video.layout"] ?? "Stacked";
   const rotation = values["video.rotation"] ?? "0°";
   const swap = values["video.swap"] === "On";
   const brightness = Number(values["video.brightness"] ?? "3");
@@ -48,7 +49,7 @@ export function DsScreen({
 
   const showTop = layout !== "Bottom only";
   const showBottom = layout !== "Top only";
-  const vertical = layout === "Horizontal" ? "row" : "col";
+  const vertical = layout === "Side by side" ? "row" : "col";
   const turn = rotation === "90°" || rotation === "270°";
 
   const topScreen = (
@@ -162,7 +163,7 @@ export function DsScreen({
       <div className="mt-3 flex items-center justify-between font-mono text-[10px] tracking-[0.16em] text-[#8b8b84] uppercase">
         <span>
           OUT {OUTPUT_SIZE[values["video.scale"] ?? "Integer ×4"] ?? "1024 × 768"} ·{" "}
-          {values["video.aspect"] ?? "4:3"} · ROT {rotation}
+          {values["video.aspect"] ?? "Original"} · ROT {rotation}
         </span>
         <span className="tabular-nums">{showHud ? "HUD ON" : "HUD OFF"}</span>
       </div>

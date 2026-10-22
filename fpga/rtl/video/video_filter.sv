@@ -36,6 +36,7 @@ reg [15:0] cur    = 0;   // pixel at (x,   y)
 reg [15:0] h_prev = 0;   // pixel at (x-1, y)
 reg [15:0] v_line = 0;   // pixel at (x,   y-1)
 reg [15:0] v_pl   = 0;   // pixel at (x-1, y-1)
+reg        m_s1   = 0;   // bit 15 delayed with the pixel
 reg  [8:0] xb = 0, yb = 0;
 reg        de_b = 0, hs_b = 0, vs_b = 0;
 
@@ -45,6 +46,7 @@ always @(posedge clk) begin
 		h_prev <= cur;
 		v_line <= linebuf[x];          // old line, read-before-write
 		v_pl   <= v_line;
+		m_s1   <= rgb_in[15];
 		xb <= x;  yb <= y;
 		de_b <= de; hs_b <= hs; vs_b <= vs;
 		if (de) linebuf[x] <= rgb_in;
@@ -87,7 +89,7 @@ wire [4:0] p_b = (xb == 0 || yb == 0) ? cur[4:0]   : v_pl[4:0];
 
 always @(posedge clk) begin
 	if (ce) begin
-		rgb_o <= {rgb_in[15],
+		rgb_o <= {m_s1,
 		          fchan(c_r, h_r, v_r, p_r, mode),
 		          fchan(c_g, h_g, v_g, p_g, mode),
 		          fchan(c_b, h_b, v_b, p_b, mode)};

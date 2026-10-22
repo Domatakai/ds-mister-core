@@ -14,7 +14,14 @@ below — the two are intentionally kept in step.
 Honest state: **skeleton (milestone M1)**. The framework wiring, the OSD
 menu, the memory map, the SDRAM controller, the complete video path,
 the input path (DS keys, stylus, mic) and the DDR3 cartridge path for
-256 Mbit+ games are real and simulate correctly. The CPUs, 2D/3D
+256 Mbit+ games are real and simulate correctly. The rebuilt system bus
+is complete and simulated: `main_bus` decodes the DS memory map,
+serves both CPUs from private WRAM/IO/BIOS regions with round-robin
+arbitration, sequences 32-bit accesses over SDRAM halfwords through
+`mem_arbiter`, bridges the cart window, and patches RAM reads through
+the Action-Replay parser in `cheat_engine` (GBATEK type table). On top
+of that, the video/audio filter layer (`video_filter`, `palette`,
+`audio_filter`) is wired into the output chains. The CPUs, 2D/3D
 engines and SPU are interface-complete stubs — that is years of work
 ahead, and this repo organises it so each piece lands against a stable
 contract.
@@ -32,9 +39,12 @@ DE10-Nano's **DDR3**, so every cart size fits without banking:
 The download stream is buffered in a 64-line FIFO; `ioctl_wait` pauses
 the HPS if DDR3 contention (with the scaler) backs up — no bytes can be
 dropped. Header byte 0x80 (device capacity) is captured into
-`rom_bytes`. SDRAM keeps main RAM, save data and the palette/OAM
-overflow. The cart window read bridge (`win_*`) is wired to `main_bus`
-when the CPUs land in M1, with a prefetch FIFO then to meet waitstates.
+`rom_bytes`. SDRAM holds main RAM, WRAM overflow and cart save data;
+`mem_arbiter` shares it between the bus RAM window (CPU traffic) and
+the cart save path (fixed priority, saves are latency-sensitive
+bursts). The cart window read bridge (`win_*`) is wired to `main_bus`
+with a pending latch so a request survives DDR busy periods, and a
+prefetch FIFO then meets waitstates.
 
 ## Layout
 
@@ -50,6 +60,10 @@ fpga/
                               59.82 / 59.95 / 60.00 Hz      [SIM-VERIFIED]
     video/screen_composer.sv  dual-screen placement, rotation,
                               swap, brightness            [SIM-VERIFIED]
+    video/video_filter.sv     spatial filter: soft/smooth/sharp
+                              (one-line buffer, 1 CE latency) [SIM-VERIFIED]
+    video/palette.sv          colour profiles: DS LCD, vivid,
+                              warm, cool, grayscale         [SIM-VERIFIED]
     video/engine_a.sv         2D engine A (top screen) — stub, boot pattern
     video/engine_b.sv         2D engine B (touch screen) — stub
     video/vram_arbiter.sv     VRAMCNT bank map + grant scheduler — stub
@@ -57,17 +71,27 @@ fpga/
     video/raster_engine.sv    3D rasterizer — stub
     cpu/arm9_core.sv          ARM946E-S @ 67.02 MHz — stub
     cpu/arm7_core.sv          ARM7TDMI @ 33.51 MHz — stub
-    bus/main_bus.sv           DS memory map + arbitration — skeleton
-    mem/sdram_ctrl.sv         32 MB SDRAM controller (CL3, refresh)
+    bus/main_bus.sv           DS memory map, both CPUs, round-robin,
+                              cart window, cheat patch       [SIM-VERIFIED]
+    mem/sdram_ctrl.sv         32 MB SDRAM controller (CL3, refresh, BE)
+    mem/mem_arbiter.sv        two-master SDRAM arbiter (bus + save)
     cart/cart_slot.sv         ROM -> DDR3 with line FIFO + backpressure,
                               capacity detection, CPU window bridge
+    cart/cheat_engine.sv      Action Replay DS parser (GBATEK types
+                              0-8) + RAM read patching       [SIM-VERIFIED]
     input/input_mapper.sv     MiSTer pad -> DS KEYINPUT, stylus, mic
+    audio/audio_filter.sv     EQ presets (warm/bright/bass) +
+                              mid/side stereo width          [SIM-VERIFIED]
     audio/spu.sv              16-channel SPU — stub with correct framing
   tb/tb_video_timing.sv   three refresh modes          [SIM-VERIFIED]
   tb/tb_composer.sv       dual-screen placement        [SIM-VERIFIED]
+  tb/tb_video_filter.sv   pass-through, uniform blend, step edge [SIM-VERIFIED]
+  tb/tb_palette.sv        colour profiles              [SIM-VERIFIED]
+  tb/tb_audio_filter.sv   pass-through, width, EQ, saturate     [SIM-VERIFIED]
   tb/tb_input_mapper.sv   keys/stylus/mic              [SIM-VERIFIED]
   tb/tb_cart_slot.sv      DDR3 download + capacity     [SIM-VERIFIED]
-  tb/tb_composer.sv        composer placement testbench
+  tb/tb_main_bus.sv       fabric: masters, RAM, cart, cheat, IO [SIM-VERIFIED]
+  tb/tb_cheat_engine.sv   file parse + types + guard    [SIM-VERIFIED]
 ```
 
 ## Build
@@ -115,7 +139,33 @@ iverilog -g2012 -o /tmp/tb_cart tb/tb_cart_slot.sv rtl/cart/cart_slot.sv
 vvp /tmp/tb_cart
 # tb_cart_slot: PASS
 
-# 5. whole-top elaboration lint (Verilator 5+)
+# 5. main bus — masters, WRAM/IO, SDRAM window, cart bridge, cheat patch
+iverilog -g2012 -o /tmp/tb_bus tb/tb_main_bus.sv \
+         rtl/bus/main_bus.sv rtl/mem/mem_arbiter.sv rtl/cart/cheat_engine.sv
+vvp /tmp/tb_bus
+# tb_main_bus: PASS (13 checks)
+
+# 6. cheat engine — GBATEK type table, guard block, lockout, reload
+iverilog -g2012 -o /tmp/tb_cheat tb/tb_cheat_engine.sv rtl/cart/cheat_engine.sv
+vvp /tmp/tb_cheat
+# tb_cheat_engine: PASS
+
+# 7. video filter — pass-through latency, uniform blend, step edge
+iverilog -g2012 -o /tmp/tb_vf tb/tb_video_filter.sv rtl/video/video_filter.sv
+vvp /tmp/tb_vf
+# TB VIDEO_FILTER PASS
+
+# 8. palette — all six profiles against hand-computed values
+iverilog -g2012 -o /tmp/tb_pal tb/tb_palette.sv rtl/video/palette.sv
+vvp /tmp/tb_pal
+# TB PALETTE PASS
+
+# 9. audio filter — width, saturation, EQ convergence, hold
+iverilog -g2012 -o /tmp/tb_af tb/tb_audio_filter.sv rtl/audio/audio_filter.sv
+vvp /tmp/tb_af
+# TB AUDIO FILTER PASS
+
+# 10. whole-top elaboration lint (Verilator 5+) — zero warnings
 verilator --lint-only -sv --top-module emu -I<framework-stub> \
   NDS.sv <hps_io-stub> rtl/**/*.sv     # clean
 ```
@@ -145,14 +195,21 @@ Stylus cursors accelerate while held (250 px/s base, 1000 px/s after
 Drawn by the framework from `CONF_STR` in `NDS.sv`; values arrive in the
 128-bit `status` word. Groups: **Cartridge** (load `.nds`, save type,
 erase), **Video** (layout, rotation, aspect, scanlines, swap, brightness,
-refresh rate: Native 59.82 / 59.95 / 60.00), **Audio** (volume, mix,
-I2S latency, SPU sync), **BIOS & Input** (HLE vs
+refresh rate: Native 59.82 / 59.95 / 60.00, video filter:
+Off / Soft / Smooth / Sharp, palette: Original / DS LCD / Vivid / Warm /
+Cool / Grayscale), **Audio** (volume, mix, I2S latency, SPU sync, audio
+filter: Off / Warm / Bright / Bass, stereo width: Off / Soft / Strong —
+mid/side widening), **BIOS & Input** (HLE vs
 real BIOS, firmware, region, stylus cursor + tap button, face/shoulder
 swaps, mic, rumble, pad profile), **Emulation** (speed, CPU overclock:
 Normal / ARM7 ×2 / ARM7 ×4, frameskip, rewind), **Diagnostics** (FPS,
-frame graph, bus LEDs, log level), cheat file load (`F2,.CHT`), soft
+frame graph, bus LEDs, log level), cheat file load (`F2,.CHT` — parsed
+by `cheat_engine`, applied as RAM read patches), soft
 reset and reset. The full status-bit map is documented at the top of
 `NDS.sv`.
+
+The website's OSD Lab mirrors these rows one-for-one (`src/lib/osd-tree.ts`);
+the video preview reacts to layout, rotation, brightness and scanlines.
 
 Region policy: **none**. The header's game code is captured for the
 diagnostics overlay only — NTSC-U, NTSC-J and PAL carts all boot.
@@ -166,8 +223,8 @@ diagnostics overlay only — NTSC-U, NTSC-J and PAL carts all boot.
 | M3 | PLL (67.02/33.51 MHz domains), overclock enables, 3D geometry + rasterizer | planned |
 | M4 | SPU channels, save types + `.sav`, Slot-2-free DS saves, cart unlock commands | planned |
 | M5 | Microphone, rumble, local DS-to-DS wireless | planned |
-| M6 | Save states via DDR3, cheat engine, replay, OSD polish | planned |
+| M6 | Save states via DDR3, replay, OSD polish (cheat engine done) | planned |
 
-The OSD menu and all three refresh modes (59.82 / 59.95 / 60.00 Hz,
-simulation-verified) are already final; everything else fills in
-behind them.
+The OSD menu, all three refresh modes (59.82 / 59.95 / 60.00 Hz), the
+system bus fabric, the cheat engine and the AV filter layer are
+simulation-verified; everything else fills in behind them.

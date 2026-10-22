@@ -116,13 +116,15 @@ const HERO_PREVIEW: OsdRow[] = [
 ];
 
 const VIDEO_PREVIEW: OsdRow[] = [
-  { kind: "value", label: "Screen layout", value: "Auto" },
+  { kind: "value", label: "Screen layout", value: "Stacked" },
   { kind: "value", label: "Rotation", value: "0°" },
-  { kind: "value", label: "Aspect ratio", value: "4:3" },
+  { kind: "value", label: "Aspect ratio", value: "Original" },
   { kind: "value", label: "Scaling", value: "Integer ×4" },
   { kind: "value", label: "Scanlines", value: "Soft" },
   { kind: "value", label: "Swap screens", value: "Off" },
   { kind: "value", label: "Brightness", value: "3" },
+  { kind: "value", label: "Video filter", value: "Smooth" },
+  { kind: "value", label: "Palette", value: "DS LCD" },
 ];
 
 /* ------------------------------------------------------------ primitives */

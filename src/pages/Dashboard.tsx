@@ -379,7 +379,7 @@ export default function Dashboard() {
                 {[
                   ["Cartridge", rom ? rom.title : "— empty —"],
                   ["Save type", values["cart.savetype"] ?? "Auto"],
-                  ["Output", `${values["video.layout"] ?? "Auto"} · ${values["video.rotation"] ?? "0°"}`],
+                  ["Output", `${values["video.layout"] ?? "Stacked"} · ${values["video.rotation"] ?? "0°"}`],
                   ["Region lock", values["bios.region"] === "Auto" ? "none — auto" : `${values["bios.region"]} locked`],
                   ["Core speed", speed],
                   ["Cheats", cheatsOn > 0 ? `${cheatsOn} active` : "none"],
