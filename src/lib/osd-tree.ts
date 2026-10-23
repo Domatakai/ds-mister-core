@@ -222,7 +222,7 @@ export const OSD_ROOT: OsdSubmenu = {
           id: "emu.speed",
           kind: "choice",
           label: "Core speed",
-          options: ["50%", "100%", "150%", "200%", "Max"],
+          options: ["100%", "150%", "200%", "Max"],
         },
         {
           id: "emu.overclock",

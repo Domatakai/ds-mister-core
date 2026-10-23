@@ -95,8 +95,7 @@ export default function Dashboard() {
   const frameskip = values["emu.frameskip"] ?? "Off";
   const autoskip = values["emu.autoskip"] ?? "Off";
   useEffect(() => {
-    const base =
-      speed === "Max" ? 239.76 : speed === "50%" ? 29.913 : (Number.parseInt(speed) / 100) * 59.826;
+    const base = speed === "Max" ? 239.76 : (Number.parseInt(speed) / 100) * 59.826;
     const variance = frameskip === "Off" && autoskip === "Off" ? 0.05 : 0.35;
     const tick = () => {
       const measured = base - Math.random() * variance;
