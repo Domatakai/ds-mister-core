@@ -7,10 +7,10 @@
 //
 // For each output pixel the composer computes which native screen pixel
 // belongs there (including the 0/90/180/270 rotation remap), then asks
-// the corresponding 2D engine for its colour. Engines are stubs in M1/M2:
-// they answer combinationally today, and will later read from line
-// buffers fed by VRAM through vram_arbiter — this interface does not
-// change when that happens.
+// the corresponding 2D engine for its colour. The engines answer
+// combinationally from their front line buffers, which a fetch FSM
+// fills from VRAM through vram_arbiter (M2) — this interface never
+// changed from the M1 stub contract.
 //
 // Layouts (output frame stays 256x384, single frame rate):
 //   0 Stacked     top above bottom, native resolution

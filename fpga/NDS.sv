@@ -45,6 +45,10 @@
 //   [56]    face buttons     (standard / swapped)
 //   [57]    shoulders        (normal / swapped)
 //   [59:58] CPU overclock    (Normal / ARM7 x2 / ARM7 x4)
+//   [62:60] video filter     (Off / Soft / Smooth / Sharp)
+//   [65:63] palette          (Original / DS LCD / Vivid / Warm / Cool / Grayscale)
+//   [67:66] audio filter     (Off / Warm / Bright / Bass)
+//   [69:68] stereo width     (Off / Soft / Strong)
 //============================================================================
 module emu
 (
@@ -73,7 +77,8 @@ assign BUTTONS   = 0;
 //------------------------------------------------------------------
 // OSD menu definition (drawn by sys/osd.sv, values arrive in status[])
 //------------------------------------------------------------------
-localparam CONF_STR = {
+localparam [13887:0] CONF_STR = {   // 1730 string bytes + 6-char `BUILD_DATE
+                                      // (sys/build_id.tcl: %y%m%d as a quoted string)
 "NDS MiSTer Test;;",
 "-;",
 "P1,Cartridge;",
@@ -176,6 +181,8 @@ assign sd_wr = 1'b0;
 //------------------------------------------------------------------
 wire        cheat_dl = ioctl_download & (ioctl_index[5:0] == 6'd2);
 
+wire        f2_wr;
+wire  [7:0] f2_dout;
 assign f2_wr   = cheat_dl & ioctl_wr;
 assign f2_dout = ioctl_dout[7:0];
 
@@ -301,9 +308,12 @@ wire clk_pix_ce;
 // reset would freeze ce_div, so frame_start could never fire).
 //------------------------------------------------------------------
 wire frame_start;
-reg  frame_start_d = 0;
-always @(posedge clk_sys) frame_start_d <= frame_start;
-wire reset = reset_core | soft_reset | ~frame_start_d;
+reg  reset_hold = 1'b1;
+always @(posedge clk_sys) begin
+	if (reset_core | soft_reset) reset_hold <= 1'b1;   // assert immediately
+	else if (frame_start)        reset_hold <= 1'b0;   // release on frame boundary
+end
+wire reset = reset_hold;
 
 //------------------------------------------------------------------
 // Video path: fixed 256x384 stacked frame (top screen above bottom).
@@ -338,15 +348,49 @@ video_timing video_timing (
 );
 
 //------------------------------------------------------------------
-// 2D engines A/B — stubs. Interface is final: the composer asks for a
-// native pixel; the stubs answer with a boot pattern until the real
-// renderers land (M2). The composer reads from line buffers fed by
-// VRAM once engine A/B exist.
+// 2D engines A/B — real text renderers (M2). The composer asks for a
+// native pixel; the engines answer combinationally from their front
+// line buffers, which fetch FSMs fill by streaming VRAM through
+// vram_arbiter while the current line displays.
 //------------------------------------------------------------------
 wire [7:0] na_x, nb_x;
 wire [7:0] na_y, nb_y;
 wire       na_on, nb_on;
 wire [15:0] pix_top, pix_bot;
+
+// Engine plumbing: register writes, palette/OAM second BRAM ports,
+// VRAM fetch ports
+wire        ea_we, eb_we;
+wire  [6:0] ea_addr;
+wire [15:0] ea_data;
+wire  [9:0] ea_pal_addr, ea_oam_addr, eb_pal_addr, eb_oam_addr;
+wire [15:0] ea_pal_data, ea_oam_data, eb_pal_data, eb_oam_data;
+wire        ea_v_req, ea_v_ready, eb_v_req, eb_v_ready;
+wire [19:0] ea_v_addr, eb_v_addr;
+wire [15:0] ea_v_rdata, eb_v_rdata;
+
+// DMA: register file + bus master (third main_bus master), triggers
+wire        dma_reg_we, dma_ready, dma_rd, dma_wr;
+wire  [7:0] dma_reg_addr, dma_reg_rd_addr;
+wire [15:0] dma_reg_data, dma_reg_rdata;
+wire [31:0] dma_addr, dma_wdata, dma_rdata;
+wire  [3:0] dma_be, dma_irq;
+reg         hs_d = 1'b0, vs_d = 1'b0;
+always @(posedge clk_sys) begin
+	hs_d <= pix_hs;
+	vs_d <= pix_vs;
+end
+wire hblank_t = pix_hs & ~hs_d;   // rising edge = hblank start
+wire vblank_t = pix_vs & ~vs_d;   // rising edge = vblank start
+
+// CPU VRAM window <-> vram_arbiter, and vram_arbiter -> mem_arbiter
+wire        bus_vram_req, bus_vram_wr, bus_vram_valid;
+wire [19:0] bus_vram_addr;
+wire [15:0] bus_vram_wdata, bus_vram_rdata;
+wire        v2a_req, v2a_wr, v2a_ready;
+wire [24:0] v2a_addr;
+wire [15:0] v2a_wdata, v2a_rdata;
+wire  [1:0] v2a_be;
 
 screen_composer screen_composer (
 	.clk(clk_sys),
@@ -363,8 +407,26 @@ screen_composer screen_composer (
 	.rgb555(pix_out)
 );
 
-engine_a engine_a (.clk(clk_sys), .x(na_x), .y(na_y), .on(na_on), .rgb555(pix_top));
-engine_b engine_b (.clk(clk_sys), .x(nb_x), .y(nb_y), .on(nb_on), .rgb555(pix_bot));
+engine_a engine_a (
+	.clk(clk_sys),
+	.reset(reset),
+	.x(na_x), .y(na_y), .on(na_on), .rgb555(pix_top),
+	.reg_we(ea_we), .reg_addr(ea_addr), .reg_data(ea_data),
+	.pal_addr(ea_pal_addr), .pal_data(ea_pal_data),
+	.oam_addr(ea_oam_addr), .oam_data(ea_oam_data),
+	.v_req(ea_v_req), .v_addr(ea_v_addr),
+	.v_ready(ea_v_ready), .v_rdata(ea_v_rdata)
+);
+engine_b engine_b (
+	.clk(clk_sys),
+	.reset(reset),
+	.x(nb_x), .y(nb_y), .on(nb_on), .rgb555(pix_bot),
+	.reg_we(eb_we), .reg_addr(ea_addr), .reg_data(ea_data),
+	.pal_addr(eb_pal_addr), .pal_data(eb_pal_data),
+	.oam_addr(eb_oam_addr), .oam_data(eb_oam_data),
+	.v_req(eb_v_req), .v_addr(eb_v_addr),
+	.v_ready(eb_v_ready), .v_rdata(eb_v_rdata)
+);
 
 // Spatial filter (exactly 1 CE latency, sync delayed to match) then
 // the colour profile, then RGB888 for the framework.
@@ -448,6 +510,12 @@ mem_arbiter mem_arbiter (
 	.save_wdata(save_din),
 	.save_be(2'b11),       // save writes are halfword-wide (M4 refines)
 	.save_ready(save_done),
+	.vram_req(v2a_req),
+	.vram_wr(v2a_wr),
+	.vram_addr(v2a_addr),
+	.vram_wdata(v2a_wdata),
+	.vram_be(v2a_be),
+	.vram_ready(v2a_ready),
 	.sdram_req(arb_req),
 	.sdram_wr(arb_wr),
 	.sdram_addr(arb_addr),
@@ -612,6 +680,37 @@ main_bus main_bus (
 	.vramcnt_we(bus_vramcnt_we),
 	.vramcnt_addr(bus_vramcnt_addr),
 	.vramcnt_data(bus_vramcnt_data),
+	.vram_req(bus_vram_req),
+	.vram_wr(bus_vram_wr),
+	.vram_addr(bus_vram_addr),
+	.vram_wdata(bus_vram_wdata),
+	.vram_valid(bus_vram_valid),
+	.vram_rdata(bus_vram_rdata),
+	.dma_reg_we(dma_reg_we),
+	.dma_reg_addr(dma_reg_addr),
+	.dma_reg_data(dma_reg_data),
+	.dma_reg_rd_addr(dma_reg_rd_addr),
+	.dma_reg_rdata(dma_reg_rdata),
+	.d_addr(dma_addr),
+	.d_wdata(dma_wdata),
+	.d_be(dma_be),
+	.d_rd(dma_rd),
+	.d_wr(dma_wr),
+	.d_ready(dma_ready),
+	.d_rdata(dma_rdata),
+	.dma_irq(dma_irq),
+	.ea_we(ea_we),
+	.ea_addr(ea_addr),
+	.ea_data(ea_data),
+	.eb_we(eb_we),
+	.pal_ra_a(ea_pal_addr),
+	.pal_rd_a(ea_pal_data),
+	.pal_ra_b(eb_pal_addr),
+	.pal_rd_b(eb_pal_data),
+	.oam_ra_a(ea_oam_addr),
+	.oam_rd_a(ea_oam_data),
+	.oam_ra_b(eb_oam_addr),
+	.oam_rd_b(eb_oam_data),
 	.cheat_chk_en(cheat_chk_en),
 	.cheat_chk_addr(cheat_chk_addr),
 	.cheat_chk_word(cheat_chk_word),
@@ -632,12 +731,52 @@ vram_arbiter vram_arbiter (
 	.reg_we(bus_vramcnt_we),
 	.reg_addr(bus_vramcnt_addr),
 	.reg_data(bus_vramcnt_data),
-	.req_cpu9(1'b0),          // engines + CPUs land in M2
-	.req_cpu7(1'b0),
-	.req_eng_a(1'b0),
-	.req_eng_b(1'b0),
-	.req_raster(1'b0),
-	.grant()
+	.cpu_req(bus_vram_req),
+	.cpu_wr(bus_vram_wr),
+	.cpu_addr(bus_vram_addr),
+	.cpu_wdata(bus_vram_wdata),
+	.cpu_ready(bus_vram_valid),
+	.cpu_rdata(bus_vram_rdata),
+	.a_req(ea_v_req),
+	.a_addr(ea_v_addr),
+	.a_ready(ea_v_ready),
+	.a_rdata(ea_v_rdata),
+	.b_req(eb_v_req),
+	.b_addr(eb_v_addr),
+	.b_ready(eb_v_ready),
+	.b_rdata(eb_v_rdata),
+	.v_req(v2a_req),
+	.v_wr(v2a_wr),
+	.v_addr(v2a_addr),
+	.v_wdata(v2a_wdata),
+	.v_be(v2a_be),
+	.v_ready(v2a_ready),
+	.v_rdata(v2a_rdata)
+);
+
+//------------------------------------------------------------------
+// DMA: four channels against the shared fabric; immediate runs on
+// the enable write, vblank/hblank on the sync edges (M2). Special
+// timing (capture/GX FIFO) lands with M3/M5.
+//------------------------------------------------------------------
+dma_engine dma_engine (
+	.clk(clk_sys),
+	.reset(reset),
+	.reg_we(dma_reg_we),
+	.reg_addr(dma_reg_addr),
+	.reg_data(dma_reg_data),
+	.reg_rd_addr(dma_reg_rd_addr),
+	.reg_rdata(dma_reg_rdata),
+	.d_addr(dma_addr),
+	.d_wdata(dma_wdata),
+	.d_be(dma_be),
+	.d_rd(dma_rd),
+	.d_wr(dma_wr),
+	.d_ready(dma_ready),
+	.d_rdata(dma_rdata),
+	.vblank(vblank_t),
+	.hblank(hblank_t),
+	.irq_set(dma_irq)
 );
 
 cheat_engine cheat_engine (

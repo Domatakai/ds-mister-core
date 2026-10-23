@@ -1,0 +1,50 @@
+@echo off
+setlocal
+rem ---------------------------------------------------------------------------
+rem NDS MiSTer Test - Windows build (Quartus Prime Lite 17.0)
+rem
+rem Runs the full compile flow (analysis, fitting, ASM, timing) and produces
+rem output_files\NDS.rbf. Quartus is expected at the default Lite install
+rem location; pass a different bin64 directory as the first argument if needed:
+rem
+rem   build.bat                               -> C:\intelFPGA_lite\17.0\quartus\bin64
+rem   build.bat "D:\other\quartus\bin64"      -> custom location
+rem ---------------------------------------------------------------------------
+cd /d "%~dp0"
+
+set "QUARTUS_BIN=%~1"
+if "%QUARTUS_BIN%"=="" set "QUARTUS_BIN=C:\intelFPGA_lite\17.0\quartus\bin64"
+
+if not exist "%QUARTUS_BIN%\quartus_sh.exe" (
+  echo ERROR: quartus_sh.exe not found at "%QUARTUS_BIN%".
+  echo Pass your Quartus bin64 directory as the first argument, e.g.:
+  echo   build.bat "C:\intelFPGA_lite\17.0\quartus\bin64"
+  exit /b 1
+)
+
+echo Using: "%QUARTUS_BIN%\quartus_sh.exe"
+echo Compiling NDS - first full compile takes roughly 10-20 minutes...
+echo.
+
+"%QUARTUS_BIN%\quartus_sh.exe" --flow compile NDS
+if errorlevel 1 (
+  echo.
+  echo COMPILE FAILED. Check the messages above; the most common causes are
+  echo a missing file listed in files.qip or a Quartus version other than 17.0.x.
+  exit /b 1
+)
+
+if not exist "output_files\NDS.rbf" (
+  echo Compile finished but output_files\NDS.rbf was not generated.
+  echo Check the fitter messages for what failed.
+  exit /b 1
+)
+
+echo.
+echo SUCCESS: output_files\NDS.rbf is ready.
+echo.
+echo Deploy to the DE10-Nano SD card ^(adjust the drive letter^):
+echo   copy output_files\NDS.rbf  E:\games\NDS\NDS.rbf
+echo.
+echo Optional BIOS files go to E:\BIOS\ (bios7.bin + bios9.bin).
+exit /b 0

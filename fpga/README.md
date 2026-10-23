@@ -11,19 +11,26 @@ below — the two are intentionally kept in step.
 
 ## Status
 
-Honest state: **skeleton (milestone M1)**. The framework wiring, the OSD
+Honest state: **milestones M1 + M2**. The framework wiring, the OSD
 menu, the memory map, the SDRAM controller, the complete video path,
 the input path (DS keys, stylus, mic) and the DDR3 cartridge path for
 256 Mbit+ games are real and simulate correctly. The rebuilt system bus
 is complete and simulated: `main_bus` decodes the DS memory map,
-serves both CPUs from private WRAM/IO/BIOS regions with round-robin
-arbitration, sequences 32-bit accesses over SDRAM halfwords through
-`mem_arbiter`, bridges the cart window, and patches RAM reads through
-the Action-Replay parser in `cheat_engine` (GBATEK type table). On top
+serves both CPUs and the DMA engine from private WRAM/IO/BIOS regions
+with round-robin arbitration, sequences 32-bit accesses over SDRAM
+halfwords through `mem_arbiter`, bridges the cart window, and patches
+RAM reads through the Action-Replay parser in `cheat_engine` (GBATEK
+type table). M2 added the first real 2D path: `renderer_2d` renders
+text BG0-3, OBJ sprites and the backdrop through a double-buffered
+line pipeline fed by VRAM, wrapped by `engine_a` / `engine_b`;
+`vram_arbiter` implements the VRAMCNT bank map with per-master
+(CPU / engine A / engine B) window decode on the third SDRAM master;
+`dma_engine` implements all four GBATEK DMA channels with
+immediate/vblank/hblank triggers, repeat and completion IRQs. On top
 of that, the video/audio filter layer (`video_filter`, `palette`,
-`audio_filter`) is wired into the output chains. The CPUs, 2D/3D
-engines and SPU are interface-complete stubs — that is years of work
-ahead, and this repo organises it so each piece lands against a stable
+`audio_filter`) is wired into the output chains. The CPUs, 3D engines
+and SPU are interface-complete stubs — that is years of work ahead,
+and this repo organises it so each piece lands against a stable
 contract.
 
 ## Memory & cartridge sizes
@@ -39,10 +46,10 @@ DE10-Nano's **DDR3**, so every cart size fits without banking:
 The download stream is buffered in a 64-line FIFO; `ioctl_wait` pauses
 the HPS if DDR3 contention (with the scaler) backs up — no bytes can be
 dropped. Header byte 0x80 (device capacity) is captured into
-`rom_bytes`. SDRAM holds main RAM, WRAM overflow and cart save data;
-`mem_arbiter` shares it between the bus RAM window (CPU traffic) and
-the cart save path (fixed priority, saves are latency-sensitive
-bursts). The cart window read bridge (`win_*`) is wired to `main_bus`
+`rom_bytes`. SDRAM holds main RAM, WRAM overflow, VRAM bank storage
+and cart save data; `mem_arbiter` shares it between the bus RAM window
+(CPU traffic), the cart save path (fixed priority, saves are
+latency-sensitive bursts) and the VRAM path behind `vram_arbiter`. The cart window read bridge (`win_*`) is wired to `main_bus`
 with a pending latch so a request survives DDR busy periods, and a
 prefetch FIFO then meets waitstates.
 
@@ -70,17 +77,25 @@ fpga/
                               (one-line buffer, 1 CE latency) [SIM-VERIFIED]
     video/palette.sv          colour profiles: DS LCD, vivid,
                               warm, cool, grayscale         [SIM-VERIFIED]
-    video/engine_a.sv         2D engine A (top screen) — stub, boot pattern
-    video/engine_b.sv         2D engine B (touch screen) — stub
-    video/vram_arbiter.sv     VRAMCNT bank map + grant scheduler — stub
+    video/renderer_2d.sv      shared 2D text renderer: BG0-3, OBJ,
+                              backdrop, palette cache, line buffers
+                              [SIM-VERIFIED]
+    video/engine_a.sv         2D engine A wrapper (reg/pal/OAM/VRAM)
+                              [SIM-VERIFIED]
+    video/engine_b.sv         2D engine B wrapper              [SIM-VERIFIED]
+    video/vram_arbiter.sv     VRAMCNT bank map, MST decode, CPU>engine
+                              grants, SDRAM master            [SIM-VERIFIED]
     video/geometry_engine.sv  3D GXFIFO geometry — stub
     video/raster_engine.sv    3D rasterizer — stub
     cpu/arm9_core.sv          ARM946E-S @ 67.02 MHz — stub
     cpu/arm7_core.sv          ARM7TDMI @ 33.51 MHz — stub
-    bus/main_bus.sv           DS memory map, both CPUs, round-robin,
-                              cart window, cheat patch       [SIM-VERIFIED]
+    bus/main_bus.sv           DS memory map, both CPUs + DMA, round-robin,
+                              cart window, VRAM, engine ports, cheat patch
+                              [SIM-VERIFIED]
+    bus/dma_engine.sv         4 GBATEK DMA channels: immediate/vblank/
+                              hblank, repeat, IRQ            [SIM-VERIFIED]
     mem/sdram_ctrl.sv         32 MB SDRAM controller (CL3, refresh, BE)
-    mem/mem_arbiter.sv        two-master SDRAM arbiter (bus + save)
+    mem/mem_arbiter.sv        three-master SDRAM arbiter (bus + save + VRAM)
     cart/cart_slot.sv         ROM -> DDR3 with line FIFO + backpressure,
                               capacity detection, CPU window bridge
                               [SIM-VERIFIED]
@@ -99,6 +114,9 @@ fpga/
   tb/tb_cart_slot.sv      DDR3 download + capacity     [SIM-VERIFIED]
   tb/tb_main_bus.sv       fabric: masters, RAM, cart, cheat, IO [SIM-VERIFIED]
   tb/tb_cheat_engine.sv   file parse + types + guard    [SIM-VERIFIED]
+  tb/tb_renderer_2d.sv    text BG/OBJ render, hflip, line swap [SIM-VERIFIED]
+  tb/tb_dma_engine.sv     4 channels, triggers, repeat, IRQ [SIM-VERIFIED]
+  tb/tb_vram_arbiter.sv   bank map, MST decode, priority  [SIM-VERIFIED]
 ```
 
 ## Build
@@ -114,6 +132,11 @@ Template_MiSTer — no copy step needed.
 cd fpga
 quartus_sh --flow compile NDS            # or open NDS.qpf in the IDE
 ```
+
+Windows: run `fpga\build.bat` (or `build.bat "<quartus>\bin64"` for a
+non-default install location). It defaults to
+`C:\intelFPGA_lite\17.0\quartus\bin64`, runs the same flow, and prints
+where `NDS.rbf` landed and how to copy it to the SD card.
 
 First full compile (analysis + fit + ASM + timing) takes roughly
 10–20 min on a modern multicore machine (`NUM_PARALLEL_PROCESSORS ALL`
@@ -214,16 +237,31 @@ iverilog -g2012 -o /tmp/tb_af tb/tb_audio_filter.sv rtl/audio/audio_filter.sv
 vvp /tmp/tb_af
 # TB AUDIO FILTER PASS
 
-# 10. whole-top elaboration lint (Verilator 5+) against the REAL
+# 10. shared 2D renderer — backdrop, text BG, hflip, OBJ, line swap
+iverilog -g2012 -o /tmp/tb_rd tb/tb_renderer_2d.sv rtl/video/renderer_2d.sv
+vvp /tmp/tb_rd
+# tb_renderer_2d: PASS
+
+# 11. DMA — immediate/vblank/hblank, 16/32-bit, repeat, IRQ, readback
+iverilog -g2012 -o /tmp/tb_dma tb/tb_dma_engine.sv rtl/bus/dma_engine.sv
+vvp /tmp/tb_dma
+# tb_dma_engine: PASS
+
+# 12. VRAM bank arbiter — VRAMCNT map, MST decode, offsets, priority
+iverilog -g2012 -o /tmp/tb_vram tb/tb_vram_arbiter.sv rtl/video/vram_arbiter.sv
+vvp /tmp/tb_vram
+# tb_vram_arbiter: PASS
+
+# 13. whole-top elaboration lint (Verilator 5+) against the REAL
 #     framework in sys/ — core + framework, warning classes disabled
 #     are the framework's own known Verilator complaints (legal SV,
 #     Quartus-clean) plus unused-signal style noise:
-mkdir -p /tmp/lintstub && printf '`define BUILD_DATE 25010100\n' > /tmp/lintstub/build_id.v
+mkdir -p /tmp/lintstub && printf '`define BUILD_DATE "251023"\n' > /tmp/lintstub/build_id.v
 SRC=$(awk '/SYSTEMVERILOG_FILE/ {print $NF}' files.qip | tr '\n' ' ')
 SYS=$(find sys -name '*.sv' -o -name '*.v' | grep -v 'hdmi/' \
       | grep -v 'sys_top' | grep -v 'mcp23009' | tr '\n' ' ')
 verilator --lint-only -sv --top-module emu \
-  -Wno-BLKANDNBLK -Wno-PROCASSWIRE -Wno-IMPLICIT \
+  -Wno-BLKANDNBLK -Wno-PROCASSWIRE -Wno-IMPLICIT -Wno-IMPLICITSTATIC \
   -Wno-TIMESCALEMOD -Wno-WIDTH -Wno-WIDTHCONCAT -Wno-PINMISSING \
   -Wno-CASEX -Wno-CASEINCOMPLETE -Wno-UNOPTFLAT -Wno-DECLFILENAME \
   -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-VARHIDDEN -Wno-SYNCASYNCNET \

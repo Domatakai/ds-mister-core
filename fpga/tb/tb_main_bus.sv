@@ -74,6 +74,16 @@ main_bus dut (
 	.ram_wdata(bus_ram_wdata), .ram_be(bus_ram_be),
 	.ram_done(bus_ram_done), .ram_rdata(arb_rdata),
 	.vramcnt_we(), .vramcnt_addr(), .vramcnt_data(),
+	// M2 ports not exercised here: tie the DMA master and engine
+	// consumers off (DMA fabric traffic is covered by tb_dma_engine;
+	// VRAM by tb_vram_arbiter)
+	.vram_valid(1'b0), .vram_rdata(16'd0),
+	.dma_reg_rdata(16'd0),
+	.d_addr(32'd0), .d_wdata(32'd0), .d_be(4'd0),
+	.d_rd(1'b0), .d_wr(1'b0),
+	.dma_irq(4'd0),
+	.pal_ra_a(10'd0), .pal_ra_b(10'd0),
+	.oam_ra_a(10'd0), .oam_ra_b(10'd0),
 	.cheat_chk_en(cheat_chk_en), .cheat_chk_addr(cheat_chk_addr),
 	.cheat_chk_word(cheat_chk_word), .cheat_patch(cheat_patch),
 	.cheat_patch_hi_en(cheat_patch_hi_en), .cheat_patch_hi(cheat_patch_hi),
@@ -87,7 +97,9 @@ mem_arbiter arbiter (
 	.bus_req(bus_ram_req), .bus_wr(bus_ram_wr), .bus_addr(bus_ram_addr),
 	.bus_wdata(bus_ram_wdata), .bus_be(bus_ram_be), .bus_ready(bus_ram_done),
 	.save_req(1'b0), .save_wr(1'b0), .save_addr(25'd0),
-	.save_wdata(16'd0), .save_be(2'b00), .save_ready(),
+	.save_wdata(16'd0),	.save_be(2'b00), .save_ready(),
+	.vram_req(1'b0), .vram_wr(1'b0), .vram_addr(25'd0),
+	.vram_wdata(16'd0), .vram_be(2'b00), .vram_ready(),
 	.sdram_req(arb_req), .sdram_wr(arb_wr), .sdram_addr(arb_addr),
 	.sdram_wdata(arb_wdata), .sdram_be(arb_be),
 	.sdram_rd_done(arb_rd_done), .sdram_wr_done(arb_wr_done),
@@ -278,6 +290,21 @@ initial begin
 	m9_read (32'h0400_0000, r1);
 	check("DISPCNT_A rw", r1 === 32'h0000_1011);
 
+	// ---- palette: 32-bit write fills both halfwords
+	m9_write(32'h0500_0000, 32'hAAAA_BBBB, 4'hF);
+	m9_read (32'h0500_0000, r1);
+	check("palette 32-bit rw", r1 === 32'hAAAA_BBBB);
+
+	// 16-bit odd-halfword write: lanes in [31:16] hit pal[1] only
+	m9_write(32'h0500_0002, 32'hCCCC_0000, 4'b1100);
+	m9_read (32'h0500_0000, r1);
+	check("palette 16-bit odd", r1 === 32'hCCCC_BBBB);
+
+	// 16-bit even-halfword write must NOT clobber pal[1]
+	m9_write(32'h0500_0000, 32'h0000_DDDD, 4'b0011);
+	m9_read (32'h0500_0000, r1);
+	check("palette 16-bit even keeps neighbour", r1 === 32'hCCCC_DDDD);
+
 	// ---- main RAM: 32-bit word through arbiter (two halves)
 	m9_write(32'h0200_0004, 32'h7777_8888, 4'hF);
 	m9_read (32'h0200_0004, r1);
@@ -324,6 +351,10 @@ end
 initial begin
 	#10_000_000;
 	$display("tb_main_bus: FAIL — timeout");
+	$display("dbg state=%0d m9_act=%b m7_act=%b d_act=%b blk9=%b need_b=%b is_rd=%b ram_req=%b ram_done=%b m9_wr=%b",
+	         dut.state, dut.m9_active, dut.m7_active, dut.d_active,
+	         dut.m9_block, dut.need_b, dut.is_read, bus_ram_req,
+	         bus_ram_done, m9_wr);
 	$finish;
 end
 
