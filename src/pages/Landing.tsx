@@ -593,6 +593,28 @@ cp bios7.bin bios9.bin /media/fat/BIOS/   # optional`}
               </ol>
             </Reveal>
           </div>
+          <Reveal delay={0.06}>
+            <div className="mt-12 flex flex-col items-start justify-between gap-6 border border-border bg-muted/40 p-6 sm:flex-row sm:items-center sm:p-7">
+              <div>
+                <p className="label-mono">Source archive</p>
+                <p className="mt-3 max-w-2xl text-[13.5px] leading-7 text-muted-foreground">
+                  The whole project as one tarball — SystemVerilog RTL, the
+                  Quartus project, the full simulation testbench suite and this
+                  site. No ROM images, no BIOS files, no build artifacts.
+                  <span className="ml-2 font-mono text-[12px] text-foreground/70">
+                    368 KB · sha256 98a61251…3dec383
+                  </span>
+                </p>
+              </div>
+              <a
+                href="/nds-mister-public.tgz"
+                download
+                className="label-mono inline-block shrink-0 border border-foreground px-6 py-3.5 transition-colors hover:bg-foreground hover:text-background"
+              >
+                Download .tgz →
+              </a>
+            </div>
+          </Reveal>
         </div>
       </section>
 
@@ -627,6 +649,7 @@ cp bios7.bin bios9.bin /media/fat/BIOS/   # optional`}
           </p>
           <nav className="flex flex-wrap gap-x-7 gap-y-3">
             {[
+              ["Source archive", "/nds-mister-public.tgz"],
               ["MiSTer docs", "https://mister-devel.github.io/MkDocs_MiSTer/"],
               ["melonDS", "https://melonds.kuribo64.net/"],
               ["DeSmuME wiki", "http://wiki.desmume.org/"],
