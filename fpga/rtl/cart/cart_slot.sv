@@ -181,6 +181,7 @@ end
 //------------------------------------------------------------------
 reg draining = 0;
 reg [28:0] ddr_addr_wr = 0;
+reg [28:0] ddr_addr_rd = 0;
 always @(posedge clk) begin
 	// accept: clear only when the controller took the write
 	if (ddr_we && !ddr_busy) begin
@@ -200,6 +201,12 @@ always @(posedge clk) begin
 		draining     <= 1'b1;
 		rd_ptr       <= rd_ptr + 6'd1;
 	end
+
+	// read path: latch the line number when a request first arrives
+	// (even if DDR is busy then — the grant may happen later).
+	// rd_line[28:27] always read 0: the ROM window is 64 MB.
+	if (rstate == R_IDLE && win_req && !pending_req)
+		ddr_addr_rd <= {6'd0, win_addr[25:3]};
 end
 
 //------------------------------------------------------------------
@@ -224,9 +231,6 @@ end
 //------------------------------------------------------------------
 reg [63:0] rline = 0;
 reg [25:0] a_lat = 0;      // latched request address
-reg [28:0] ddr_addr_rd = 0;
-
-wire [25:0] req_a = win_req ? win_addr : a_lat;
 
 always @(posedge clk) begin
 	win_valid <= 1'b0;
@@ -239,7 +243,6 @@ always @(posedge clk) begin
 		if ((pending_req || win_req) && !ddr_busy && !ddr_we
 		    && !draining && !ddr_rd) begin
 			ddr_rd      <= 1'b1;
-			ddr_addr_rd <= {6'd0, req_a[25:3]};
 			pending_req <= 1'b0;
 			rstate      <= R_WAIT;
 		end

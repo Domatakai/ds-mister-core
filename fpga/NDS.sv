@@ -169,26 +169,15 @@ assign sd_wr = 1'b0;
 // F2 (.cht) text path: secondary files share the ioctl pipe, keyed by
 // ioctl_index (F1 -> 1, F2 -> 2). WIDE=1 delivers two ASCII bytes per
 // 16-bit word, low byte first; the high byte of an odd final word is
-// zero padding and is filtered by the engine.
-// The split takes 2 clk_sys cycles per word; HPS SPI spaces words
-// >= 16 SCK (~160 ns @100 MHz) apart vs 40 ns needed, so back-to-back
-// words can never collide in cht_pend.
+// zero padding and is filtered by the engine (0 is never a hex digit
+// or a separator). One byte per clk_sys cycle: the HPS spaces WIDE
+// words >= 16 SCK (~160 ns @100 MHz) apart vs the single cycle needed,
+// so consecutive words can never collide.
 //------------------------------------------------------------------
 wire        cheat_dl = ioctl_download & (ioctl_index[5:0] == 6'd2);
-wire        cheat_wr = cheat_dl & ioctl_wr;
 
-reg   [7:0] cht_hi;
-reg         cht_pend;
-wire        f2_wr   = cheat_wr | cht_pend;
-wire  [7:0] f2_dout = cht_pend ? cht_hi : ioctl_dout[7:0];
-
-always @(posedge clk_sys) begin
-	if (cheat_wr) begin
-		cht_hi   <= ioctl_dout[15:8];
-		cht_pend <= 1'b1;
-	end else
-		cht_pend <= 1'b0;
-end
+assign f2_wr   = cheat_dl & ioctl_wr;
+assign f2_dout = ioctl_dout[7:0];
 
 hps_io #(.CONF_STR(CONF_STR), .WIDE(1), .VDNUM(1)) hps_io
 (
@@ -306,16 +295,15 @@ wire clk_sys = CLK_50M;
 wire clk_pix_ce;
 
 //------------------------------------------------------------------
-// Reset — released on a frame boundary so video never glitches
+// Reset — released on a frame boundary so video never glitches.
+// frame_start pulses once per frame and timing is free-running, so
+// this always releases (a synchronous-clear version would deadlock:
+// reset would freeze ce_div, so frame_start could never fire).
 //------------------------------------------------------------------
 wire frame_start;
-reg reset_pending = 1;
-always @(posedge clk_sys) begin
-	if (reset_core)                  reset_pending <= 1;
-	else if (soft_reset)             reset_pending <= 1;
-	else if (frame_start)            reset_pending <= 0;
-end
-wire reset = reset_pending;
+reg  frame_start_d = 0;
+always @(posedge clk_sys) frame_start_d <= frame_start;
+wire reset = reset_core | soft_reset | ~frame_start_d;
 
 //------------------------------------------------------------------
 // Video path: fixed 256x384 stacked frame (top screen above bottom).
