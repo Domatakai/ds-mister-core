@@ -41,7 +41,7 @@ export const OSD_ROOT: OsdSubmenu = {
     {
       id: "cart",
       kind: "submenu",
-      label: "Cartridge",
+      label: "Slot-1 Card",
       children: [
         { id: "cart.rom", kind: "choice", label: "Slot-1 ROM", options: ROM_OPTIONS },
         {
@@ -58,22 +58,31 @@ export const OSD_ROOT: OsdSubmenu = {
             "NAND",
           ],
         },
+        {
+          id: "cart.slot2",
+          kind: "choice",
+          label: "Slot-2",
+          options: ["None", "GBA cartridge", "RAM expansion"],
+        },
         { id: "cart.erase", kind: "action", label: "Erase save data" },
+        { id: "cart.bootmenu", kind: "action", label: "Boot menu" },
+        { id: "cart.clearslots", kind: "action", label: "Clear game slots" },
         { id: "cart.eject", kind: "action", label: "Eject cartridge" },
       ],
     },
     {
       id: "video",
       kind: "submenu",
-      label: "Video",
+      label: "Screens",
       children: [
         {
           id: "video.layout",
           kind: "choice",
           label: "Screen layout",
-          options: ["Stacked", "Side by side", "Top only", "Bottom only"],
+          options: ["Vertical", "Horizontal", "Top only", "Bottom only"],
         },
         { id: "video.rotation", kind: "choice", label: "Rotation", options: ["0°", "90°", "180°", "270°"] },
+        { id: "video.swap", kind: "toggle", label: "Swap screens" },
         {
           id: "video.aspect",
           kind: "choice",
@@ -87,17 +96,16 @@ export const OSD_ROOT: OsdSubmenu = {
           options: ["Integer ×4", "Integer ×5", "Fit", "Stretch"],
         },
         {
+          id: "video.brightness",
+          kind: "choice",
+          label: "Backlight",
+          options: ["Dim", "Low", "Medium", "High", "Brightest"],
+        },
+        {
           id: "video.scanlines",
           kind: "choice",
           label: "Scanlines",
           options: ["Off", "Soft", "Medium", "Hard"],
-        },
-        { id: "video.swap", kind: "toggle", label: "Swap screens" },
-        {
-          id: "video.brightness",
-          kind: "choice",
-          label: "Brightness",
-          options: ["1", "2", "3", "4", "5"],
         },
         {
           id: "video.refresh",
@@ -114,7 +122,7 @@ export const OSD_ROOT: OsdSubmenu = {
         {
           id: "video.palette",
           kind: "choice",
-          label: "Palette",
+          label: "LCD colour",
           options: ["Original", "DS LCD", "Vivid", "Warm", "Cool", "Grayscale"],
         },
       ],
@@ -122,7 +130,7 @@ export const OSD_ROOT: OsdSubmenu = {
     {
       id: "audio",
       kind: "submenu",
-      label: "Audio",
+      label: "Sound",
       children: [
         {
           id: "audio.volume",
@@ -130,14 +138,14 @@ export const OSD_ROOT: OsdSubmenu = {
           label: "Master volume",
           options: ["0%", "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"],
         },
-        { id: "audio.mix", kind: "choice", label: "Output mix", options: ["Stereo", "Mono", "Headphones"] },
+        { id: "audio.mix", kind: "choice", label: "Sound output", options: ["Stereo", "Mono", "Headphones"] },
+        { id: "audio.spusync", kind: "toggle", label: "SPU sync" },
         {
           id: "audio.latency",
           kind: "choice",
           label: "I²S latency",
           options: ["1 frame", "2 frames", "4 frames"],
         },
-        { id: "audio.spusync", kind: "toggle", label: "SPU sync" },
         {
           id: "audio.filter",
           kind: "choice",
@@ -153,23 +161,64 @@ export const OSD_ROOT: OsdSubmenu = {
       ],
     },
     {
+      id: "midi",
+      kind: "submenu",
+      label: "MIDI",
+      children: [
+        { id: "midi.mt32", kind: "toggle", label: "MT-32-pi" },
+        {
+          id: "midi.volume",
+          kind: "choice",
+          label: "MIDI volume",
+          options: ["0%", "14%", "29%", "43%", "57%", "71%", "86%", "100%"],
+        },
+        { id: "midi.demo", kind: "toggle", label: "Internal demo stream" },
+        { id: "midi.lcd", kind: "toggle", label: "Pi LCD on screen" },
+        {
+          id: "midi.lcdsize",
+          kind: "choice",
+          label: "Pi LCD size",
+          options: ["1x", "2x"],
+        },
+        {
+          id: "midi.lcdcorner",
+          kind: "choice",
+          label: "Pi LCD corner",
+          options: ["Top left", "Top right", "Bottom left", "Bottom right"],
+        },
+        {
+          id: "midi.synth",
+          kind: "choice",
+          label: "MT-32-pi synth",
+          options: ["MT-32", "SoundFont"],
+        },
+        {
+          id: "midi.sfbank",
+          kind: "choice",
+          label: "SoundFont bank",
+          options: ["0", "1", "2", "3", "4", "5", "6", "7"],
+        },
+      ],
+    },
+    {
       id: "bios",
       kind: "submenu",
-      label: "BIOS / Firmware",
+      label: "Firmware",
       children: [
+        { id: "bios.slot1", kind: "choice", label: "ARM7 BIOS", options: ["HLE", "bios7.bin"] },
+        { id: "bios.slot9", kind: "choice", label: "ARM9 BIOS", options: ["HLE", "bios9.bin"] },
+        { id: "bios.firmware", kind: "choice", label: "Firmware", options: ["HLE", "firmware.bin"] },
         {
-          id: "bios.slot1",
+          id: "bios.lang",
           kind: "choice",
-          label: "Slot-1 BIOS",
-          options: ["HLE", "bios7.bin + bios9.bin"],
+          label: "Language",
+          options: ["English", "Japanese", "French", "German", "Italian", "Spanish"],
         },
-        { id: "bios.slot2", kind: "choice", label: "Slot-2 BIOS", options: ["None", "GBA BIOS"] },
-        { id: "bios.firmware", kind: "choice", label: "Firmware", options: ["HLE", "Flash dump"] },
-        { id: "bios.logo", kind: "toggle", label: "Skip intro logo" },
+        { id: "bios.autostart", kind: "choice", label: "Auto-start", options: ["Manual", "Auto"] },
         {
           id: "bios.region",
           kind: "choice",
-          label: "Console region",
+          label: "Region",
           options: ["Auto", "NTSC-U", "NTSC-J", "PAL"],
         },
       ],
@@ -177,7 +226,7 @@ export const OSD_ROOT: OsdSubmenu = {
     {
       id: "input",
       kind: "submenu",
-      label: "Input",
+      label: "Touch & Pad",
       children: [
         {
           id: "input.stylus",
@@ -190,6 +239,12 @@ export const OSD_ROOT: OsdSubmenu = {
           kind: "choice",
           label: "Stylus tap",
           options: ["L2", "R2", "L3", "R3"],
+        },
+        {
+          id: "input.lid",
+          kind: "choice",
+          label: "Lid close",
+          options: ["Ignore", "L2+R2", "L3+R3"],
         },
         {
           id: "input.face",
@@ -216,7 +271,7 @@ export const OSD_ROOT: OsdSubmenu = {
     {
       id: "emu",
       kind: "submenu",
-      label: "Emulation",
+      label: "System",
       children: [
         {
           id: "emu.speed",
@@ -240,6 +295,7 @@ export const OSD_ROOT: OsdSubmenu = {
       kind: "submenu",
       label: "Cheats",
       children: [
+        { id: "cheats.file", kind: "action", label: "Load .cht from SD card" },
         { id: "cheats.hearts", kind: "toggle", label: "Infinite hearts" },
         { id: "cheats.coins", kind: "toggle", label: "Max coins" },
         { id: "cheats.karts", kind: "toggle", label: "Unlock all karts" },
@@ -271,6 +327,33 @@ export const OSD_ROOT: OsdSubmenu = {
 };
 
 export type OsdValues = Record<string, string>;
+
+/** Find a submenu by id anywhere in the tree (root included). */
+export function findSubmenu(id: string, node: OsdSubmenu = OSD_ROOT): OsdSubmenu | null {
+  if (node.id === id) return node;
+  for (const child of node.children) {
+    if (child.kind !== "submenu") continue;
+    const hit = findSubmenu(id, child);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/**
+ * The rows a submenu draws, in menu order, with their current values.
+ * Shared by the OSD Lab and the landing-page panels so the two can never
+ * disagree about which rows exist.
+ */
+export function rowsFor(node: OsdSubmenu, values: OsdValues): OsdRow[] {
+  return node.children.map((child) => {
+    if (child.kind === "submenu") return { kind: "submenu", label: child.label };
+    if (child.kind === "choice")
+      return { kind: "value", label: child.label, value: values[child.id] ?? child.options[0] };
+    if (child.kind === "toggle")
+      return { kind: "value", label: child.label, value: values[child.id] ?? "Off" };
+    return { kind: "action", label: child.label };
+  });
+}
 
 /** Walk the tree and give every value row its default selection. */
 export function defaultValues(node: OsdNode = OSD_ROOT, out: OsdValues = {}): OsdValues {

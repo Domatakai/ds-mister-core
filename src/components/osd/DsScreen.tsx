@@ -8,6 +8,9 @@ const SCANLINE_OVERLAY: Record<string, string> = {
   Hard: "repeating-linear-gradient(to bottom, rgba(0,0,0,0.34) 0 2px, transparent 2px 4px)",
 };
 
+/** The OSD "Backlight" row, in menu order (the DS's own five steps). */
+const BACKLIGHT_LEVELS = ["Dim", "Low", "Medium", "High", "Brightest"];
+
 const OUTPUT_SIZE: Record<string, string> = {
   "Integer ×4": "1024 × 768",
   "Integer ×5": "1280 × 960",
@@ -38,10 +41,15 @@ export function DsScreen({
   frameMs: number;
   frameTimes: number[];
 }) {
-  const layout = values["video.layout"] ?? "Stacked";
+  const layout = values["video.layout"] ?? "Vertical";
   const rotation = values["video.rotation"] ?? "0°";
   const swap = values["video.swap"] === "On";
-  const brightness = Number(values["video.brightness"] ?? "3");
+  // the backlight row reads as the DS's own five steps, so map the name to
+  // the level the preview dims by
+  const brightness = Math.max(
+    1,
+    BACKLIGHT_LEVELS.indexOf(values["video.brightness"] ?? "Medium") + 1,
+  );
   const scanlines = values["video.scanlines"] ?? "Off";
   const showHud = values["diag.fps"] === "On";
   const showGraph = values["diag.graph"] === "On";
@@ -49,7 +57,7 @@ export function DsScreen({
 
   const showTop = layout !== "Bottom only";
   const showBottom = layout !== "Top only";
-  const vertical = layout === "Side by side" ? "row" : "col";
+  const vertical = layout === "Horizontal" ? "row" : "col";
   const turn = rotation === "90°" || rotation === "270°";
 
   const topScreen = (

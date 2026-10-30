@@ -7,8 +7,8 @@ import {
   activeCheats,
   defaultValues,
   loadedRom,
+  rowsFor,
   type OsdNode,
-  type OsdRow,
   type OsdValues,
 } from "@/lib/osd-tree";
 import { LogOut } from "lucide-react";
@@ -27,29 +27,47 @@ interface LogEntry {
   text: string;
 }
 
-const STORAGE_KEY = "nds-mister-test-osd-profile-v1";
+const STORAGE_KEY = "nds-mister-test-osd-profiles-v2";
+const LEGACY_KEY = "nds-mister-test-osd-profile-v1";
 
 const IDLE_STATUS = "↑↓ rows · ←→ values · OK open · ESC back";
 
-function rowsFor(node: Submenu, values: OsdValues): OsdRow[] {
-  return node.children.map((child) => {
-    if (child.kind === "submenu") return { kind: "submenu", label: child.label };
-    if (child.kind === "choice")
-      return { kind: "value", label: child.label, value: values[child.id] ?? child.options[0] };
-    if (child.kind === "toggle")
-      return { kind: "value", label: child.label, value: values[child.id] ?? "Off" };
-    return { kind: "action", label: child.label };
-  });
+interface StoredProfiles {
+  /** Profile in force when no cartridge is loaded. */
+  base: OsdValues;
+  /** One snapshot per game, keyed by ROM title — a profile per game. */
+  games: Record<string, OsdValues>;
 }
 
-function loadValues(): OsdValues {
+function readProfiles(): StoredProfiles {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return { ...defaultValues(), ...(JSON.parse(raw) as OsdValues) };
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<StoredProfiles>;
+      return {
+        base: { ...defaultValues(), ...(parsed.base ?? {}) },
+        games: parsed.games ?? {},
+      };
+    }
+    // Migrate the single-profile layout written by the old build.
+    const legacy = localStorage.getItem(LEGACY_KEY);
+    if (legacy)
+      return { base: { ...defaultValues(), ...(JSON.parse(legacy) as OsdValues) }, games: {} };
   } catch {
-    /* fall through to defaults */
+    /* storage unavailable — session-only profile */
   }
-  return defaultValues();
+  return { base: defaultValues(), games: {} };
+}
+
+/** The stored snapshot for a game, falling back to the console profile. */
+function valuesFor(profiles: StoredProfiles, title: string | null): OsdValues {
+  const saved = title ? profiles.games[title] : undefined;
+  return {
+    ...defaultValues(),
+    ...profiles.base,
+    ...(saved ?? {}),
+    "cart.rom": title ?? "— EMPTY —",
+  };
 }
 
 function timestamp() {
@@ -65,7 +83,13 @@ export default function Dashboard() {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
 
-  const [values, setValues] = useState<OsdValues>(loadValues);
+  const [stored] = useState<StoredProfiles>(readProfiles);
+  const profilesRef = useRef<StoredProfiles>(stored);
+
+  const [values, setValues] = useState<OsdValues>(() => {
+    const title = stored.base["cart.rom"] ?? "";
+    return valuesFor(stored, ROMS.some((r) => r.title === title) ? title : null);
+  });
   const [stack, setStack] = useState<MenuFrame[]>([{ node: OSD_ROOT, index: 0 }]);
   const [osdOpen, setOsdOpen] = useState(true);
   const [status, setStatus] = useState(IDLE_STATUS);
@@ -82,12 +106,15 @@ export default function Dashboard() {
   const breadcrumb = stack.map((f) => f.node.label).join(" › ");
 
   useEffect(() => {
+    const stored = profilesRef.current;
+    if (rom) stored.games = { ...stored.games, [rom.title]: values };
+    else stored.base = values;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(values));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
     } catch {
       /* storage unavailable — session-only profile */
     }
-  }, [values]);
+  }, [values, rom]);
 
   // Simulated core timing: speed and frameskip move the measured rate, the
   // frame-time buffer feeds the diagnostics graph on the top screen.
@@ -129,7 +156,10 @@ export default function Dashboard() {
     const current = options.indexOf(values[child.id] ?? options[0]);
     const next = options[(current + dir + options.length) % options.length];
     if (child.id === "cart.rom" && next !== "— EMPTY —") {
-      setValues((prev) => ({ ...prev, [child.id]: next }));
+      // Each cartridge keeps its own profile: load the game's snapshot,
+      // or the console profile when it has never been booted here.
+      const stored = profilesRef.current;
+      setValues(valuesFor(stored, next));
       const cart = ROMS.find((r) => r.title === next);
       if (cart) {
         const region = values["bios.region"] ?? "Auto";
@@ -150,8 +180,11 @@ export default function Dashboard() {
         pushLog("Save data erased");
         break;
       case "cart.eject":
-        setValues((prev) => ({ ...prev, "cart.rom": "— EMPTY —" }));
+        setValues(valuesFor(profilesRef.current, null));
         pushLog("Cartridge ejected");
+        break;
+      case "cheats.file":
+        pushLog("Cheat file .cht parsed — per-game codes armed");
         break;
       case "cheats.clear":
         setValues((prev) => ({
@@ -168,10 +201,14 @@ export default function Dashboard() {
         window.setTimeout(() => setBooting(false), 1200);
         pushLog(`${label} — ARM9/ARM7 restarted`);
         break;
-      case "reset.profile":
+      case "reset.profile": {
+        const stored = profilesRef.current;
+        if (rom) stored.games = { ...stored.games, [rom.title]: defaultValues() };
+        else stored.base = defaultValues();
         setValues(defaultValues());
         pushLog("OSD profile reset to defaults");
         break;
+      }
       default:
         pushLog(label);
     }
@@ -378,12 +415,12 @@ export default function Dashboard() {
                 {[
                   ["Cartridge", rom ? rom.title : "— empty —"],
                   ["Save type", values["cart.savetype"] ?? "Auto"],
-                  ["Output", `${values["video.layout"] ?? "Stacked"} · ${values["video.rotation"] ?? "0°"}`],
+                  ["Output", `${values["video.layout"] ?? "Vertical"} · ${values["video.rotation"] ?? "0°"}`],
                   ["Region lock", values["bios.region"] === "Auto" ? "none — auto" : `${values["bios.region"]} locked`],
                   ["Core speed", speed],
                   ["Cheats", cheatsOn > 0 ? `${cheatsOn} active` : "none"],
                   ["Measured", `${fps.toFixed(2)} fps`],
-                  ["Profile", "saved locally"],
+                  ["Profile", rom ? `saved · ${rom.title}` : "saved · console"],
                 ].map(([key, val]) => (
                   <div
                     key={key}

@@ -1,5 +1,12 @@
 import { OsdPanel } from "@/components/osd/OsdPanel";
-import type { OsdRow } from "@/lib/osd-tree";
+import {
+  OSD_ROOT,
+  defaultValues,
+  findSubmenu,
+  rowsFor,
+  type OsdRow,
+  type OsdValues,
+} from "@/lib/osd-tree";
 import { motion, useReducedMotion } from "framer-motion";
 import { Fragment, type ReactNode } from "react";
 import { Link } from "react-router";
@@ -46,7 +53,7 @@ const PARITY: { group: string; rows: [string, Mark, Mark, string][] }[] = [
   {
     group: "Audio & input",
     rows: [
-      ["SPU — ADPCM & PCM, 16 channels", "●", "●", "Complete"],
+      ["SPU — ADPCM & PCM, 16 channels", "●", "●", "In progress"],
       ["Touch, lid, keypad, rumble pak", "●", "●", "Complete"],
       ["Microphone capture", "●", "◐", "Planned"],
     ],
@@ -55,7 +62,7 @@ const PARITY: { group: string; rows: [string, Mark, Mark, string][] }[] = [
     group: "Media & saves",
     rows: [
       ["Region-free boot — NTSC-U, NTSC-J, PAL carts", "●", "●", "Complete"],
-      ["Save types — EEPROM, FLASH, FRAM, NAND", "●", "●", "Complete"],
+      ["Save types — EEPROM, FLASH, FRAM, NAND", "●", "●", "Planned"],
       ["Slot-2 — GBA carts, DLDI, RTC", "●", "◐", "Planned"],
       ["HLE BIOS and user-supplied BIOS boot", "●", "●", "Complete"],
       ["Save states to SD card", "●", "●", "Planned"],
@@ -72,12 +79,16 @@ const PARITY: { group: string; rows: [string, Mark, Mark, string][] }[] = [
 ];
 
 const OSD_GROUPS: [string, string][] = [
-  ["Cartridge", "Slot-1 browser over the SD card, save-type autodetection, eject and erase."],
-  ["Video", "Layout, rotation, aspect, integer scaling, scanlines, brightness, screen swap."],
-  ["Audio", "Master volume, output mix, I²S latency, SPU sync with the frame boundary."],
-  ["BIOS / Firmware", "HLE or real BIOS files, firmware flash image, region override, logo skip."],
-  ["Input", "Stylus mode, microphone source, rumble, pad profiles per game."],
-  ["Emulation", "Core speed, frameskip, rewind buffer, per-core clock divider."],
+  [
+    "Slot-1 Card",
+    "Four 64 MB game slots in DDR3, staged from the SD card and labelled with the title, game code and declared size from each ROM's own header plus the save type its AUXSPI probe detected, the two card slots, an in-core boot menu to switch between them, erase and clear.",
+  ],
+  ["Screens", "Layout, rotation, aspect, integer scaling, backlight, scanlines, screen swap, refresh rate, video filter and LCD colour."],
+  ["Sound", "Master volume, sound output (stereo / mono / headphones — the DS's own setting), I²S latency, SPU sync with the frame boundary, audio filter presets, stereo width."],
+  ["MIDI", "MT-32-pi link over the user port with its own volume, MIDI out through the AUX SPI port, and a test stream."],
+  ["Firmware", "ARM7 and ARM9 BIOS images, the firmware flash, the language the synthesised user settings report, auto-start and region."],
+  ["Touch & Pad", "Stylus mode and tap button, the lid chord that shuts the shell, microphone source, rumble pak, pad profiles per game."],
+  ["System", "Core speed, ARM7 overclock, frameskip, auto frameskip, rewind buffer."],
   ["Cheats", "Toggle rows sourced from per-game cheat files on the SD card."],
   ["Diagnostics", "FPS, frame-time graph, bus activity LEDs, HPS log level."],
   ["Reset", "Soft reset, hard reset, restore the OSD profile defaults."],
@@ -104,28 +115,30 @@ const ROADMAP: [string, string, string, "Complete" | "In progress" | "Next" | "P
 ];
 
 const HERO_PREVIEW: OsdRow[] = [
-  { kind: "submenu", label: "Cartridge" },
-  { kind: "submenu", label: "Video" },
-  { kind: "submenu", label: "Audio" },
-  { kind: "submenu", label: "BIOS / Firmware" },
-  { kind: "submenu", label: "Input" },
-  { kind: "submenu", label: "Emulation" },
+  { kind: "submenu", label: "Slot-1 Card" },
+  { kind: "submenu", label: "Screens" },
+  { kind: "submenu", label: "Sound" },
+  { kind: "submenu", label: "Firmware" },
+  { kind: "submenu", label: "Touch & Pad" },
+  { kind: "submenu", label: "System" },
   { kind: "submenu", label: "Cheats" },
   { kind: "submenu", label: "Diagnostics" },
   { kind: "submenu", label: "Reset" },
 ];
 
-const VIDEO_PREVIEW: OsdRow[] = [
-  { kind: "value", label: "Screen layout", value: "Stacked" },
-  { kind: "value", label: "Rotation", value: "0°" },
-  { kind: "value", label: "Aspect ratio", value: "Original" },
-  { kind: "value", label: "Scaling", value: "Integer ×4" },
-  { kind: "value", label: "Scanlines", value: "Soft" },
-  { kind: "value", label: "Swap screens", value: "Off" },
-  { kind: "value", label: "Brightness", value: "3" },
-  { kind: "value", label: "Video filter", value: "Smooth" },
-  { kind: "value", label: "Palette", value: "DS LCD" },
-];
+// One reference profile, laid over the real Screens group so the landing panel
+// shows exactly the rows the OSD Lab exposes — same order, same values.
+const VIDEO_PROFILE: OsdValues = {
+  "video.scanlines": "Soft",
+  "video.brightness": "Medium",
+  "video.filter": "Smooth",
+  "video.palette": "DS LCD",
+};
+
+const videoMenu = findSubmenu("video", OSD_ROOT);
+const VIDEO_PREVIEW: OsdRow[] = videoMenu
+  ? rowsFor(videoMenu, { ...defaultValues(videoMenu), ...VIDEO_PROFILE })
+  : [];
 
 /* ------------------------------------------------------------ primitives */
 
