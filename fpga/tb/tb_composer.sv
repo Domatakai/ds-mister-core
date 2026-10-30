@@ -5,7 +5,8 @@
 //            rtl/video/screen_composer.sv && vvp /tmp/tb_sc
 //
 // Drives the composer directly and checks stacked/swap/side-by-side/
-// rotation placement against per-engine pattern fixtures. The fixtures
+// rotation placement, the lid's blackout, against per-engine pattern
+// fixtures. The fixtures
 // replicate the M1 engine boot patterns locally: engine_a/engine_b are
 // now real line-buffer renderers (tb_renderer_2d covers them), and the
 // composer's placement logic needs deterministic per-pixel answers.
@@ -23,6 +24,7 @@ reg  [2:0] layout = 0;
 reg  [1:0] rotation = 0;
 reg        swap = 0;
 reg  [2:0] brightness = 5;
+reg        dark = 0;
 
 wire [7:0] na_x, na_y, nb_x, nb_y;
 wire       na_on, nb_on;
@@ -31,7 +33,7 @@ wire [15:0] pix_top, pix_bot, rgb555;
 screen_composer dut (
 	.clk(clk), .ce(1'b1), .x(x), .y(y), .de(de),
 	.layout(layout), .rotation(rotation), .swap(swap),
-	.brightness(brightness),
+	.brightness(brightness), .dark(dark),
 	.na_x(na_x), .na_y(na_y), .na_on(na_on), .pix_top(pix_top),
 	.nb_x(nb_x), .nb_y(nb_y), .nb_on(nb_on), .pix_bot(pix_bot),
 	.rgb555(rgb555)
@@ -44,7 +46,19 @@ localparam HEADER_A = 16'h739C; // engine A header band {28,28,28}
 localparam BORDER_B = 16'h294C; // engine B border      {10,10,12}
 localparam BACKDROP_B = 16'h1086; // engine B backdrop   {4,4,6}
 
+// The composer holds its pixel decision for one CE while the engines answer
+// (their line buffers are block RAM, so their read is registered), so a sample
+// taken in the same cycle as a stimulus change would see the previous pixel.
+// Every check below lets that edge pass first.
+task settle;
+	begin
+		@(posedge clk);
+		#1;
+	end
+endtask
+
 integer errors = 0;
+
 task check;
 	input [8*24:1] name;
 	input [15:0] got;
@@ -63,29 +77,38 @@ initial begin
 	#20;
 
 	// stacked: bottom screen starts at y=192; (2,200) is engine B border
-	x = 9'd2; y = 9'd200; #1;
+	x = 9'd2; y = 9'd200; settle;
 	check("stacked bottom", rgb555, BORDER_B);
 
 	// swap screens: the same slot now shows the top screen (header band)
-	swap = 1; #1;
+	swap = 1; settle;
 	check("swap screens", rgb555, HEADER_A);
 	swap = 0;
 
 	// side by side: left half decimates x; (10,100) -> engine A (5,4)
-	layout = 3'd1; x = 9'd10; y = 9'd100; #1;
+	layout = 3'd1; x = 9'd10; y = 9'd100; settle;
 	check("side left decimated", rgb555, HEADER_A);
 
 	// right half is the bottom screen; (200,100) -> engine B (100,4)
-	x = 9'd200; #1;
+	x = 9'd200; settle;
 	check("side right bottom", rgb555, BACKDROP_B);
 
 	// rotation 90 inside the bottom box maps (0,300) -> engine B (108,255)
-	layout = 3'd0; rotation = 2'd1; x = 9'd0; y = 9'd300; #1;
+	layout = 3'd0; rotation = 2'd1; x = 9'd0; y = 9'd300; settle;
 	check("rot90 bottom", rgb555, BORDER_B);
 
 	// rotated-out-of-range pixels read as backdrop
-	x = 9'd200; y = 9'd300; #1;
+	x = 9'd200; y = 9'd300; settle;
 	check("rot90 clip", rgb555, 16'h0000);
+
+	// lid shut: the backlights are out, so whatever the layout says the
+	// frame is black — and it comes back when the shell opens
+	layout = 3'd0; rotation = 2'd0; swap = 0; x = 9'd2; y = 9'd200; settle;
+	check("lid open: bottom screen border", rgb555, BORDER_B);
+	dark = 1; settle;
+	check("lid shut: screens dark", rgb555, 16'h0000);
+	dark = 0; settle;
+	check("lid open again", rgb555, BORDER_B);
 
 	if (errors == 0) $display("tb_composer: PASS");
 	else             $display("tb_composer: FAIL (%0d errors)", errors);

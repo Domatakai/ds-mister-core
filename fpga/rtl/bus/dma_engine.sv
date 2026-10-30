@@ -35,10 +35,27 @@
 // 16-bit halves); a 16-bit unit is one halfword beat with the unit
 // mirrored into both lanes so the addressed halfword is correct at
 // either alignment.
+//
+// Clock domain: the DMA is ARM7 hardware, so its transfer engine advances on
+// `ce` (the ARM7's clock enable) rather than on clk_sys. That is what makes
+// its rate follow the CPU's: one bus beat costs one ARM7 cycle either way, so
+// a DMA and the CPU that armed it stay in the ratio the DS has however the OSD
+// scales the ARM7. Two things follow from the gate and both are handled here:
+//
+//   * a bus response is a one-cycle pulse on this fabric, so one that lands on
+//     a gated-off cycle would be missed -- and main_bus answers a master once
+//     and then blocks it until it retires the access, so there is no second
+//     pulse to wait for. `d_ready_q` latches it and the FSM takes it on its
+//     next enabled cycle, under the same flag the data is latched with.
+//   * vblank/hblank come from the video path, which is *not* in this clock
+//     domain (59.826 Hz, absolute). A trigger landing on a gated cycle must
+//     still be seen, so the trigger capture is the one thing left ungated.
 //============================================================================
 module dma_engine (
 	input            clk,
 	input            reset,
+	input            ce,           // ARM7 clock enable (cpu_ce): one bus beat
+	                               // per enabled cycle
 
 	// register file port (byte offset in IO space: 0xB0..0xDF,
 	// i.e. 16-bit regs land on even offsets 0xB0, 0xB2, ... 0xDF)
@@ -77,18 +94,22 @@ wire [7:0] r_off = reg_rd_addr - 8'hB0;
 wire [1:0] wch = (d_off < 8'd12) ? 2'd0 :
                  (d_off < 8'd24) ? 2'd1 :
                  (d_off < 8'd36) ? 2'd2 : 2'd3;
+// the offset inside the channel's register group, 0..11. Computed in five
+// bits: the difference is a multiple of 32 away from the 8-bit one, and the
+// result is always below 12, so the low five bits are the answer. The last
+// group starts at 36, which is 4 in five bits (36 = 32 + 4).
 wire [4:0] wk  = (d_off < 8'd12) ? {1'b0, d_off[3:0]} :
-                 (d_off < 8'd24) ? (d_off - 8'd12) :
-                 (d_off < 8'd36) ? (d_off - 8'd24) :
-                                   (d_off - 8'd36);
+                 (d_off < 8'd24) ? (d_off[4:0] - 5'd12) :
+                 (d_off < 8'd36) ? (d_off[4:0] - 5'd24) :
+                                   (d_off[4:0] - 5'd4);
 
 wire [1:0] rch = (r_off < 8'd12) ? 2'd0 :
                  (r_off < 8'd24) ? 2'd1 :
                  (r_off < 8'd36) ? 2'd2 : 2'd3;
 wire [4:0] rk  = (r_off < 8'd12) ? {1'b0, r_off[3:0]} :
-                 (r_off < 8'd24) ? (r_off - 8'd12) :
-                 (r_off < 8'd36) ? (r_off - 8'd24) :
-                                   (r_off - 8'd36);
+                 (r_off < 8'd24) ? (r_off[4:0] - 5'd12) :
+                 (r_off < 8'd36) ? (r_off[4:0] - 5'd24) :
+                                   (r_off[4:0] - 5'd4);
 
 //------------------------------------------------------------------
 // Register file block — owns SAD/DAD/CNT, emits arm/disarm pulses,
@@ -170,6 +191,12 @@ reg [2:0]  tstate = T_IDLE;
 reg [1:0]  tch = 2'd0;
 reg [31:0] latched = 32'd0;
 
+// a response that arrived while the engine was gated off
+reg        d_ready_q = 1'b0;
+reg [31:0] d_rdata_q = 32'd0;
+wire       d_ok    = d_ready | d_ready_q;
+wire [31:0] d_data = d_ready_q ? d_rdata_q : d_rdata;
+
 reg [3:0]  run_en = 4'd0;
 reg [31:0] cur_src [0:3];
 reg [31:0] cur_dst [0:3];
@@ -228,6 +255,15 @@ always @(posedge clk) begin
 	irq_set  <= 4'd0;
 	done_r   <= 4'd0;
 
+	// a response that lands on a gated-off cycle is held for one more cycle
+	// (default-cleared: the DMA turns a read into a write with no gap, so a
+	// stale latch would be taken as the write's completion)
+	d_ready_q <= 1'b0;
+	if (!ce && d_ready) begin
+		d_ready_q <= 1'b1;
+		d_rdata_q <= d_rdata;
+	end
+
 	// consume arm / disarm pulses
 	for (i = 0; i < 4; i = i + 1) begin
 		if (arm_pulse[i]) begin
@@ -244,18 +280,13 @@ always @(posedge clk) begin
 		end
 	end
 
-	case (tstate)
+	if (ce) case (tstate)
 	T_IDLE: begin
 		if (ifound) begin
 			// immediate channel: start it, keep the rest pending
 			imm_pend[ipick] <= 1'b0;
 			tch             <= ipick;
 			tstate          <= T_RD;
-		end else if (vblank || hblank) begin
-			// latch the trigger (a later one may override kind —
-			// acceptable: both stay pending as a single kind)
-			trig_pending <= 1'b1;
-			trig_kind    <= vblank ? 2'd1 : 2'd2;
 		end else if (trig_pending && pick_found) begin
 			// start the lowest matching channel; keep the trigger
 			// pending so the remaining channels run in order 0..3
@@ -269,12 +300,12 @@ always @(posedge clk) begin
 	T_RD: tstate <= T_RDW;
 
 	T_RDW: begin
-		if (d_ready) begin
+		if (d_ok) begin
 			// latch the unit; mirror into both lanes for 16-bit
 			// ops so a halfword write hits either alignment
-			latched <= unit32 ? d_rdata :
-			           d_addr[1] ? {d_rdata[31:16], d_rdata[31:16]}
-			                      : {d_rdata[15:0],  d_rdata[15:0]};
+			latched <= unit32 ? d_data :
+			           d_addr[1] ? {d_data[31:16], d_data[31:16]}
+			                      : {d_data[15:0],  d_data[15:0]};
 			tstate  <= T_WR;
 		end
 	end
@@ -282,7 +313,7 @@ always @(posedge clk) begin
 	T_WR: tstate <= T_WRW;
 
 	T_WRW: begin
-		if (d_ready) begin
+		if (d_ok) begin
 			// advance pointers per the control modes
 			if (ctl[4:3] == 2'd0)      cur_src[tch] <= cur_src[tch] + unit_bytes;
 			else if (ctl[4:3] == 2'd1) cur_src[tch] <= cur_src[tch] - unit_bytes;
@@ -316,6 +347,19 @@ always @(posedge clk) begin
 
 	default: tstate <= T_IDLE;
 	endcase
+
+	// Video-domain triggers are the one thing captured on every clock, not on
+	// the ARM7's enabled ones: vblank/hblank is a single cycle of the video
+	// path (59.826 Hz, absolute), so gating this would drop the trigger the
+	// channel was armed for. It sits after the case so that a trigger arriving
+	// in the same cycle a stale one is cleared wins.
+	if (vblank) begin
+		trig_pending <= 1'b1;
+		trig_kind    <= 2'd1;
+	end else if (hblank) begin
+		trig_pending <= 1'b1;
+		trig_kind    <= 2'd2;
+	end
 
 	if (reset) begin
 		tstate       <= T_IDLE;

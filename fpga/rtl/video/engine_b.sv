@@ -30,11 +30,14 @@ module engine_b (
 	output     [9:0] oam_addr,
 	input     [15:0] oam_data,
 
-	// VRAM fetch port toward vram_arbiter (engine B master)
+	// VRAM fetch port toward vram_arbiter (engine B master): a burst of
+	// v_len halfwords streamed back one per cycle
 	output           v_req,
 	output    [19:0] v_addr,
+	output     [7:0] v_len,
 	input            v_ready,
-	input     [15:0] v_rdata
+	input            v_bs_valid,
+	input     [15:0] v_bs_data
 );
 
 renderer_2d renderer (
@@ -54,8 +57,15 @@ renderer_2d renderer (
 	.oam_data(oam_data),
 	.v_req(v_req),
 	.v_addr(v_addr),
+	.v_len(v_len),
 	.v_ready(v_ready),
-	.v_rdata(v_rdata),
+	.v_bs_valid(v_bs_valid),
+	.v_bs_data(v_bs_data),
+	// engine B has no 3D layer (the DS 3D engine belongs to engine A)
+	.d3_ready(1'b0),
+	.d3_bs_valid(1'b0),
+	.d3_bs_data(16'h0000),
+	.d3_present(1'b0),
 	.obj_base(20'h1_0000)   // OBJ tiles start at +64 KB (DS B engine)
 );
 

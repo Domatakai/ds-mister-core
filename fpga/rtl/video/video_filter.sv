@@ -61,6 +61,7 @@ function [4:0] fchan;
 	reg   [8:0] s9;      // 5c+h+v+p  (max 248)
 	reg signed [9:0] s;
 	begin
+		s = 10'sd0;      // assigned on every path (10776): only mode 3 reads it
 		sm = {3'b000, c} + {3'b000, h} + {3'b000, v} + {3'b000, p};
 		s9 = c * 9'd5 + {4'b0000, h} + {4'b0000, v} + {4'b0000, p};
 		case (m)

@@ -28,6 +28,7 @@ reg  [31:0] chk_addr = 0;
 reg  [31:0] chk_word = 0;
 wire        hit, patch_hi_en;
 wire [15:0] patch, patch_hi;
+wire        chk_ready;
 
 cheat_engine dut (
 	.clk(clk),
@@ -42,7 +43,8 @@ cheat_engine dut (
 	.hit(hit),
 	.patch(patch),
 	.patch_hi_en(patch_hi_en),
-	.patch_hi(patch_hi)
+	.patch_hi(patch_hi),
+	.chk_ready(chk_ready)
 );
 
 integer errors = 0;
@@ -98,7 +100,11 @@ task send_str;
 	end
 endtask
 
-// issue one runtime query and sample the comb response on the negedge
+// Issue one runtime query and hold it until the walk says it is done, then
+// sample the result. One code (or none) on the address answers in the first
+// cycle; several codes on one address take one clock each. q_cycles records
+// how many clocks the answer needed.
+integer q_cycles;
 task q;
 	input [31:0] a;
 	input [31:0] w;
@@ -108,6 +114,12 @@ task q;
 		chk_word <= w;
 		chk_en   <= 1;
 		@(negedge clk);
+		q_cycles = 1;
+		while (!chk_ready && q_cycles < 64) begin
+			@(posedge clk);
+			@(negedge clk);
+			q_cycles = q_cycles + 1;
+		end
 	end
 endtask
 
@@ -167,6 +179,7 @@ initial begin
 	// it in the list, so the guard's evaluation gates the NEXT accesses.
 	q(32'h0200_0120, 32'h0000_0010);
 	check("guard pass: THEN-write applies", hit === 1'b1 && patch === 16'h0099);
+	check("two codes on one address take two clocks", q_cycles === 2);
 	q_done;
 
 	q(32'h0200_0120, 32'h0000_0099);

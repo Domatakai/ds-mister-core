@@ -53,6 +53,27 @@ wire [15:0] save_din;
 wire cart_loaded;
 wire [31:0] rom_bytes;
 
+// game slots
+reg  [1:0] boot_slot = 2'd0;
+reg        slot_clear = 0;
+reg  [1:0] hdr_slot = 0;
+reg  [3:0] hdr_char = 0;
+wire [3:0] slot_valid;
+wire [1:0] load_slot;
+wire [31:0] slot_caps;
+wire [15:0] slot_save;
+wire [15:0] slot_save_det;
+wire [7:0] hdr_data;
+wire [31:0] slot9_entry, slot7_entry;
+
+// the boot entry points the header carries (0x24 ARM9, 0x34 ARM7)
+reg  [31:0] entry9_val = 32'h0200_0800;
+reg  [31:0] entry7_val = 32'h0238_0000;
+
+// address the controller was given on the last accepted READ
+reg [28:0] rd_addr_seen = 0;
+always @(posedge clk) if (ddr_rd && !ddr_busy) rd_addr_seen <= ddr_addr;
+
 cart_slot dut (
 	.clk(clk), .reset(reset),
 	.ioctl_download(ioctl_download), .ioctl_addr(ioctl_addr),
@@ -66,7 +87,13 @@ cart_slot dut (
 	.erase_save(erase_save), .save_type(save_type),
 	.save_req(save_req), .save_wr(save_wr),
 	.save_addr(save_addr), .save_din(save_din), .save_done(1'b0),
-	.cart_loaded(cart_loaded), .rom_bytes(rom_bytes)
+	.cart_loaded(cart_loaded), .rom_bytes(rom_bytes),
+	.boot_slot(boot_slot), .load_slot(load_slot), .slot_valid(slot_valid),
+	.slot_clear(slot_clear),
+	.hdr_slot(hdr_slot), .hdr_char(hdr_char), .hdr_data(hdr_data),
+	.slot_caps(slot_caps), .slot_save(slot_save),
+	.slot9_entry(slot9_entry), .slot7_entry(slot7_entry),
+	.slot_save_det(slot_save_det)
 );
 
 //------------------------------------------------------------------
@@ -76,11 +103,17 @@ cart_slot dut (
 reg [63:0] mem [0:255];
 reg  [7:0] mem_be [0:255];
 integer wr_beats = 0;
+reg     seen_wr = 0;
+reg [28:0] first_wr = 0;
 always @(posedge clk) begin
 	if (ddr_we && !ddr_busy) begin
 		mem[ddr_addr[7:0]]    <= ddr_din;
 		mem_be[ddr_addr[7:0]] <= ddr_be;
 		wr_beats = wr_beats + 1;
+		if (!seen_wr) begin
+			first_wr <= ddr_addr;
+			seen_wr  <= 1;
+		end
 	end
 	ddr_dout_ready <= 0;
 	if (ddr_rd && !ddr_busy) begin
@@ -88,6 +121,20 @@ always @(posedge clk) begin
 		ddr_dout_ready <= 1;
 	end
 end
+
+// the probe walks the valid slots, so let it finish before reading back
+integer wd;
+task wait_det;
+	input [1:0] s;
+	input [2:0] want;
+	begin
+		wd = 0;
+		while (slot_save_det[{s, 2'b00} +: 4] !== {1'b0, want} && wd < 40000) begin
+			@(posedge clk);
+			wd = wd + 1;
+		end
+	end
+endtask
 
 integer errors = 0;
 task check;
@@ -129,6 +176,84 @@ task win_read;
 		wait (win_valid);
 		got = win_data;
 		@(posedge clk);
+	end
+endtask
+
+//------------------------------------------------------------------
+// game slots: a ROM whose header carries the title in tdat[]
+//------------------------------------------------------------------
+reg [7:0] tdat [0:11];
+reg [7:0] cdat [0:3];    // 0x0C..0x0F: the game code
+integer   title_err = 0;
+
+task set_title;
+	input [8*12-1:0] s;
+	integer k;
+	begin
+		for (k = 0; k < 12; k = k + 1) tdat[k] = s[8*(11-k) +: 8];
+	end
+endtask
+
+task set_code;
+	input [8*4-1:0] s;
+	integer k;
+	begin
+		for (k = 0; k < 4; k = k + 1) cdat[k] = s[8*(3-k) +: 8];
+	end
+endtask
+
+// header byte k: 0x00..0x0B from the title, 0x0C..0x0F from the code
+function [7:0] hbyte;
+	input integer k;
+	begin
+		hbyte = (k < 12) ? tdat[k] : cdat[k-12];
+	end
+endfunction
+
+task load_rom;
+	input [7:0] cap;      // header byte 0x80: 128 KB << cap
+	integer w;
+	begin
+		@(posedge clk); ioctl_download <= 1;
+		// eight words = the 16 header bytes (title + game code), then payload
+		for (w = 0; w < 8; w = w + 1)
+			send_word(w * 2, {hbyte(2*w+1), hbyte(2*w)});
+		for (w = 8; w < 14; w = w + 1)
+			send_word(w * 2, 16'hA000 + w[15:0]);
+		// the declared size sits far past the header block; 0xFF means the
+		// file has no such byte, which must read back as unknown, not zero
+		if (cap != 8'hFF) send_word(27'h80, {8'h00, cap});
+		// header 0x24 / 0x34: the ARM9 and ARM7 entry points, two halfwords each
+		send_word(27'h24, entry9_val[15:0]);
+		send_word(27'h26, entry9_val[31:16]);
+		send_word(27'h34, entry7_val[15:0]);
+		send_word(27'h36, entry7_val[31:16]);
+		@(posedge clk); ioctl_download <= 0;
+		repeat (80) @(posedge clk);
+		if (load_slot == boot_slot) begin
+			check("ARM9 entry latched from header 0x24", slot9_entry === entry9_val);
+			check("ARM7 entry latched from header 0x34", slot7_entry === entry7_val);
+		end
+	end
+endtask
+
+// read a slot's 16 header bytes back through the header port
+task check_hdr;
+	input [1:0] s;
+	integer k;
+	reg [7:0] want;
+	begin
+		hdr_slot = s;
+		for (k = 0; k < 16; k = k + 1) begin
+			want = hbyte(k);
+			hdr_char = k[3:0];
+			@(posedge clk);
+			if (hdr_data !== want) begin
+				$display("  slot %0d char %0d: %02x, expected %02x",
+				         s, k, hdr_data, want);
+				title_err = title_err + 1;
+			end
+		end
 	end
 endtask
 
@@ -224,6 +349,155 @@ initial begin
 	repeat (100) @(posedge clk);
 	check("reload sets cart_loaded", cart_loaded === 1'b1);
 	check("512 MB capacity detected (32-bit)", rom_bytes == 32'd536870912);
+
+	// ------------------------------------------------ game slots
+	// Each download lands in its own 64 MB region, its title is taken from
+	// the ROM header, and the cart window follows boot_slot. The slot list
+	// deliberately survives a core reset, since booting a game resets the
+	// core and the menu must still be able to offer the others.
+	slot_clear = 1;
+	repeat (3) @(negedge clk);
+	slot_clear = 0;
+	repeat (4) @(posedge clk);
+	check("clear forgets every slot", slot_valid === 4'd0);
+	check("next load goes to slot 0", load_slot === 2'd0);
+
+	save_type = 3'd3;               // FLASH 512K for the game being loaded
+	set_title("FIRST GAME  ");
+	set_code("AMCE");
+	seen_wr = 0;
+	load_rom(8'd8);                  // 32 MB
+	check("first game fills slot 0", slot_valid === 4'b0001);
+	check("slot 0 download starts at line 0", first_wr === 29'd0);
+	title_err = 0; check_hdr(2'd0);
+	check("slot 0 title + game code are read back", title_err == 0);
+	check("slot 0 keeps its declared size", slot_caps[7:0] === 8'd8);
+	check("slot 0 records its save type", slot_save[3:0] === 4'd3);
+	wait_det(2'd0, 3'd3);
+	check("the probe classifies slot 0's chip as FLASH 512K",
+	      slot_save_det[3:0] === 4'd3);
+
+	set_title("SECOND GAME ");
+	set_code("AZEP");
+	seen_wr = 0;
+	load_rom(8'd20);                 // declares 2^20 KB: clamps to 512 MB
+	check("second game fills slot 1", slot_valid === 4'b0011);
+	check("slot 1 download is 64 MB higher",
+	      first_wr === 29'd8388608);
+	title_err = 0; check_hdr(2'd1);
+	check("slot 1 title + game code are read back", title_err == 0);
+	check("slot 1 size clamps to 512 MB", slot_caps[15:8] === 8'd12);
+	check("slot 0 size is untouched by slot 1", slot_caps[7:0] === 8'd8);
+	check("slot 1 records its own save type", slot_save[7:4] === 4'd3);
+	wait_det(2'd1, 3'd3);
+	check("the probe classifies slot 1's chip too", slot_save_det[7:4] === 4'd3);
+	check("slot 0 save type is untouched by slot 1", slot_save[3:0] === 4'd3);
+
+	// the OSD row describes the game in the active slot, so it edits that
+	// record alone: slot 0 changes, slot 1 keeps what it was given
+	save_type = 3'd5;               // FRAM
+	repeat (4) @(posedge clk);
+	check("the OSD row edits the active slot", slot_save[3:0] === 4'd5);
+	wait_det(2'd0, 3'd5);
+	check("the probe follows the record it was given", slot_save_det[3:0] === 4'd5);
+	check("the other slot keeps its save type", slot_save[7:4] === 4'd3);
+
+	set_title("FIRST GAME  ");
+	set_code("AMCE");
+	title_err = 0; check_hdr(2'd0);
+	check("slot 0 keeps its own title", title_err == 0);
+
+	// the cart window follows the chosen slot
+	boot_slot = 2'd1;
+	repeat (4) @(posedge clk);
+	win_read(26'd0);
+	check("window reads slot 1's region", rd_addr_seen === 29'd8388608);
+	set_title("SECOND GAME ");
+	check("slot 1 data comes back", got === {tdat[1], tdat[0]});
+
+	// the OSD save-type row edits the game that is running, so slot 1
+	// changes and slot 0 keeps what it was given
+	save_type = 3'd6;
+	repeat (4) @(posedge clk);
+	check("editing the save type follows the active slot",
+	      slot_save[7:4] === 4'd6);
+	check("the previously active slot is left alone", slot_save[3:0] === 4'd5);
+
+	boot_slot = 2'd0;
+	repeat (4) @(posedge clk);
+	win_read(26'd0);
+	check("window reads slot 0 again", rd_addr_seen === 29'd0);
+
+	// a core reset must not empty the slot list
+	reset = 1; repeat (4) @(posedge clk); reset = 0;
+	repeat (4) @(posedge clk);
+	check("slots survive a core reset", slot_valid === 4'b0011);
+	set_title("SECOND GAME ");
+	set_code("AZEP");
+	title_err = 0; check_hdr(2'd1);
+	check("titles + codes survive a core reset", title_err == 0);
+	check("declared sizes survive a core reset",
+	      slot_caps[7:0] === 8'd8 && slot_caps[15:8] === 8'd12);
+	check("save types survive a core reset",
+	      slot_save[3:0] === 4'd5 && slot_save[7:4] === 4'd6);
+
+	// a file that never presents byte 0x80 leaves the size unknown
+	set_title("THIRD GAME  ");
+	set_code("AYCE");
+	load_rom(8'hFF);
+	check("third game fills slot 2", slot_valid === 4'b0111);
+	check("a file without 0x80 has no declared size", slot_caps[23:16] === 8'hFF);
+	check("the third game records its save type", slot_save[11:8] === 4'd6);
+	// NAND is not SPI backup memory: the chip answers nothing, so the probe
+	// reports no save type for that slot instead of echoing the OSD row
+	wait_det(2'd2, 3'd0);
+	check("NAND reports no SPI save chip", slot_save_det[11:8] === 4'd0);
+
+	// with all four slots full the next download overwrites one, so the type
+	// detected for that slot described the game that just left: it must be
+	// dropped and measured again, not carried over to the new one
+	save_type = 3'd4;               // FLASH 1M
+	set_title("FOURTH GAME ");
+	set_code("AZWE");
+	load_rom(8'd10);
+	check("fourth game fills the last slot", slot_valid === 4'b1111);
+	check("the fourth slot records its save type", slot_save[15:12] === 4'd4);
+
+	set_title("FIFTH GAME  ");
+	set_code("AVUE");
+	load_rom(8'd10);
+	check("a full cart overwrites a slot", slot_valid === 4'b1111);
+	check("the overwritten slot takes the new record", slot_save[3:0] === 4'd4);
+	wait_det(2'd0, 3'd4);
+	check("the overwritten slot is probed again", slot_save_det[3:0] === 4'd4);
+
+	// a clear that lands while a probe is running must not leave the probe
+	// mid-transaction: the next game still gets classified
+	save_type = 3'd5;               // FRAM
+	set_title("SIXTH GAME  ");
+	set_code("ARDE");
+	load_rom(8'd10);
+	repeat (30) @(posedge clk);     // the probe is a couple of hundred cycles
+	slot_clear = 1;
+	repeat (3) @(negedge clk);
+	slot_clear = 0;
+	repeat (4) @(posedge clk);
+	set_title("SEVENTH GAM");
+	set_code("ASXE");
+	save_type = 3'd5;
+	load_rom(8'd10);
+	wait_det(2'd0, 3'd5);
+	check("a probe abandoned by clear does not block the next one",
+	      slot_save_det[3:0] === 4'd5);
+
+	// clearing the slots drops the records with them
+	slot_clear = 1;
+	repeat (3) @(negedge clk);
+	slot_clear = 0;
+	repeat (4) @(posedge clk);
+	check("clear drops every save type", slot_save === 16'd0);
+	repeat (8) @(posedge clk);
+	check("clear drops every detected type", slot_save_det === 16'd0);
 
 	if (errors == 0) $display("tb_cart_slot: PASS");
 	else             $display("tb_cart_slot: FAIL (%0d errors)", errors);

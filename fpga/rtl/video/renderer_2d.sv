@@ -14,6 +14,24 @@
 //     1D tile mapping, h/v flip, priority; lower OAM index wins ties;
 //     affine/bitmap OBJ render transparent until M3
 //   - backdrop (BG palette colour 0) as the base layer
+//   - the 3D layer (engine A only): once the BG and OBJ passes have
+//     written the back bank, a merge pass reads the line's 256 frame
+//     pixels out of the VRAM bank whose VRAMCNT MST is 2 as four
+//     64-pixel bursts (one beat per clock, each beat composited the
+//     cycle it arrives) and commits every opaque one (bit 15 set) through
+//     the same priority resolver, using BG0CNT's priority for the layer
+//     (GBATEK) and DISP3DCNT bit 0 as the layer enable (0x04000060, byte
+//     offset 0x60 of engine A).
+//
+// Bandwidth, measured in tb_3d_path through the real chain (this module ->
+// vram_arbiter -> mem_arbiter -> sdram_ctrl): 322 clocks per line
+// uncontended against a 1280-clock line period, so the merge finishes well
+// inside its line. That came from asking for bursts instead of a request
+// per pixel: one per-pixel request paid a full round trip (ACT, RCD, READ,
+// CL through three arbiters) per halfword and cost 3965 clocks a line,
+// which the line buffers could only answer by repeating a completed line.
+// A burst pays the row and the round trip once and then streams, so the
+// remaining per-line cost is the beats themselves plus the four grants.
 //
 // Rendering model: the composer asks for pixel (x, y); the answer is a
 // combinational read of the FRONT line-buffer bank (same contract as the
@@ -26,13 +44,15 @@
 // line and the pipeline recovers on the next swap. During blanking the
 // fetcher keeps line 0 ready so the first active line is valid.
 //
-// Bandwidth: the SDRAM path carries ~100 reads per 4bpp layer per line
-// (map + tile halves + palette banks), so one or two layers fit a line
-// period; four simultaneously scrolling 8bpp layers exceed it on the
-// single 16-bit SDRAM port, which shows as one stale line in the
-// heaviest scenes until the M3 memory pass adds burst fetch. The OAM
-// scan reads ATTR0/ATTR1 for all 128 sprites per line (ATTR2 and tile
-// data only on y-hit), matching the hardware scan order.
+// Bandwidth: a 4bpp BG layer costs one map burst plus one tile-row burst
+// per column (33 grants, 96 beats for a 256-pixel line), and a sprite row
+// is one more burst. The per-line budget is 1280 clocks, so a BG line plus
+// a couple of sprites now fits it with the OAM scan inside the same line:
+// the scan is a pipeline over the second OAM port (ATTR0 issued the clock
+// before ATTR1, one attribute per clock, 258 clocks for all 128 entries)
+// and the entries that pass the y/height test are drawn afterwards in OAM
+// order. ATTR2 and tile data are only read for those hits, matching the
+// hardware scan order. Measured numbers live in fpga/README.md.
 //
 // Unrotated layouts (stacked / side / top / bottom) present scan-
 // ordered lines to each engine, so they render exactly; the composer's
@@ -64,11 +84,26 @@ module renderer_2d (
 	output reg [9:0] oam_addr,
 	input     [15:0] oam_data,
 
-	// VRAM fetch port (hold req until ready; byte address)
+	// VRAM fetch port: a burst of v_len halfwords (v_req held until v_ready),
+	// streamed back one beat per cycle on v_bs_valid, in address order
 	output reg       v_req,
 	output reg [19:0] v_addr,
+	output reg  [7:0] v_len,
 	input            v_ready,
-	input     [15:0] v_rdata,
+	input            v_bs_valid,
+	input     [15:0] v_bs_data,
+
+	// 3D frame read port (engine A only; byte offset inside the bank whose
+	// VRAMCNT MST is 2, same address space the rasterizer writes). A request
+	// is a burst of d3_len halfwords, streamed back one per cycle on
+	// d3_bs_valid with d3_ready marking the end of the burst.
+	output reg       d3_req,
+	output reg [16:0] d3_addr,
+	output reg  [7:0] d3_len,
+	input            d3_ready,
+	input            d3_bs_valid,
+	input     [15:0] d3_bs_data,
+	input            d3_present,   // 1 = this engine owns the 3D layer
 
 	// OBJ tile base inside the engine's VRAM window
 	input     [19:0] obj_base
@@ -76,12 +111,14 @@ module renderer_2d (
 
 localparam [1:0] KIND_BD  = 2'd0,  // backdrop (lowest)
                  KIND_BG  = 2'd1,
-                 KIND_OBJ = 2'd2;
+                 KIND_OBJ = 2'd2,
+                 KIND_3D  = 2'd3;  // between BG and OBJ on priority ties
 
 //------------------------------------------------------------------
 // Registers (byte offsets follow the DS IO map)
 //------------------------------------------------------------------
 reg [15:0] dispcnt = 0;
+reg [15:0] disp3dcnt = 0;   // 0x40 -> DISP3DCNT (bit 0 enables the layer)
 reg [15:0] bgcnt [0:3];
 reg [9:0]  bghofs [0:3];
 reg [9:0]  bgvofs [0:3];
@@ -111,14 +148,30 @@ always @(posedge clk) begin
 		7'h52: bgvofs[2] <= reg_data[9:0];
 		7'h54: bghofs[3] <= reg_data[9:0];
 		7'h56: bgvofs[3] <= reg_data[9:0];
+		7'h60: disp3dcnt <= reg_data;
 		default: ;
 		endcase
 	end
-	if (reset) dispcnt <= 16'd0;
+	if (reset) begin
+		dispcnt   <= 16'd0;
+		disp3dcnt <= 16'd0;
+	end
 end
 
-wire [1:0] mode   = dispcnt[2:0];
+// only the low two bits select a text layout: modes 4-7 (bitmap, extended
+// rotation, the two large-screen modes) are not implemented by this text
+// renderer, and bit 2 is dropped deliberately so they fall back to the layout
+// their low bits name rather than to undefined behaviour.
+// Quartus reports this net as "assigned but never read": its only readers sit
+// inside bg_enabled(), and Verific's function-body read analysis misses those
+// (the same blind spot that makes the cores' SPSRs look unused).
+wire [1:0] mode   = dispcnt[1:0];
 wire       obj_en = dispcnt[12];
+
+// 3D layer: present only in engine A, switched by DISP3DCNT bit 0, and
+// taking its priority from BG0CNT (GBATEK: the 3D layer is "BG0").
+wire       d3_on   = d3_present && disp3dcnt[0] && !dispcnt[7];
+wire [1:0] d3_prio = bgcnt[0][1:0];
 
 function automatic bg_enabled;
 	input [1:0] k;
@@ -133,19 +186,65 @@ function automatic bg_enabled;
 endfunction
 
 //------------------------------------------------------------------
-// Line buffers: two banks of 128 pair entries. Each entry holds two
-// composite pixels of 21 bits {kind[1:0], prio[1:0], opaque, rgb[15:0]}.
-// The front bank answers the composer combinationally; the fetch FSM
-// writes the back bank; the swap is a one-bit flip, taken only while
-// the fetch FSM is idle (back_line valid implies idle).
+// Line buffers. An entry holds two composite pixels of 21 bits
+// {kind[1:0], prio[1:0], opaque, rgb[15:0]}, so one 42-bit word is a pixel
+// pair and 128 words are one 256-pixel line.
+//
+//   * `wbank` is the line being composited, held in registers: the composite
+//     does a read-modify-write per pixel against the pixel already there, and
+//     that read has to land in the same cycle as the write.
+//   * `lbuf` holds *both display banks* in block RAM, addressed {bank, pair}.
+//     Every write to `wbank` is mirrored into the back bank, so when the swap
+//     makes it the front bank it is already a finished line — the display
+//     reads bank `front_is_a` while the composite fills the other one
+//     (AREA.md item 3, "the second shadow bank"). The display never reads a
+//     bank that is still being built, which is what a single write-through
+//     shadow got wrong.
+//
+// The display read is registered, so a pixel arrives one clock after its
+// address. The composer already holds its own decision for one CE, and
+// NDS.sv delays the video timing chain by the same cycle to match.
 //------------------------------------------------------------------
-reg [41:0] buf_a [0:127];
-reg [41:0] buf_b [0:127];
-reg        front_is_a = 1'b1;
+reg [41:0] wbank [0:127];              // line being composited (registers)
+reg [41:0] lbuf  [0:255];              // two display banks (block RAM)
+reg        front_is_a = 1'b1;          // which display bank holds the finished line
 
-wire [41:0] fe_pair = front_is_a ? buf_a[px[7:1]] : buf_b[px[7:1]];
-wire [20:0] fe      = px[0] ? fe_pair[41:21] : fe_pair[20:0];
+reg [7:0]  back_line = 8'hFF;          // line currently valid in the back bank
+reg        prev_on = 1'b0;             // display side: last on/py, for the swap
+reg [7:0]  prev_py = 8'd0;
 
+// The swap is registered, but the address has to follow it in the cycle the
+// new line's first pixel is asked for — the flop version swapped instantly, so
+// a registered-only select would show one pixel of the previous line at the
+// start of every scanline.
+wire       line_start = on && (py != prev_py || !prev_on);
+wire       swp        = line_start && (back_line != 8'hFF);
+wire       disp_bank  = front_is_a ^ swp;
+// The write side must *not* follow `swp`: the swap pulse only lasts the one
+// cycle in which the front flop has not moved yet, while a fetch and its
+// composite run for hundreds of cycles. Following it here pointed the write
+// at the bank the display was about to read (and split a fill across both
+// banks). front_is_a is already the bank being displayed once the flip has
+// happened, so the one the composite fills is simply its complement.
+wire       back_bank  = ~front_is_a;   // the one the composite is filling
+
+reg  [41:0] disp_q = 42'h0_0000;
+
+// One write port into the display copy, shared by the fill and the composite.
+// Both the read and the single write live in the main clocked process (see
+// the top and bottom of it): with the read and writes in different processes,
+// or with two write sites in one process, Quartus reports "unsupported
+// read-during-write behavior" and falls back to 10,752 registers (Info
+// 276009). A register for enable/address/data per site and one array write
+// statement is what makes it a simple dual-port RAM with read-old-data.
+reg        lb_we;
+reg  [7:0] lb_wa;
+reg [41:0] lb_wd;
+
+wire [20:0] fe = px[0] ? disp_q[41:21] : disp_q[20:0];
+
+// `on` and px stay live: the read settles a clock after the address, well
+// inside one pixel CE (clk/5), so the pixel is present when it is sampled.
 assign rgb555 = !on ? 16'h0000 : (fe[16] ? fe[15:0] : 16'h0000);
 
 // DS priority resolution: everything beats the backdrop; between a BG
@@ -153,12 +252,26 @@ assign rgb555 = !on ? 16'h0000 : (fe[16] ? fe[15:0] : 16'h0000);
 // BGs the lower number wins ties (layers walk 3->0, later write wins);
 // between sprites the lower OAM index wins (walk 0->127, later write
 // wins only on strictly lower priority).
+// Equal priority across kinds resolves OBJ > 3D > BG (the 3D layer takes
+// BG0's slot, so it beats the BGs it ties with but never a sprite).
+function automatic [1:0] px_rank;
+	input [1:0] k;
+	begin
+		case (k)
+		KIND_BG: px_rank = 2'd0;
+		KIND_3D: px_rank = 2'd1;
+		default: px_rank = 2'd2;   // OBJ
+		endcase
+	end
+endfunction
+
 function automatic px_win;
 	input [1:0] nk; input [1:0] ck;
 	input [1:0] np; input [1:0] cp;
 	begin
 		if (ck == KIND_BD)      px_win = 1'b1;
-		else if (nk != ck)      px_win = (np <= cp);
+		else if (nk != ck)      px_win = (np != cp) ? (np < cp)
+		                                            : (px_rank(nk) > px_rank(ck));
 		else if (nk == KIND_BG) px_win = (np <= cp);
 		else                    px_win = (np <  cp);
 	end
@@ -182,7 +295,7 @@ localparam [4:0]
 	S_PXC       = 5'd11,  // composite one BG pixel
 	S_PAL_REQ   = 5'd12,  // 8bpp BG per-pixel palette read
 	S_PAL_WAIT  = 5'd13,
-	S_OAM_REQ   = 5'd14,  // sprite attribute read (ostep 0..2)
+	S_OAM_REQ   = 5'd14,  // ATTR2 of a sprite that passed the y test
 	S_OAM_WAIT  = 5'd15,
 	S_SHW_REQ   = 5'd16,  // sprite tile-row halfword fetch
 	S_SHW_WAIT  = 5'd17,
@@ -191,11 +304,19 @@ localparam [4:0]
 	S_SPAL_WAIT = 5'd20,
 	S_SPB_REQ   = 5'd21,  // OBJ palette-bank load (spbi 0..15)
 	S_SPB_WAIT  = 5'd22,
-	S_DONE      = 5'd23;
+	S_DONE      = 5'd23,
+	S_D3_RUN    = 5'd24,  // 3D layer merge: burst fetch + composite
+	S_COL       = 5'd25,  // latch this column's map entry
+	S_COL_CHK   = 5'd26,  // palette-bank check before compositing a column
+	S_PXC_GO    = 5'd27,  // start the next column's tile prefetch
+	S_PF_WAIT   = 5'd28,  // collect the prefetched tile row
+	S_OAM_SCAN  = 5'd29,  // pipelined OAM walk: one attribute per clock
+	S_HIT_NEXT  = 5'd30;  // advance to the next sprite that hit
 
 reg [4:0]  fstate = S_IDLE;
 reg [7:0]  tgt = 8'hFF;        // line being fetched into the back bank
-reg [7:0]  back_line = 8'hFF;  // line currently valid in the back bank
+// back_line, prev_on and prev_py are declared with the line buffers, because
+// the display bank select is combinational on them
 
 // line-request mailbox (display side -> fetch side)
 reg        fetch_req = 0;
@@ -206,12 +327,27 @@ reg [11:0] blank_cnt = 0;      // saturates at 4096 (deep blanking)
 reg        phase_bg = 1'b1;    // 1 = BG phase, 0 = OBJ phase
 reg [1:0]  lk = 2'd3;          // current BG layer, walks 3->0
 reg [5:0]  col = 6'd0;         // screen tile column 0..32
-reg [1:0]  hw_i = 2'd0;        // halfword within the tile row
+reg [1:0]  hw_i = 2'd0;        // halfword within the current tile row
 reg [1:0]  pxi = 2'd0;         // pixel within the halfword
 reg [3:0]  pbi = 4'd0;         // palette-bank fill index
 reg [6:0]  fill_i = 7'd0;      // backdrop-fill pair index
-reg [15:0] map_e = 16'd0;      // latched map entry
-reg [15:0] hw_data = 16'd0;    // latched tile-row halfword
+reg [15:0] map_e = 16'd0;      // map entry of the column being composited
+// Map row: one burst covers a 32-entry half-row, two cover a 64-wide map,
+// so a layer's whole map line costs one or two grants instead of 32.
+reg [15:0] map_row [0:63];
+reg [6:0]  map_wr = 7'd0;      // write index while a map burst streams
+reg        map_half = 1'b0;    // 0/1 = which 32-entry half is in flight
+// latched copy of the current layer's BGxCNT and scroll registers
+reg [15:0] l_bgcnt = 16'd0;
+reg  [9:0] l_hofs = 10'd0, l_vofs = 10'd0;
+// Tile rows: the composite reads one buffer while the next column's burst
+// fills the other, so a column's fetch hides behind the previous one.
+reg [15:0] tbuf [0:7];         // 2 buffers x 4 halfwords
+reg        tcur = 1'b0;        // buffer the composite is reading
+reg  [2:0] twr = 3'd0;         // write index into the other buffer
+reg        pf_on = 1'b0;       // a tile prefetch is in flight
+reg        pf_rdy = 1'b0;      // ... and its last beat has arrived
+reg  [4:0] bg_ret = S_TILE_REQ;// where a palette-bank load returns to
 reg [15:0] pcache [0:15];      // shared 16-entry palette cache
 reg [3:0]  pcache_bank = 4'd0;
 reg        pcache_obj = 1'b0;  // cache holds OBJ palettes when set
@@ -222,23 +358,60 @@ reg        pal_ready = 1'b0;
 // shared 2-cycle port-read countdown; pal_ret/pal_obj select the
 // destination of S_PAL_WAIT
 reg [1:0]  port_wc = 2'd0;
-reg [3:0]  pal_ret = S_IDLE;
+// five bits, like `fstate`: the FSM has 31 states and the 8bpp OBJ path
+// returns to S_SPIXC (5'd18). At four bits that stored 2 = S_BD_WAIT, so an
+// 8bpp sprite pixel took the backdrop wait instead of its composite step
+reg [4:0]  pal_ret = S_IDLE;
 reg        pal_obj = 1'b0;
 
 // OBJ walk
-reg [6:0]  os_idx = 7'd0;
-reg [1:0]  ostep = 2'd0;       // 0 ATTR0, 1 ATTR1, 2 ATTR2
+//
+// The per-line OAM scan used to be the bulk of the OBJ pass: two reads per
+// entry with a handshake each, ~770 clocks for 128 entries. The second OAM
+// port is a one-address-per-clock BRAM read, so the walk is a pipeline
+// instead: ATTR0 of an entry is issued the clock before its ATTR1, the
+// y/height test runs when ATTR1 comes back two clocks later, and no clock
+// is left idle. That is 258 clocks for the whole of OAM.
+//
+// Hitting a sprite must not stall that pipeline (one attribute would be in
+// flight and get lost), so the walk collects the entries that passed the
+// test into a hit list and the sprite path draws them afterwards, in OAM
+// order. 32 hits per line is the cap; beyond it extra sprites are dropped.
+reg [6:0]  os_idx = 7'd0;      // entry whose sprite is being set up
+reg [1:0]  ostep = 2'd0;       // draw path: 0 ATTR0, 1 ATTR1, 2 ATTR2
+reg [8:0]  sc_n   = 9'd0;      // attributes the scan has issued (2/entry)
+reg [15:0] sc_a0  = 16'd0;     // ATTR0 of the entry whose ATTR1 is arriving
+reg [6:0]  hit_idx [0:31];     // entries that passed the y/height test
+reg [5:0]  hit_n  = 6'd0;
+reg [5:0]  hit_rd = 6'd0;
 reg [15:0] o_a0 = 16'd0, o_a1 = 16'd0;
 reg [8:0]  sx = 9'd0;          // sprite x (raw 9-bit)
 reg [6:0]  s_w = 7'd0, s_h = 7'd0;
 reg [9:0]  s_tile = 10'd0;
-reg [3:0]  s_bank = 4'd0;
 reg [1:0]  s_prio = 2'd0;
 reg        s_hflip = 1'b0, s_vflip = 1'b0, s_bpp8 = 1'b0;
 reg [5:0]  shw = 6'd0;         // halfword within the sprite row
 reg [1:0]  spx = 2'd0;         // pixel within the sprite halfword
-reg [15:0] sdata = 16'd0;      // latched sprite halfword
+reg [15:0] sdata = 16'd0;      // current sprite halfword
+// a sprite row is fetched as one burst (w/4 or w/2 halfwords, up to 16 for
+// a 64-wide 4bpp sprite) instead of one round trip per halfword
+reg [15:0] sbuf [0:31];        // a 64-wide 8bpp row is 32 halfwords
+reg  [5:0] swr = 6'd0;         // write index while the row burst streams
 reg [3:0]  spbi = 4'd0;        // OBJ palette-bank fill index
+// 3D merge pass: the line is fetched as D3_CHUNK-halfword bursts and each
+// beat is composited the cycle it arrives, so the pass is paced by the
+// memory burst rate rather than by a round trip per pixel. Smaller chunks
+// leave the VRAM arbiter to the other engines between bursts (a whole
+// 256-halfword line held in one grant would block a fifth of the line).
+localparam [8:0] D3_LINE  = 9'd256;              // pixels per line
+localparam [7:0] D3_CHUNK = 8'd64;               // pixels per burst
+// A pixel is one stored halfword, addressed by two byte offsets (this core
+// keeps the DS's one-address-unit-per-byte VRAM window and the arbiter
+// halves offsets into slots), so a chunk starts at column*2 and the burst
+// itself walks one slot per beat: contiguous, no wasted beats.
+
+reg [8:0]  d3_issue = 9'd0;    // pixels requested so far (256 = all)
+reg [7:0]  d3_col = 8'd0;      // next column to composite
 reg [15:0] spal_hold = 16'd0;
 reg        spal_ready = 1'b0;
 reg [13:0] sp_wh_r = 14'd0;    // latched {w,h}
@@ -278,31 +451,58 @@ endfunction
 //------------------------------------------------------------------
 // BG geometry (combinational from walk state)
 //------------------------------------------------------------------
-wire        bg_wide = (bgcnt[lk][15:14] == 2'd1) || (bgcnt[lk][15:14] == 2'd3);
-wire        bg_tall = (bgcnt[lk][15:14] == 2'd2) || (bgcnt[lk][15:14] == 2'd3);
-wire [6:0]  mcol_f  = {1'b0, bghofs[lk][8:3]} + {1'b0, col};
-wire [6:0]  mrow_f  = {1'b0, bgvofs[lk][8:3]} + {2'd0, tgt[7:3]};
+// The layer's BGxCNT/scroll values are latched into l_* regs at layer start.
+// They are stable for the whole line, and a plain reg keeps the address
+// arithmetic in continuous assignments off the array-read sensitivity that
+// some simulators resolve unreliably (same note as vram_arbiter's decode).
+wire        bg_wide = (l_bgcnt[15:14] == 2'd1) || (l_bgcnt[15:14] == 2'd3);
+wire        bg_tall = (l_bgcnt[15:14] == 2'd2) || (l_bgcnt[15:14] == 2'd3);
+wire        bg_bpp8 = l_bgcnt[7];
+wire [1:0]  bg_prio = l_bgcnt[1:0];
+wire [2:0]  y_in    = tgt[2:0];
+wire [6:0]  mcol_f  = {1'b0, l_hofs[8:3]} + {1'b0, col};
+wire [6:0]  mcol_f_n= {1'b0, l_hofs[8:3]} + {1'b0, col} + 7'd1;
+wire [6:0]  mrow_f  = {1'b0, l_vofs[8:3]} + {2'd0, tgt[7:3]};
 wire [5:0]  mcol    = mcol_f[5:0] & (bg_wide ? 6'd63 : 6'd31);
+wire [5:0]  mcol_n  = mcol_f_n[5:0] & (bg_wide ? 6'd63 : 6'd31);
 wire [5:0]  mrow    = mrow_f[5:0] & (bg_tall ? 6'd63 : 6'd31);
 // GBATEK block layout: 64x32 -> right at +2K; 32x64 -> bottom at +2K;
-// 64x64 -> TR +2K, BL +4K, BR +6K
-wire [19:0] map_blk = (bg_wide && bg_tall) ? {10'd0, mrow_f[6], mcol_f[6], 11'd0}
-                   : bg_wide               ? {11'd0, mcol_f[6], 11'd0}
-                   : bg_tall               ? {11'd0, mrow_f[6], 11'd0}
-                                            : 20'd0;
-wire [19:0] map_addr = {bgcnt[lk][15:8], 11'd0} + map_blk
-                     + {13'd0, mrow[4:0], 6'd0} + {16'd0, mcol[4:0], 1'd0};
+// 64x64 -> TR +2K, BL +4K, BR +6K. A map row is 32 consecutive entries per
+// block half, which is exactly one burst, so the whole row is 1 or 2
+// grants instead of one read per tile column.
+// screen base block is BGxCNT[12:8] (2 KB each); the size bits above it are
+// not part of the address, or a 64-wide map would fetch from the wrong block
+wire [19:0] map_burst = {4'd0, l_bgcnt[12:8], 11'd0}
+                      + ((bg_wide && bg_tall) ? {7'd0, mrow_f[6], map_half, 11'd0}
+                       : bg_wide             ? {8'd0, map_half, 11'd0}
+                       : bg_tall             ? {8'd0, mrow_f[6], 11'd0}
+                                             : 20'd0)
+                      + {9'd0, mrow[4:0], 6'd0};
 
-wire        bg_bpp8 = bgcnt[lk][7];
-wire [1:0]  bg_prio = bgcnt[lk][1:0];
-wire [2:0]  y_in    = tgt[2:0];
+// one tile row: 4bpp is 4 bytes (2 halfwords), 8bpp 8 bytes (4 halfwords)
+wire  [7:0] bg_nhw = bg_bpp8 ? 8'd4 : 8'd2;
+
+function [19:0] trow_addr;   // character address of a tile row
+	input [15:0] me;           // its map entry
+	input [2:0]  vr;           // row inside the tile (vflip applied)
+	begin
+		// every term is declared at the 20-bit address width so nothing is
+		// silently truncated away on the way into the sum
+		trow_addr = {l_bgcnt[3:2], 14'd0}                          // char base
+		          + (bg_bpp8 ? {4'd0, me[9:0], 6'd0}     // *64
+		                     : {5'd0, me[9:0], 5'd0})    // *32
+		          + (bg_bpp8 ? {14'd0, vr, 3'd0}         // *8
+		                     : {15'd0, vr, 2'd0});       // *4
+	end
+endfunction
+
 wire [2:0]  vrow    = map_e[11] ? (3'd7 - y_in) : y_in;      // vflip
-wire [19:0] tile_addr = {bgcnt[lk][3:2], 14'd0}              // char base
-                      + (bg_bpp8 ? {9'd0, map_e[9:0], 6'd0}  // *64
-                                 : {10'd0, map_e[9:0], 5'd0})// *32
-                      + (bg_bpp8 ? {17'd0, vrow, 3'd0}       // *8
-                                 : {18'd0, vrow, 2'd0})      // *4
-                      + {18'd0, hw_i, 1'd0};
+wire [19:0] tile_addr = trow_addr(map_e, vrow);
+// the next column is prefetched during this column's composite, so its
+// address is built from its map entry directly out of the row buffer
+wire [15:0] map_e_n = map_row[mcol_n];
+wire [2:0]  vrow_n  = map_e_n[11] ? (3'd7 - y_in) : y_in;
+wire [19:0] tile_addr_n = trow_addr(map_e_n, vrow_n);
 
 wire [2:0]  bg_pph  = bg_bpp8 ? 3'd2 : 3'd4;   // pixels per halfword
 wire [3:0]  bg_tlp  = (bg_pph == 3'd4 ? {hw_i, 2'd0} : {1'b0, hw_i, 1'b0})
@@ -312,11 +512,12 @@ wire signed [10:0] bg_xs = $signed({2'd0, col, 3'd0})
                          - $signed({8'd0, bghofs[lk][2:0]})
                          + $signed({7'd0, bg_xoff});
 wire        bg_xs_ok = (bg_xs >= 0) && (bg_xs < 256);
-wire [7:0]  bg_idx = bg_bpp8 ? (pxi[0] ? hw_data[15:8] : hw_data[7:0])
-                             : (pxi == 2'd0) ? hw_data[3:0]
-                             : (pxi == 2'd1) ? hw_data[7:4]
-                             : (pxi == 2'd2) ? hw_data[11:8]
-                                             : hw_data[15:12];
+wire [15:0] bg_hw  = tbuf[{tcur, hw_i}];   // current tile-row halfword
+wire [7:0]  bg_idx = bg_bpp8 ? (pxi[0] ? bg_hw[15:8] : bg_hw[7:0])
+                             : (pxi == 2'd0) ? bg_hw[3:0]
+                             : (pxi == 2'd1) ? bg_hw[7:4]
+                             : (pxi == 2'd2) ? bg_hw[11:8]
+                                             : bg_hw[15:12];
 
 // last column is only needed when the horizontal scroll has a
 // sub-tile offset (otherwise column 31 already ends at x=255)
@@ -327,32 +528,50 @@ wire        col_last = (col == 6'd32) ||
 // Sprite geometry
 //------------------------------------------------------------------
 wire [7:0]  sp_dy   = tgt - o_a0[7:0];          // wraps mod 256
-// size lookups (function results need an intermediate for bit-selects)
-wire [13:0] sp_wh1  = spr_wh(o_a0[9:8], oam_data[15:14]); // ATTR1 time
+// size lookup (function results need an intermediate for bit-selects)
 wire [13:0] sp_wh2  = spr_wh(o_a0[9:8], o_a1[15:14]);     // ATTR2 time
-// hit test at ATTR1 latch time: height comes from ATTR1 size bits
-wire        sp_hit1 = (o_a0[15:14] == 2'd0)
-                    && ({3'd0, sp_dy} < {4'd0, sp_wh1[6:0]});
+
+//------------------------------------------------------------------
+// OAM scan pipeline (combinational view of the walk)
+//------------------------------------------------------------------
+// sc_n counts attributes, not entries: 0/1 = ATTR0/ATTR1 of entry 0, and
+// so on. The port answers two clocks after its address is set, so the
+// attribute arriving this cycle is sc_n-2 and the address for sc_n goes out
+// at the same time: one attribute in, one out, every clock.
+wire [9:0]  ev_idx   = {1'b0, sc_n} - 10'd2;    // attribute arriving now
+wire [6:0]  ev_ent   = ev_idx[7:1];             // entry it belongs to
+wire        ev_attr  = ev_idx[0];               // 0 = ATTR0, 1 = ATTR1
+wire [6:0]  sc_ent   = sc_n[7:1];               // entry being addressed
+wire        sc_attr  = sc_n[0];
+wire [9:0]  sc_addr  = {1'b0, sc_ent, 2'd0} + {9'd0, sc_attr};
+wire [7:0]  sc_dy    = tgt - sc_a0[7:0];        // sprite y vs line, mod 256
+wire [13:0] sc_wh    = spr_wh(sc_a0[9:8], oam_data[15:14]);
+// same test the per-entry path used: normal (not affine/disabled) sprites
+// whose height from ATTR1 covers this line
+wire        sc_hit   = (sc_a0[15:14] == 2'd0)
+                    && ({3'd0, sc_dy} < {4'd0, sc_wh[6:0]});
 
 wire [2:0]  s_pph   = s_bpp8 ? 3'd2 : 3'd4;
 wire [5:0]  s_nhw   = s_bpp8 ? s_w[6:1] : s_w[6:2];      // w/2 or w/4
-wire [7:0]  s_row   = s_vflip ? ({1'b0, sp_wh_r[6:0]} - 8'd1 - {2'd0, sp_dy})
-                              : {2'd0, sp_dy};
+wire [7:0]  s_row   = s_vflip ? (sp_wh_r[6:0] - 8'd1 - sp_dy)
+                              : sp_dy;
 wire [2:0]  s_trow  = s_row[5:3];
 wire [2:0]  s_vrow  = s_row[2:0];
 wire [7:0]  s_bpr   = s_bpp8 ? {1'b0, s_w[6:3], 3'd0}    // (w/8)*8
                              : {2'd0, s_w[6:3], 2'd0};   // (w/8)*4
-wire [19:0] shw_addr = obj_base + {10'd0, s_tile, 5'd0}    // *32
-                     + {12'd0, s_trow} * {12'd0, s_bpr}
-                     + (s_bpp8 ? {17'd0, s_vrow, 3'd0}
-                               : {18'd0, s_vrow, 2'd0})
-                     + {15'd0, shw, 1'd0};
+wire [19:0] shw_row  = s_trow * s_bpr;                    // row start, ≤ 7*2040
+wire [19:0] shw_addr = obj_base + {5'd0, s_tile, 5'd0}     // *32
+                     + shw_row
+                     + (s_bpp8 ? {14'd0, s_vrow, 3'd0}
+                               : {15'd0, s_vrow, 2'd0})
+                     + {13'd0, shw, 1'd0};
 // screen x of the current sprite pixel (x >= 256 wraps offscreen)
 wire signed [10:0] s_x0 = sx[8] ? ($signed({2'd0, sx}) - 11'sd512)
                                  : $signed({2'd0, sx});
-wire [6:0]  s_tlp   = (s_pph == 3'd4 ? {shw, 2'd0} : {1'b0, shw, 1'b0})
+wire [7:0]  s_tlp8  = (s_pph == 3'd4 ? {shw, 2'd0} : {1'b0, shw, 1'b0})
                     + {5'd0, spx};             // shw*pph + spx
-wire [6:0]  s_poff  = s_hflip ? ({1'b0, sp_wh_r[6:0]} - 7'd1 - s_tlp)
+wire [6:0]  s_tlp   = s_tlp8[6:0];             // a row is at most 64 pixels
+wire [6:0]  s_poff  = s_hflip ? (sp_wh_r[6:0] - 7'd1 - s_tlp)
                               : s_tlp;
 wire signed [10:0] s_xs = s_x0 + $signed({4'd0, s_poff});
 wire        s_xs_ok = (s_xs >= 0) && (s_xs < 256);
@@ -362,7 +581,9 @@ wire [7:0]  s_idx = s_bpp8 ? (spx[0] ? sdata[15:8] : sdata[7:0])
                             : (spx == 2'd2) ? sdata[11:8]
                                             : sdata[15:12];
 
-wire [9:0]  oam_rd_addr = {3'd0, os_idx, 1'b0} + {6'd0, os_idx} + {8'd0, ostep};
+// OAM entries are four halfwords each, so the draw path walks 4n + ostep:
+// ATTR0, ATTR1 (x / flips / size) and ATTR2 (tile / priority / bank)
+wire [9:0]  oam_rd_addr = {1'b0, os_idx, 2'd0} + {8'd0, ostep};
 
 //------------------------------------------------------------------
 // Composite write: read-modify-write one pixel of the back bank
@@ -375,24 +596,32 @@ task automatic write_px;
 	reg [41:0] e;
 	reg [20:0] cur;
 	begin
+		// assigned before the guard: a local written only inside it is what
+		// Verific reports as warning 10776 ("may have unintended latch
+		// behavior"), which is noise here -- the guard is what keeps the
+		// array index in range, so the defaults are never observable
+		e   = 42'd0;
+		cur = 21'd0;
 		if (xs >= 0 && xs < 256) begin
-			e = front_is_a ? buf_b[xs[8:1]] : buf_a[xs[8:1]];
+			e = wbank[xs[8:1]];
 			cur = xs[0] ? e[41:21] : e[20:0];
 			if (px_win(nk, cur[20:19], np, cur[18:17])) begin
 				if (xs[0]) e[41:21] = {nk, np, 1'b1, colr};
 				else       e[20:0]  = {nk, np, 1'b1, colr};
-				if (front_is_a) buf_b[xs[8:1]] <= e;
-				else            buf_a[xs[8:1]] <= e;
+				wbank[xs[8:1]] <= e;
+				// the mirror address is {bank, pair} -- 7 bits of pair, or the
+				// bank bit would shift the index past the end of the array
+				lb_we <= 1'b1;                        // the display's copy
+				lb_wa <= {back_bank, xs[7:1]};
+				lb_wd <= e;
 			end
 		end
 	end
 endtask
 
 //------------------------------------------------------------------
-// Display side state
+// Display side state (prev_on/prev_py sit with the line buffers)
 //------------------------------------------------------------------
-reg       prev_on = 1'b0;
-reg [7:0] prev_py = 8'd0;
 
 //------------------------------------------------------------------
 // Main process. Order matters: the fetch FSM runs first and consumes
@@ -400,6 +629,15 @@ reg [7:0] prev_py = 8'd0;
 // in the same cycle a consume happens is never lost.
 //------------------------------------------------------------------
 always @(posedge clk) begin
+	// display read: first statement, so a write to the same word in this
+	// cycle returns the old data (the banks never overlap in practice --
+	// the display reads the front bank while the composite writes the
+	// back one -- but this is the order the RAM inferencer needs to see)
+	disp_q <= lbuf[{disp_bank, px[7:1]}];
+
+	// the display copy's write port: idle unless a site below drives it
+	lb_we <= 1'b0;
+
 	//------------------------
 	// fetch FSM
 	//------------------------
@@ -442,13 +680,14 @@ always @(posedge clk) begin
 	S_FILL: begin
 		// fill the back bank with the backdrop, one pair entry per
 		// cycle (BOTH pixels of the pair); pal_hold holds colour 0
-		if (front_is_a) begin
-			buf_b[fill_i][20:0]  <= {KIND_BD, 2'd3, 1'b1, pal_hold};
-			buf_b[fill_i][41:21] <= {KIND_BD, 2'd3, 1'b1, pal_hold};
-		end else begin
-			buf_a[fill_i][20:0]  <= {KIND_BD, 2'd3, 1'b1, pal_hold};
-			buf_a[fill_i][41:21] <= {KIND_BD, 2'd3, 1'b1, pal_hold};
-		end
+		// one whole pair word, into the working bank and the display's copy
+		wbank[fill_i]                 <= {{KIND_BD, 2'd3, 1'b1, pal_hold},
+		                                  {KIND_BD, 2'd3, 1'b1, pal_hold}};
+		lb_we <= 1'b1;                          // the display's copy
+		lb_wa <= {back_bank, fill_i};
+		lb_wd <= {{KIND_BD, 2'd3, 1'b1, pal_hold},
+		          {KIND_BD, 2'd3, 1'b1, pal_hold}};
+
 		if (fill_i == 7'd127) begin
 			fill_i    <= 7'd0;
 			lk        <= 2'd3;
@@ -464,16 +703,24 @@ always @(posedge clk) begin
 		// remains continue with the OBJ phase
 		if (phase_bg) begin
 			if (bg_enabled(lk)) begin
-				col     <= 6'd0;
-				hw_i    <= 2'd0;
-				pxi     <= 2'd0;
-				fstate  <= S_MAP_REQ;
+				l_bgcnt  <= bgcnt[lk];
+				l_hofs   <= bghofs[lk];
+				l_vofs   <= bgvofs[lk];
+				col      <= 6'd0;
+				hw_i     <= 2'd0;
+				pxi      <= 2'd0;
+				map_half <= 1'b0;
+				map_wr   <= 7'd0;
+				tcur     <= 1'b0;
+				pf_on    <= 1'b0;
+				fstate   <= S_MAP_REQ;
 			end else if (lk == 2'd0) begin
 				phase_bg <= 1'b0;
 				if (obj_en) begin
-					os_idx <= 7'd0;
-					ostep  <= 2'd0;
-					fstate <= S_OAM_REQ;
+					sc_n    <= 9'd0;       // walk OAM from entry 0
+					sc_a0   <= 16'd0;
+					hit_n   <= 6'd0;
+					fstate  <= S_OAM_SCAN;
 				end else begin
 					fstate <= S_DONE;
 				end
@@ -486,36 +733,58 @@ always @(posedge clk) begin
 	end
 
 	S_MAP_REQ: begin
+		// a map row half: 32 entries, one burst
 		v_req  <= 1'b1;
-		v_addr <= map_addr;
+		v_addr <= map_burst;
+		v_len  <= 8'd32;
 		fstate <= S_MAP_WAIT;
 	end
 
 	S_MAP_WAIT: begin
+		if (v_bs_valid) begin
+			map_row[map_wr] <= v_bs_data;
+			map_wr          <= map_wr + 7'd1;
+		end
 		if (v_ready) begin
-			v_req  <= 1'b0;
-			map_e  <= v_rdata;
-			hw_i   <= 2'd0;
-			pxi    <= 2'd0;
-			// 4bpp: make sure the palette bank this entry selects
-			// is resident in the cache
-			if (!bg_bpp8 && !(pcache_ok && !pcache_obj
-			                 && pcache_bank == v_rdata[15:12])) begin
-				pcache_bank <= v_rdata[15:12];
-				pcache_obj  <= 1'b0;
-				pcache_ok   <= 1'b0;
-				pbi         <= 4'd0;
-				pal_addr    <= {6'd0, v_rdata[15:12], 4'd0};
-				port_wc     <= 2'd2;
-				fstate      <= S_PB_WAIT;
+			v_req <= 1'b0;
+			// 64-wide maps keep columns 32..63 in the next block half
+			if (bg_wide && !map_half) begin
+				map_half <= 1'b1;
+				map_wr   <= 7'd32;
+				fstate   <= S_MAP_REQ;
 			end else begin
-				fstate <= S_TILE_REQ;
+				map_half <= 1'b0;
+				fstate   <= S_COL;
 			end
 		end
 	end
 
-	S_PB_REQ: begin
-		pal_addr <= {6'd0, pcache_bank, pbi};
+	S_COL: begin
+		// the map entry for this column is already in the row buffer
+		map_e  <= map_row[mcol];
+		hw_i   <= 2'd0;
+		pxi    <= 2'd0;
+		bg_ret <= S_TILE_REQ;
+		fstate <= S_COL_CHK;
+	end
+
+	S_COL_CHK: begin
+		// 4bpp: the palette bank this entry selects has to be resident
+		if (!bg_bpp8 && !(pcache_ok && !pcache_obj
+		                 && pcache_bank == map_e[15:12])) begin
+			pcache_bank <= map_e[15:12];
+			pcache_obj  <= 1'b0;
+			pcache_ok   <= 1'b0;
+			pbi         <= 4'd0;
+			pal_addr    <= {2'd0, map_e[15:12], 4'd0};
+			port_wc     <= 2'd2;
+			fstate      <= S_PB_WAIT;
+		end else begin
+			fstate <= bg_ret;
+		end
+	end
+
+	S_PB_REQ: begin			pal_addr <= {2'd0, pcache_bank, pbi};
 		port_wc  <= 2'd2;
 		fstate   <= S_PB_WAIT;
 	end
@@ -528,28 +797,65 @@ always @(posedge clk) begin
 				pcache_ok <= 1'b1;
 				hw_i      <= 2'd0;
 				pxi       <= 2'd0;
-				fstate    <= S_TILE_REQ;
+				fstate    <= bg_ret;
 			end else begin
 				pbi      <= pbi + 4'd1;
-				pal_addr <= {6'd0, pcache_bank, pbi + 4'd1};
+				pal_addr <= {2'd0, pcache_bank, pbi + 4'd1};
 				port_wc  <= 2'd2;
 			end
 		end
 	end
 
 	S_TILE_REQ: begin
+		// the whole tile row in one burst (2 halfwords at 4bpp, 4 at 8bpp)
 		v_req  <= 1'b1;
 		v_addr <= tile_addr;
+		v_len  <= bg_nhw;
+		twr    <= 3'd0;
 		fstate <= S_TILE_WAIT;
 	end
 
 	S_TILE_WAIT: begin
+		if (v_bs_valid) begin
+			tbuf[{tcur, twr[1:0]}] <= v_bs_data;
+			twr <= twr + 3'd1;
+		end
 		if (v_ready) begin
 			v_req    <= 1'b0;
-			hw_data  <= v_rdata;
+			twr      <= 3'd0;
 			pxi      <= 2'd0;
 			pal_ready<= 1'b0;
-			fstate   <= S_PXC;
+			fstate   <= S_PXC_GO;
+		end
+	end
+
+	S_PXC_GO: begin
+		// this column's row is in the buffer: start the next column's fetch
+		// now so it streams in while these 8 pixels are composited
+		if (!col_last) begin
+			v_req  <= 1'b1;
+			v_addr <= tile_addr_n;
+			v_len  <= bg_nhw;
+			pf_on  <= 1'b1;
+			pf_rdy <= 1'b0;
+			twr    <= 3'd0;
+		end
+		fstate <= S_PXC;
+	end
+
+	S_PF_WAIT: begin
+		// the beats (and the completion pulse) were collected while the
+		// column was compositing
+		if (pf_rdy) begin
+			twr    <= 3'd0;
+			pf_rdy <= 1'b0;
+			tcur   <= ~tcur;          // this buffer is the current one now
+			col    <= col + 6'd1;
+			map_e  <= map_e_n;
+			hw_i   <= 2'd0;
+			pxi    <= 2'd0;
+			bg_ret <= S_PXC_GO;       // row is already there: no fetch
+			fstate <= S_COL_CHK;
 		end
 	end
 
@@ -578,21 +884,26 @@ always @(posedge clk) begin
 						if (lk == 2'd0) begin
 							phase_bg <= 1'b0;
 							if (obj_en) begin
-								os_idx <= 7'd0;
-								ostep  <= 2'd0;
-								fstate <= S_OAM_REQ;
+								sc_n    <= 9'd0;  // walk OAM from entry 0
+								sc_a0   <= 16'd0;
+								hit_n   <= 6'd0;
+								fstate  <= S_OAM_SCAN;
 							end else fstate <= S_DONE;
 						end else begin
 							lk <= lk - 2'd1;
 							fstate <= S_LAYER;
 						end
+					end else if (pf_on) begin
+						// the next column's row has been streaming in meanwhile
+						fstate <= S_PF_WAIT;
 					end else begin
 						col    <= col + 6'd1;
-						fstate <= S_MAP_REQ;
+						map_e  <= map_e_n;
+						bg_ret <= S_TILE_REQ;
+						fstate <= S_COL_CHK;
 					end
 				end else begin
-					hw_i   <= hw_i + 2'd1;
-					fstate <= S_TILE_REQ;
+					hw_i <= hw_i + 2'd1;    // next halfword is already buffered
 				end
 			end else begin
 				pxi <= pxi + 2'd1;
@@ -615,6 +926,35 @@ always @(posedge clk) begin
 		end
 	end
 
+	S_OAM_SCAN: begin
+		// one attribute in, one out, every clock
+		if (ev_idx < 10'd256) begin
+			if (ev_attr) begin
+				// ATTR1 is here: test it against the ATTR0 latched
+				// two clocks ago and record the entry if it shows
+				if (sc_hit && hit_n < 6'd32) begin
+					hit_idx[hit_n] <= ev_ent;
+					hit_n <= hit_n + 6'd1;
+				end
+			end else sc_a0 <= oam_data;      // ATTR0 of ev_ent
+		end
+		// keep the pipeline fed, then let it drain (the last issued
+		// attribute still costs two clocks to come back)
+		if (sc_n < 9'd256) oam_addr <= sc_addr;
+		if (sc_n < 9'd258) sc_n <= sc_n + 9'd1;
+		if (sc_n == 9'd258) begin
+			// all 128 entries walked and the last ATTR1 tested: draw what
+			// hit, in OAM order
+			if (hit_n == 6'd0) fstate <= S_DONE;
+			else begin
+				hit_rd <= 6'd0;
+				os_idx <= hit_idx[0];
+				ostep  <= 2'd0;
+				fstate <= S_OAM_REQ;
+			end
+		end
+	end
+
 	S_OAM_REQ: begin
 		oam_addr <= oam_rd_addr;
 		port_wc  <= 2'd2;
@@ -623,73 +963,81 @@ always @(posedge clk) begin
 
 	S_OAM_WAIT: begin
 		if (port_wc != 2'd1) port_wc <= port_wc - 2'd1;
+		else case (ostep)
+		2'd0: begin
+			o_a0   <= oam_data;              // ATTR0
+			ostep  <= 2'd1;
+			fstate <= S_OAM_REQ;
+		end
+		2'd1: begin
+			o_a1   <= oam_data;              // ATTR1
+			ostep  <= 2'd2;
+			fstate <= S_OAM_REQ;
+		end
+		default: begin
+			// ATTR2 latched: set up the sprite and start the
+			// row fetch (loading the OBJ palette bank first
+			// for 4bpp)
+			ostep   <= 2'd0;
+			sx      <= o_a1[8:0];
+			s_hflip <= o_a1[12];
+			s_vflip <= o_a1[13];
+			s_bpp8  <= o_a0[13];
+			s_tile  <= oam_data[9:0];
+			s_prio  <= oam_data[10:9];
+			// ATTR2's palette bank needs no register of its own: the palette
+			// cache below is loaded from pcache_bank, taken straight from
+			// ATTR2 while it is still on oam_data
+			sp_wh_r <= sp_wh2;
+			s_w     <= sp_wh2[13:7];
+			shw     <= 6'd0;
+			spx     <= 2'd0;
+			if (o_a0[13]) begin               // 8bpp: per-pixel reads
+				fstate <= S_SHW_REQ;
+			end else if (pcache_ok && pcache_obj
+			             && pcache_bank == oam_data[15:12]) begin
+				fstate <= S_SHW_REQ;
+			end else begin
+				pcache_bank <= oam_data[15:12];
+				pcache_obj  <= 1'b1;
+				pcache_ok   <= 1'b0;
+				spbi        <= 4'd0;
+				pal_addr    <= 10'd512 + {2'd0, oam_data[15:12], 4'd0};
+				port_wc     <= 2'd2;
+				fstate      <= S_SPB_WAIT;
+			end
+		end
+		endcase
+	end
+
+	S_HIT_NEXT: begin
+		// the scan decided which entries show on this line; walk the list
+		if (hit_rd + 6'd1 == hit_n) fstate <= S_DONE;
 		else begin
-			case (ostep)
-			2'd0: begin
-				o_a0   <= oam_data;
-				ostep  <= 2'd1;
-				fstate <= S_OAM_REQ;             // fetch ATTR1
-			end
-			2'd1: begin
-				// y-hit test needs the size bits from ATTR1
-				o_a1 <= oam_data;
-				if (sp_hit1) begin
-					ostep  <= 2'd2;
-					fstate <= S_OAM_REQ;         // fetch ATTR2
-				end else begin
-					ostep <= 2'd0;
-					if (os_idx == 7'd127) fstate <= S_DONE;
-					else begin
-						os_idx <= os_idx + 7'd1;
-						fstate <= S_OAM_REQ;
-					end
-				end
-			end
-			default: begin
-				// ATTR2 latched: set up the sprite and start the
-				// row fetch (loading the OBJ palette bank first
-				// for 4bpp)
-				sx      <= o_a1[8:0];
-				s_hflip <= o_a1[12];
-				s_vflip <= o_a1[13];
-				s_bpp8  <= o_a0[13];
-				s_tile  <= oam_data[9:0];
-				s_prio  <= oam_data[10:9];
-				s_bank  <= oam_data[15:12];
-				sp_wh_r <= sp_wh2;
-				s_w     <= sp_wh2[13:7];
-				shw     <= 6'd0;
-				spx     <= 2'd0;
-				ostep   <= 2'd0;
-				if (o_a0[13]) begin               // 8bpp: per-pixel reads
-					fstate <= S_SHW_REQ;
-				end else if (pcache_ok && pcache_obj
-				             && pcache_bank == oam_data[15:12]) begin
-					fstate <= S_SHW_REQ;
-				end else begin
-					pcache_bank <= oam_data[15:12];
-					pcache_obj  <= 1'b1;
-					pcache_ok   <= 1'b0;
-					spbi        <= 4'd0;
-					pal_addr    <= 10'd512 + {6'd0, oam_data[15:12], 4'd0};
-					port_wc     <= 2'd2;
-					fstate      <= S_SPB_WAIT;
-				end
-			end
-			endcase
+			hit_rd <= hit_rd + 6'd1;
+			os_idx <= hit_idx[hit_rd + 6'd1];
+			ostep  <= 2'd0;
+			fstate <= S_OAM_REQ;
 		end
 	end
 
 	S_SHW_REQ: begin
 		v_req  <= 1'b1;
 		v_addr <= shw_addr;
+		v_len  <= {2'd0, s_nhw};
+		swr    <= 6'd0;
 		fstate <= S_SHW_WAIT;
 	end
 
 	S_SHW_WAIT: begin
+		if (v_bs_valid) begin
+			sbuf[swr[4:0]] <= v_bs_data;
+			swr <= swr + 6'd1;
+		end
 		if (v_ready) begin
 			v_req      <= 1'b0;
-			sdata      <= v_rdata;
+			swr        <= 6'd0;
+			sdata      <= sbuf[0];
 			spx        <= 2'd0;
 			spal_ready <= 1'b0;
 			fstate     <= S_SPIXC;
@@ -710,15 +1058,13 @@ always @(posedge clk) begin
 				if (spx == s_pph - 3'd1) begin
 					spx <= 2'd0;
 					if (shw == s_nhw - 6'd1) begin
-						if (os_idx == 7'd127) fstate <= S_DONE;
-						else begin
-							os_idx <= os_idx + 7'd1;
-							ostep  <= 2'd0;
-							fstate <= S_OAM_REQ;
-						end
+						// row done: move on to the next entry that hit
+						fstate <= S_HIT_NEXT;
 					end else begin
+						// next halfword is already in the row buffer
 						shw    <= shw + 6'd1;
-						fstate <= S_SHW_REQ;
+						sdata  <= sbuf[shw[4:0] + 5'd1];
+						fstate <= S_SPIXC;
 					end
 				end else begin
 					spx <= spx + 2'd1;
@@ -733,15 +1079,13 @@ always @(posedge clk) begin
 			if (spx == s_pph - 2'd1) begin
 				spx <= 2'd0;
 				if (shw == s_nhw - 6'd1) begin
-					if (os_idx == 7'd127) fstate <= S_DONE;
-					else begin
-						os_idx <= os_idx + 7'd1;
-						ostep  <= 2'd0;
-						fstate <= S_OAM_REQ;
-					end
+					// row done: move on to the next entry that hit
+					fstate <= S_HIT_NEXT;
 				end else begin
+					// next halfword is already in the row buffer
 					shw    <= shw + 6'd1;
-					fstate <= S_SHW_REQ;
+					sdata  <= sbuf[shw[4:0] + 5'd1];
+					fstate <= S_SPIXC;
 				end
 			end else begin
 				spx <= spx + 2'd1;
@@ -750,7 +1094,7 @@ always @(posedge clk) begin
 	end
 
 	S_SPB_REQ: begin
-		pal_addr <= 10'd512 + {6'd0, pcache_bank, pbi};
+		pal_addr <= 10'd512 + {2'd0, pcache_bank, pbi};
 		port_wc  <= 2'd2;
 		fstate   <= S_SPB_WAIT;
 	end
@@ -766,19 +1110,73 @@ always @(posedge clk) begin
 				fstate    <= S_SHW_REQ;
 			end else begin
 				spbi     <= spbi + 4'd1;
-				pal_addr <= 10'd512 + {6'd0, pcache_bank, spbi + 4'd1};
+				pal_addr <= 10'd512 + {2'd0, pcache_bank, spbi + 4'd1};
 				port_wc  <= 2'd2;
 			end
 		end
 	end
 
 	S_DONE: begin
-		back_line <= tgt;
-		fstate    <= S_IDLE;
+		// BG + OBJ are in the back bank; merge the 3D layer over them
+		if (d3_on) begin
+			d3_issue <= 9'd0;             // pixels requested so far
+			d3_col   <= 8'd0;
+			d3_req   <= 1'b1;
+			d3_len   <= D3_CHUNK;
+			d3_addr  <= {tgt, 9'd0};      // line*512 + column*stride
+			fstate   <= S_D3_RUN;
+		end else begin
+			back_line <= tgt;
+			fstate    <= S_IDLE;
+		end
+	end
+
+	S_D3_RUN: begin
+		// one beat per cycle while a burst streams; each beat is composited
+		// into its own column, so adjacent columns never collide inside a
+		// line-buffer word
+		if (d3_bs_valid) begin
+			// bit 15 clear = no polygon covered this pixel
+			if (d3_bs_data[15])
+				write_px({3'd0, d3_col}, KIND_3D, d3_prio,
+				         {1'b0, d3_bs_data[14:0]});   // strip the coverage bit
+			d3_col <= d3_col + 8'd1;
+		end
+		if (d3_ready) begin
+			// burst complete: ask for the next chunk unless the line is done
+			d3_issue <= d3_issue + {1'b0, D3_CHUNK};
+			d3_req   <= 1'b0;
+			if (d3_issue + {1'b0, D3_CHUNK} >= D3_LINE) begin
+				back_line <= tgt;
+				fstate    <= S_IDLE;
+			end
+		end else if (!d3_req) begin
+			// re-arm for the next chunk from its own column
+			d3_req  <= 1'b1;				d3_addr <= {tgt, 9'd0} + {5'd0, d3_issue, 1'b0};
+		end
 	end
 
 	default: fstate <= S_IDLE;
 	endcase
+
+	//------------------------
+	// prefetch collector: while a tile row for the next column is streaming,
+	// its beats land in the buffer the composite is NOT reading. This runs
+	// outside the case because the composite takes a variable number of
+	// cycles (the 8bpp palette port adds a wait per pixel) and the burst may
+	// finish before the column does.
+	//------------------------
+	if (pf_on) begin
+		if (v_bs_valid) begin
+			tbuf[{~tcur, twr[1:0]}] <= v_bs_data;
+			twr <= twr + 3'd1;
+		end
+		if (v_ready) begin
+			v_req  <= 1'b0;
+			pf_on  <= 1'b0;
+			pf_rdy <= 1'b1;
+		end
+	end
 
 	//------------------------
 	// display side: line tracking, swap, next-line request
@@ -810,8 +1208,14 @@ always @(posedge clk) begin
 		fetch_line <= 8'd0;
 	end
 
+	// the one write statement into the display copy, below every site that
+	// drives it: last in the process, so a same-cycle read above sees the old
+	// word (block RAM with read-old-data, instead of 10,752 registers)
+	if (lb_we) lbuf[lb_wa] <= lb_wd;
+
 	if (reset) begin
 		fstate     <= S_IDLE;
+		lb_we      <= 1'b0;
 		tgt        <= 8'hFF;
 		back_line  <= 8'hFF;
 		fetch_req  <= 1'b0;
@@ -826,11 +1230,23 @@ always @(posedge clk) begin
 		col        <= 6'd0;
 		hw_i       <= 2'd0;
 		pxi        <= 2'd0;
+		v_len      <= 8'd1;
+		map_wr     <= 7'd0;
+		map_half   <= 1'b0;
+		twr        <= 3'd0;
+		tcur       <= 1'b0;
+		pf_on      <= 1'b0;
+		bg_ret     <= S_TILE_REQ;
+		swr        <= 6'd0;
 		pbi        <= 4'd0;
 		fill_i     <= 7'd0;
 		spbi       <= 4'd0;
 		os_idx     <= 7'd0;
 		ostep      <= 2'd0;
+		sc_n       <= 9'd0;
+		sc_a0      <= 16'd0;
+		hit_n      <= 6'd0;
+		hit_rd     <= 6'd0;
 		shw        <= 6'd0;
 		spx        <= 2'd0;
 		pcache_ok  <= 1'b0;
@@ -839,9 +1255,14 @@ always @(posedge clk) begin
 		spal_ready <= 1'b0;
 		pal_ret    <= S_IDLE;
 		pal_obj    <= 1'b0;
+		d3_req     <= 1'b0;
+		d3_addr    <= 17'd0;
+		d3_len     <= 8'd0;
+		d3_issue   <= 9'd0;
+		d3_col     <= 8'd0;
 	end
 end
 
-wire _unused = &{1'b0, pixel_ce, s_h, mcol, mrow, sp_wh1[13:7]};
+wire _unused = &{1'b0, pixel_ce, s_h, mcol, mrow, sp_wh2[13:7]};
 
 endmodule

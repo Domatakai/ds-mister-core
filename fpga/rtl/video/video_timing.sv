@@ -2,17 +2,18 @@
 // NDS MiSTer Test — video timing generator
 //
 // Produces the scan structure for the composed 256x384 frame (top screen
-// stacked over bottom). The 12.5 MHz pixel CE is derived from the 50 MHz
-// clock (removed with the PLL in M3, which will also add the
-// 67.02/33.51 MHz CPU clocks).
+// stacked over bottom). The pixel CE is clk_sys / 5: from the DS's own
+// 67.0274 MHz that is 13.40548 MHz, which is the rate the frame totals below
+// are worked out against. (The core clock is the 67.0274 MHz PLL output; the
+// ARM7's 33.513982 MHz and the pixel enable are both enables off it.)
 //
 // The OSD "Refresh rate" option selects one of three modes by changing
 // the frame totals; the active area stays 256x384 in all of them:
 //
-//   mode    H_TOTAL  V_TOTAL  rate (12.5e6 / (H*V))   error vs target
-//   native    320      653    59.8201 Hz (DS 59.8261)  -100 ppm
-//   59.95     332      628    59.9532 Hz               +53 ppm
-//   60.00     320      651    60.0038 Hz               +63 ppm
+//   mode    H_TOTAL  V_TOTAL  rate (13.40548e6 / (H*V))  error vs target
+//   native    330      679    59.8272 Hz (DS 59.8261)     +18 ppm
+//   59.95     344      650    59.9530 Hz                  +49 ppm
+//   60.00     331      675    59.9999 Hz                   -2 ppm
 //
 // H_FRONT/H_SYNC and V_FRONT/V_SYNC stay fixed across modes; the tail of
 // each blanking interval absorbs the difference, so sync polarity and
@@ -21,7 +22,7 @@
 module video_timing (
 	input            clk,
 	input            ce,       // optional external enable on the CE divider
-	output           pixel_ce, // derived 12.5 MHz pixel enable
+	output           pixel_ce, // derived 13.40548 MHz pixel enable (clk/5)
 	input            reset,
 
 	input      [8:0] h_total,  // OSD-selected line length
@@ -42,14 +43,14 @@ localparam V_ACTIVE = 384;
 localparam V_FRONT  = 24;
 localparam V_SYNC   = 4;
 
-// Derive the 12.5 MHz pixel CE from a 50 MHz clock while the core still
-// runs on a single domain. Removed with the PLL in M3.
-reg [1:0] ce_div = 0;
-wire pix_ce = ce ? (ce_div == 2'd2) : 1'b0; // single-cycle enable, 1-in-4
+// 1-in-5 single-cycle enable: 67.0274 / 5 = 13.40548 MHz.
+reg [2:0] ce_div = 0;
+wire pix_ce = ce ? (ce_div == 3'd4) : 1'b0;
 assign pixel_ce = pix_ce;
 always @(posedge clk) begin
-	if (reset) ce_div <= 0;
-	else       ce_div <= ce_div + 1'd1;
+	if (reset)                                    ce_div <= 0;
+	else if (ce_div == 3'd4)                      ce_div <= 0;
+	else                                          ce_div <= ce_div + 3'd1;
 end
 
 reg [8:0] h_cnt = 0;

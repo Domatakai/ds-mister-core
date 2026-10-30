@@ -13,6 +13,10 @@
 //   - two armed channels run on one trigger, sources can change
 //   - IRQ pulse on completion (IRQ8+n mapping)
 //   - hblank + repeat: enable bit stays set across triggers, disarm
+//   - the ARM7 clock enable (`ce`): every test above runs with it low on
+//     alternate cycles -- the DS's 2:1 pattern -- so each bus response is
+//     exercised both through the gate and around it, and the transfer rate is
+//     measured at that pace against the enable held high
 //============================================================================
 `timescale 1ns / 1ps
 
@@ -41,9 +45,20 @@ reg  [31:0] d_rdata = 0;
 reg         vblank = 0, hblank = 0;
 wire  [3:0] irq_set;
 
+// The ARM7's clock enable. It free-runs low on alternate cycles, which is the
+// DS's 2:1 pattern (cpu_ce's Normal mode) -- so half of every transfer's bus
+// responses land on a cycle the engine is not clocked on, which is exactly the
+// case the response latch exists for. `fast` holds it high for the ARM7 x2
+// measurement at the end.
+reg  pace = 1'b0;
+reg  fast = 1'b0;
+wire ce   = fast | ~pace;
+always @(posedge clk) pace <= ~pace;
+
 dma_engine dut (
 	.clk(clk),
 	.reset(reset),
+	.ce(ce),
 	.reg_we(reg_we),
 	.reg_addr(reg_addr),
 	.reg_data(reg_data),
@@ -147,6 +162,28 @@ task check;
 endtask
 
 localparam DEAD = 32'hDEAD_DEAD;
+
+//------------------------------------------------------------------
+// time one 8-unit 16-bit transfer of channel 0, from the enable write to the
+// hardware clearing CNT_H bit 0
+//------------------------------------------------------------------
+integer slow_cycles, fast_cycles;
+
+task time_ch0_transfer(output integer cycles);
+	begin
+		wr16(8'hB0, 16'h0000); wr16(8'hB2, 16'h0200);   // SAD 0x02000000
+		wr16(8'hB4, 16'h0080); wr16(8'hB6, 16'h0200);   // DAD 0x02000080
+		wr16(8'hB8, 16'd8);
+		wr16(8'hBA, 16'h0001);                          // enable, immediate
+		cycles = 0;
+		rd16(8'hBA, rv);
+		while (rv[0] === 1'b1 && cycles < 1000) begin
+			@(posedge clk);
+			cycles = cycles + 1;
+			rd16(8'hBA, rv);
+		end
+	end
+endtask
 
 integer i;
 initial begin
@@ -289,6 +326,29 @@ initial begin
 	repeat (20) @(posedge clk);
 	rd16(8'hD2, rv);
 	check("disarm by enable=0 write", rv[0] === 1'b0);
+
+	//----------------------------------------------------------------
+	// 7. the gate: a transfer runs at the ARM7's rate
+	//----------------------------------------------------------------
+	// The same 8-unit transfer, timed twice: once at the ARM7's 2:1 pace (the
+	// pattern every test above already ran through) and once with the enable
+	// held high, which is the ARM7 x2 mode. One bus beat per enabled cycle is
+	// what the gate means, so the paced transfer must take close to twice the
+	// cycles -- and it must move exactly the same data, which is what proves a
+	// response that landed on a gated cycle was kept rather than dropped.
+	fast = 1'b0;
+	time_ch0_transfer(slow_cycles);
+	check("paced transfer landed w32", mem[32] === 32'h0003_0001
+	                               && mem[33] === 32'h0007_0005);
+	fast = 1'b1;
+	time_ch0_transfer(fast_cycles);
+	check("ARM7 x2 transfer landed w32", mem[32] === 32'h0003_0001
+	                                 && mem[33] === 32'h0007_0005);
+	$display("  8 units: %0d cycles gated, %0d ungated (%.2fx)",
+	         slow_cycles, fast_cycles,
+	         (fast_cycles == 0) ? 0.0 : slow_cycles * 1.0 / fast_cycles);
+	check(slow_cycles > fast_cycles + fast_cycles / 2,
+	      "paced transfer takes about 2x the cycles");
 
 	if (errors == 0) $display("tb_dma_engine: PASS");
 	else             $display("tb_dma_engine: FAIL (%0d errors)", errors);

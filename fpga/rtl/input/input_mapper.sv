@@ -19,6 +19,11 @@
 //     Cursor accelerates while held; tap presses the "screen".
 //     OSD "Microphone": Off / Button (hold R3) / Host device (M5)
 //
+//   Lid (hinge): OSD "Lid close" picks the chord that shuts the shell —
+//     L2+R2 (default when enabled) or L3+R3. While it is held the core
+//     reports the hinge closed on EXTKEYIN bit 7 and the screens go dark,
+//     which is what closing a real DS does.
+//
 // Keyboard users are covered by the framework — map the keyboard as a
 // joystick in the MiSTer menu core and it arrives here as joy0.
 //
@@ -33,18 +38,21 @@ module input_mapper (
 	input     [15:0] stick0,   // hps_io joystick_l_analog_0: {Y[15:8], X[7:0]} signed
 
 	// OSD configuration
+	input            menu_active,   // boot menu owns the screen: keys released
 	input      [1:0] stylus_cursor, // 0 off, 1 d-pad, 2 left stick
 	input      [1:0] tap_sel,       // 0 L2, 1 R2, 2 L3, 3 R3
 	input            face_swap,     // A<->B, X<->Y
 	input            shoulder_swap, // L<->R
 	input      [1:0] mic_source,    // 0 off, 1 button (R3), 2 host device (M5)
+	input      [1:0] lid_sel,       // 0 ignore, 1 L2+R2, 2 L3+R3
 
 	// toward main_bus (KEYINPUT/TSC servicing lands with the CPUs in M1)
 	output reg [11:0] keys,        // KEYINPUT image, active low
 	output reg  [8:0] touch_x,     // 0..255
 	output reg  [7:0] touch_y,     // 0..191
 	output reg        touch_down,
-	output reg        mic_pressed
+	output reg        mic_pressed,
+	output reg        hinge_closed  // EXTKEYIN bit 7 (1 = closed)
 );
 
 //------------------------------------------------------------------
@@ -72,6 +80,13 @@ wire tap =
 	(tap_sel == 2'd1) ? joy0[JR2] :
 	(tap_sel == 2'd2) ? joy0[JL3] : joy0[JR3];
 
+// The lid chord deliberately avoids Select and Start: those already drive
+// the boot menu (its rising edge toggles the picker), so a Select-based
+// chord would open the picker every time the shell was shut.
+wire lid_chord =
+	(lid_sel == 2'd1) ? (joy0[JL2] & joy0[JR2]) :
+	(lid_sel == 2'd2) ? (joy0[JL3] & joy0[JR3]) : 1'b0;
+
 wire [11:0] pressed; // active high
 assign pressed[0]  = btn_a;
 assign pressed[1]  = btn_b;
@@ -90,9 +105,13 @@ assign pressed[11] = btn_y;
 // Stylus cursor: step timing with hold acceleration
 //   base 4 ms/step (250 px/s), after ~1 s held: 1 ms/step (1000 px/s)
 //------------------------------------------------------------------
-localparam STEP_BASE = 24'd200_000; // cycles per step @50 MHz
-localparam STEP_FAST = 24'd50_000;
-localparam ACCEL_AFTER = 24'd1_000_000 * 50 / 10; // ~1 s hold
+// clk_sys is the DS's 67.0274 MHz, so a 4 ms step is 268,110 cycles and the
+// accelerated 1 ms step is 67,027. The acceleration point has always been
+// 0.1 s (the 24-bit hold counter cannot hold a whole second at either clock),
+// which is what this preserves.
+localparam STEP_BASE = 24'd268_110; // cycles per step
+localparam STEP_FAST = 24'd67_027;  // accelerated: 1 ms/step
+localparam ACCEL_AFTER = 24'd6_700_000; // 0.1 s of hold
 
 wire stick_right = $signed(stick0[7:0])   >  $signed(8'd40);
 wire stick_left  = $signed(stick0[7:0])   < -$signed(8'd40);
@@ -139,13 +158,19 @@ end
 //------------------------------------------------------------------
 always @(posedge clk) begin
 	if (reset) begin
-		keys        <= 12'hFFF;
-		touch_down  <= 1'b0;
-		mic_pressed <= 1'b0;
+		keys         <= 12'hFFF;
+		touch_down   <= 1'b0;
+		mic_pressed  <= 1'b0;
+		hinge_closed <= 1'b0;
 	end else begin
-		keys <= ~pressed;
-		touch_down <= stylus_cursor != 2'd0 && tap;
+		// while the boot menu has the screen, the game gets no input: the
+		// same pad drives the picker, and a game left running in the
+		// background must not see Select/A presses aimed at it
+		keys <= menu_active ? 12'hFFF : ~pressed;
+		touch_down <= !menu_active && stylus_cursor != 2'd0 && tap;
 		mic_pressed <= (mic_source == 2'd1) && joy0[JR3];
+		// the boot menu swallows the pad, so it owns the lid too
+		hinge_closed <= !menu_active && lid_chord;
 	end
 end
 

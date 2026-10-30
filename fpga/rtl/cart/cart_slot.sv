@@ -61,7 +61,26 @@ module cart_slot (
 	output reg        win_valid,
 	output reg [15:0] win_data,
 
-	// save control (M4 implements the sd_* sector path)
+	// game slots — the boot menu switches which one the window reads.
+	// Four fixed 64 MB regions (the window is 64 MB wide, so a slot holds
+	// exactly what a game can see), each named by the title in the ROM's
+	// own header, so no file names are needed.
+	input      [1:0]  boot_slot,   // slot the CPU window reads
+	output     [1:0]  load_slot,   // slot the next download goes into
+	output     [3:0]  slot_valid,  // slots holding a game
+	input             slot_clear,  // forget every slot
+	input      [1:0]  hdr_slot,    // header read port: 16 bytes/slot
+	input      [3:0]  hdr_char,
+	output     [7:0]  hdr_data,
+	output     [31:0] slot_caps,  // header byte 0x80 (capacity) per slot
+	output     [31:0] slot9_entry, // header 0x24: ARM9 entry point, boot slot
+	output     [31:0] slot7_entry, // header 0x34: ARM7 entry point, boot slot
+	output     [15:0] slot_save,  // save type recorded per slot, 4 bits each
+	output     [15:0] slot_save_det, // save type the probe found, 4 bits each
+
+	// save control (M4 implements the sd_* sector path). save_type is the
+	// OSD row: it records into the active slot, and the slot's own record is
+	// what the core will use once the save path exists.
 	input             erase_save,
 	input       [2:0] save_type,
 
@@ -79,6 +98,165 @@ module cart_slot (
 localparam SAVE_BASE = 25'h280000;
 wire is_rom = ioctl_index[3:0] == 4'd1;
 wire rom_dl = ioctl_download && is_rom;
+
+//------------------------------------------------------------------
+// game slots
+//
+// One slot is 2^23 DDR3 lines = 64 MB, which is exactly the reach of the
+// cart window (win_addr is 26 bits), so four slots cost 256 MB and a game
+// never straddles another. A download goes into the lowest empty slot, or
+// over the oldest when they are all full. The ROM header's first 16 bytes
+// are latched per slot -- 0x00..0x0B is the title and 0x0C..0x0F the game
+// code, e.g. "AMCE" for Mario Kart DS (USA) -- so the boot menu can name a
+// game without the HPS ever telling the core a file name. The game code is
+// what separates regional variants: they share a title, not a code. Byte
+// 0x80 of the same header is kept per slot too: it is the capacity the game
+// declares, which is how the menu shows that a 128 MB game cannot fit a
+// 64 MB slot before it is booted. A save type is kept per slot as well, but
+// no header field carries one: see the record itself for where it comes from.
+//------------------------------------------------------------------
+localparam [22:0] SLOT_LINES = 23'h7FFFFF;
+
+reg  [3:0]  valid = 4'd0;
+reg  [1:0]  wr_slot = 2'd0;
+reg  [7:0]  hdr [0:63];         // 4 slots x 16 header bytes (title + code)
+reg  [7:0]  caps [0:3];         // 4 slots x header byte 0x80 (capacity)
+// header 0x24 / 0x34: where the game's ARM9 and ARM7 code starts. The HLE
+// boot jumps there instead of running a BIOS, so the CPU needs no image.
+reg  [31:0] entry9 [0:3];
+reg  [31:0] entry7 [0:3];
+reg  [15:0] saves = 16'd0;      // 4 slots x 4 bits (0..6 = OSD save type)
+
+assign slot_valid = valid;
+assign load_slot  = wr_slot;
+
+wire [1:0] free_slot = !valid[0] ? 2'd0 :
+                       !valid[1] ? 2'd1 :
+                       !valid[2] ? 2'd2 :
+                       !valid[3] ? 2'd3 : (wr_slot + 2'd1);
+
+// header read port for the boot menu (asynchronous: a 64-byte array)
+wire [5:0] hdr_idx = {hdr_slot, hdr_char};   // 0..15 within the slot
+assign hdr_data = hdr[hdr_idx];
+assign slot_caps = {caps[3], caps[2], caps[1], caps[0]};   // byte i = slot i
+assign slot9_entry = entry9[boot_slot];
+assign slot7_entry = entry7[boot_slot];
+assign slot_save = saves;                                  // bits 4i..4i+3 = slot i
+
+//------------------------------------------------------------------
+// Save chip and probe
+//
+// The cart contains the part the slot's record names, and the probe
+// classifies what the bus answers -- so the type the core shows and uses
+// is a measurement of the emulated cart, not a copy of the OSD row. It
+// walks the four slots and stops when every record has been confirmed.
+//------------------------------------------------------------------
+wire        chip_cs, chip_slot, chip_resp;
+wire  [7:0] chip_din, chip_dout;
+wire  [2:0] det_type;
+wire        det_valid, det_done;
+
+reg  [1:0]  pslot = 2'd0;      // slot the probe is looking at
+reg  [15:0] dets = 16'd0;      // per slot: {1'b1, type} once probed
+reg  [15:0] pseed = 16'd0;     // per slot: the record the verdict was measured against
+reg  [2:0]  probe_seed = 3'd0; // the record the running probe was launched on
+reg  [2:0]  chip_cfg = 3'd0;   // which part the cart currently holds
+reg         probe_go = 0;
+reg         probing = 0;
+
+wire [3:0]  seed_w = saves[{pslot, 2'b00} +: 4];
+wire [2:0]  seed_i = seed_w[2:0];
+wire [3:0]  det_w  = dets[{pslot, 2'b00} +: 4];
+wire [3:0]  psd_w  = pseed[{pslot, 2'b00} +: 4];
+// a slot is probed once per record it is given: a verdict that disagrees
+// with the record is a measurement, not a reason to probe again forever
+wire        need_probe = valid[pslot] && (!det_w[3] || psd_w[2:0] != seed_i);
+
+// clearing the slots also abandons a probe in flight: the chip is taken back
+// to its idle state instead of being left mid-transaction, which would block
+// every later probe (the script only starts from its idle state)
+wire chip_reset = reset || slot_clear;
+
+save_spi u_chip (
+	.clk(clk), .reset(chip_reset),
+	.cfg(chip_cfg),
+	.cs_n(chip_cs), .din(chip_din), .slot(chip_slot),
+	.dout(chip_dout), .resp(chip_resp),
+	.status_o(), .present()
+);
+
+save_probe u_probe (
+	.clk(clk), .reset(chip_reset),
+	.start(probe_go),
+	.cs_n(chip_cs), .din(chip_din), .slot(chip_slot),
+	.dout(chip_dout), .resp(chip_resp),
+	.det_type(det_type), .valid(det_valid), .done(det_done),
+	.seen_status(), .seen_id(), .seen_cap()
+);
+
+// the menu shows what was detected; a slot with no chip, or one not yet
+// probed, shows nothing at all rather than a guess
+wire [3:0] sd0 = dets[3]  ? {1'b0, dets[2:0]}  : 4'd0;
+wire [3:0] sd1 = dets[7]  ? {1'b0, dets[6:4]}  : 4'd0;
+wire [3:0] sd2 = dets[11] ? {1'b0, dets[10:8]} : 4'd0;
+wire [3:0] sd3 = dets[15] ? {1'b0, dets[14:12]} : 4'd0;
+assign slot_save_det = {sd3, sd2, sd1, sd0};
+
+// The cart holds one part at a time -- the one the slot under the probe calls
+// for -- so its type is latched at the start of each probe and held until the
+// next one starts. Following the rotating pointer (or the record) would let
+// the chip change identity between two bytes of a transaction, and the verdict
+// would describe a part that never existed.
+always @(posedge clk) begin
+	if (reset || slot_clear) begin
+		probe_seed <= 3'd0;
+		chip_cfg   <= 3'd0;
+	end else if (probe_go) begin
+		probe_seed <= seed_i;
+		chip_cfg   <= seed_i;
+	end
+end
+
+// the probe owns `dets` and `pseed`, including the invalidation below, so
+// the download start is detected here rather than driving the same regs from
+// the download block (one variable, one always block)
+reg dl_d2 = 1'b0;
+
+always @(posedge clk) begin
+	probe_go <= 1'b0;
+	dl_d2    <= rom_dl;
+	if (reset || slot_clear) begin
+		pslot   <= 2'd0;
+		probing <= 1'b0;
+		dets    <= 16'd0;
+		pseed   <= 16'd0;
+	end else begin
+		if (det_done) begin
+			// a verdict for a slot that was just forgotten describes nothing
+			if (valid[pslot]) begin
+				dets[{pslot, 2'b00} +: 4]  <= {1'b1, det_type};
+				pseed[{pslot, 2'b00} +: 4] <= {1'b0, probe_seed};
+			end
+			pslot   <= pslot + 2'd1;
+			probing <= 1'b0;
+		end else if (!probing && !rom_dl && need_probe) begin
+			probe_go <= 1'b1;
+			probing  <= 1'b1;
+		end else if (!probing) begin
+			// nothing to confirm here: look at the next slot
+			pslot <= pslot + 2'd1;
+		end
+
+		// a download fills this slot with a new game, so whatever was
+		// detected there described the previous one: drop it and re-probe
+		if (rom_dl && !dl_d2) begin
+			dets[{free_slot, 2'b00} +: 4]  <= 4'd0;
+			pseed[{free_slot, 2'b00} +: 4] <= 4'd0;
+		end
+	end
+end
+
+
 
 //------------------------------------------------------------------
 // line FIFO: 16-bit words -> 64-bit DDR3 lines
@@ -108,28 +286,66 @@ reg        pending_req = 0; // win_req pulse arrived while DDR busy
 // line_no, wr_ptr, fifo write side, cart_loaded and the tail flush:
 // everything lives in one always block so no signal is multi-driven.
 //------------------------------------------------------------------
+reg [2:0]  save_type_d = 3'd0;
 reg [15:0] pack [0:3];
 reg  [1:0] pack_idx = 0;
 reg [28:0] line_no = 0;
 reg        dl_d = 0;
 reg        tail_flush = 0;
 
+// a full slot stops accepting new lines: the window could not read them
+// anyway, and the next slot's game must not be overwritten
+wire slot_full = (line_no[22:0] == SLOT_LINES);
+
 always @(posedge clk) begin
 	dl_d <= rom_dl;
 
 	if (rom_dl && !dl_d) begin
 		// start of a ROM download: reset the packer (a .cht load on
-		// the shared pipe must never touch this state)
+		// the shared pipe must never touch this state) and pick the slot
 		cart_loaded <= 1'b0;
-		line_no     <= 29'd0;
+		wr_slot     <= free_slot;
+		line_no     <= {free_slot, 23'd0};
 		pack_idx    <= 2'd0;
 		tail_flush  <= 1'b0;
+		caps[free_slot] <= 8'hFF;   // unknown until 0x80 arrives
+		entry9[free_slot] <= 32'h0000_0000;
+		entry7[free_slot] <= 32'h0000_0000;
+		saves[{free_slot, 2'b00} +: 4] <= {1'b0, save_type};   // the probe re-runs
 	end else begin
-		// ROM download finished
-		if (dl_d && !rom_dl) cart_loaded <= 1'b1;
+		// ROM download finished: this slot now holds a game
+		if (dl_d && !rom_dl) begin
+			cart_loaded  <= 1'b1;
+			valid[wr_slot] <= 1'b1;
+		end
+
+		// header bytes 0x00..0x0F: title 0x00..0x0B (ASCII padded with
+		// zeros), game code 0x0C..0x0F. WIDE=1 delivers two bytes per
+		// word at an even address, so the last pair starts at 0x0E.
+		if (ioctl_wr && is_rom && ioctl_addr <= 27'd14) begin
+			hdr[{wr_slot, 4'd0} + {2'd0, ioctl_addr[3:0]}]       <= ioctl_dout[7:0];
+			hdr[{wr_slot, 4'd0} + {2'd0, ioctl_addr[3:0]} + 6'd1] <= ioctl_dout[15:8];
+		end
+
+		// header byte 0x80: the size the game declares, clamped to the DS's
+		// 512 MB ceiling exactly as rom_bytes is, so the boot menu can show
+		// which games fit the slot's 64 MB and which will be cut off
+		if (ioctl_wr && is_rom && ioctl_addr == 27'h80)
+			caps[wr_slot] <= (ioctl_dout[7:0] > 8'd12) ? 8'd12 : ioctl_dout[7:0];
+
+		// header 0x24 (ARM9 entry) and 0x34 (ARM7 entry): two halfwords each,
+		// latched little-endian as the WIDE stream delivers them
+		if (ioctl_wr && is_rom && ioctl_addr == 27'h24)
+			entry9[wr_slot][15:0]  <= ioctl_dout;
+		if (ioctl_wr && is_rom && ioctl_addr == 27'h26)
+			entry9[wr_slot][31:16] <= ioctl_dout;
+		if (ioctl_wr && is_rom && ioctl_addr == 27'h34)
+			entry7[wr_slot][15:0]  <= ioctl_dout;
+		if (ioctl_wr && is_rom && ioctl_addr == 27'h36)
+			entry7[wr_slot][31:16] <= ioctl_dout;
 
 		// pack words into full 64-bit DDR lines
-		if (ioctl_wr && is_rom && !fifo_full) begin
+		if (ioctl_wr && is_rom && !fifo_full && !slot_full) begin
 			pack[pack_idx] <= ioctl_dout;
 			if (pack_idx == 2'd3) begin
 				fifo_data[wr_ptr] <= {ioctl_dout, pack[2], pack[1], pack[0]};
@@ -172,6 +388,22 @@ always @(posedge clk) begin
 		tail_flush  <= 1'b0;
 		// pack_idx/line_no are left alone; the next load resets them
 	end
+
+	// OSD action: forget every slot (the menu goes back to "no games")
+	if (slot_clear) begin
+		valid    <= 4'd0;
+		wr_slot  <= 2'd0;
+		saves    <= 16'd0;
+	end
+
+	// The OSD save-type row edits the game that is running, so each slot
+	// keeps the type its own game was given and switching games switches the
+	// type with it. A DS ROM header cannot supply this -- it has no save-type
+	// field, and a real cart is classified by probing AUXSPI -- so this is a
+	// per-game setting the core remembers, not something read from the ROM.
+	save_type_d <= save_type;
+	if (valid[boot_slot] && save_type != save_type_d)
+		saves[{boot_slot, 2'b00} +: 4] <= {1'b0, save_type};
 end
 
 //------------------------------------------------------------------
@@ -204,9 +436,10 @@ always @(posedge clk) begin
 
 	// read path: latch the line number when a request first arrives
 	// (even if DDR is busy then — the grant may happen later).
-	// rd_line[28:27] always read 0: the ROM window is 64 MB.
+	// The window is 64 MB wide, so the address is the active slot's base
+	// with the 23 in-slot line bits on top — exactly one slot is reachable.
 	if (rstate == R_IDLE && win_req && !pending_req)
-		ddr_addr_rd <= {6'd0, win_addr[25:3]};
+		ddr_addr_rd <= {boot_slot, win_addr[25:3]};
 end
 
 //------------------------------------------------------------------
@@ -282,7 +515,11 @@ assign ddr_addr = ddr_rd ? ddr_addr_rd : ddr_addr_wr;
 // Save control (M4)
 //------------------------------------------------------------------
 wire        erase_req = erase_save;
-wire  [2:0] save_kind = save_type;
+// what the save path must use: the probe's finding for this slot, or the
+// record it was given while a probe is still running
+wire [3:0]  det_boot  = dets[{boot_slot, 2'b00} +: 4];
+wire [3:0]  save_boot = saves[{boot_slot, 2'b00} +: 4];
+wire  [2:0] save_kind = det_boot[3] ? det_boot[2:0] : save_boot[2:0];
 wire [24:0] save_hint = SAVE_BASE;
 
 wire _unused = &{1'b0, erase_req, save_kind, save_hint, save_done};

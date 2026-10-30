@@ -12,11 +12,16 @@
 // fills from VRAM through vram_arbiter (M2) — this interface never
 // changed from the M1 stub contract.
 //
-// Layouts (output frame stays 256x384, single frame rate):
-//   0 Stacked     top above bottom, native resolution
-//   1 Side by side  each screen decimated to 128x192 (x >> 1)
+// Layouts, named as the OSD row names them (output frame stays 256x384,
+// single frame rate; `layout` keeps the engine-side numbering):
+//   0 Vertical    top above bottom, native resolution — the DS's own folding
+//   1 Horizontal  side by side, each screen decimated to 128x192 (x >> 1)
 //   2 Top only    top screen centred, native
 //   3 Bottom only bottom screen centred, native
+//
+// `dark` is the shell: with the lid shut a DS shows nothing (the backlights
+// go out), so the composed pixel is forced to black while it is held. The
+// engines keep running — only the picture changes.
 //============================================================================
 module screen_composer (
 	input            clk,
@@ -28,6 +33,7 @@ module screen_composer (
 	input      [1:0] rotation,
 	input            swap,
 	input      [2:0] brightness,
+	input            dark,       // lid closed: both screens off
 
 	// native-pixel request toward the engines (top = engine A, bottom = B)
 	output     [7:0] na_x,
@@ -158,6 +164,6 @@ wire [4:0] r5 = scale555(pix[14:10], gain);
 wire [4:0] g5 = scale555(pix[9:5],   gain);
 wire [4:0] b5 = scale555(pix[4:0],   gain);
 
-assign rgb555 = {1'b0, r5, g5, b5}; // BGR555, bit 15 unused
+assign rgb555 = dark ? 16'h0000 : {1'b0, r5, g5, b5}; // BGR555, bit 15 unused
 
 endmodule

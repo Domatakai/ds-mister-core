@@ -35,6 +35,14 @@
 // Codes live in BRAM (32 stored). Loading a new file clears the set
 // and the block; "Disable all cheats" (status[125]) sets a lockout
 // that only a new file load clears.
+//
+// The walk evaluates only the entries whose address matches, in list order,
+// one per clock: a read that matches nothing or exactly one code answers in
+// the cycle it is offered (chk_ready high, patch on the outputs), and a read
+// whose address carries several codes takes one clock each with chk_ready low
+// until the last of them has been applied. That is one type datapath instead
+// of thirty-two, and the guard still sees the codes in exactly the order the
+// list holds them.
 //============================================================================
 module cheat_engine (
 	input            clk,
@@ -53,10 +61,11 @@ module cheat_engine (
 	input     [31:0] chk_addr,
 	input     [31:0] chk_word,     // full word at the read address
 
-	output reg       hit,          // low halfword substitution
-	output reg [15:0] patch,
-	output reg       patch_hi_en,  // high halfword substitution (type 0)
-	output reg [15:0] patch_hi
+	output           hit,          // low halfword substitution
+	output     [15:0] patch,
+	output           patch_hi_en,  // high halfword substitution (type 0)
+	output     [15:0] patch_hi,
+	output           chk_ready     // the walk for this read is complete
 );
 
 //------------------------------------------------------------------
@@ -113,6 +122,10 @@ task parse_line;
 	reg        ok, sep;
 	integer    k, p;
 	begin
+		// every local assigned up front: a task local that is only written
+		// inside a branch is what Verific reports as warning 10776
+		w0 = 32'd0; w1 = 32'd0; h = 5'd0;
+		ok = 1'b0;  sep = 1'b0;  k = 0;  p = 0;
 		if (line_len >= 6'd8 && in_digit) begin
 			w0 = 32'd0; w1 = 32'd0; ok = 1'b1;
 			for (k = 0; k < 8; k = k + 1) begin
@@ -163,6 +176,10 @@ always @(posedge clk) begin
 	f2_dl_d <= f2_dl;
 	if (reset) begin
 		line_len <= 6'd0; in_digit <= 0; f2_dl_d <= 0;
+		// the store starts empty: a bench (or a machine that comes up without
+		// a download) must never see an X match out of an unwritten slot
+		c_count <= 6'd0;
+		for (i = 0; i < 32; i = i + 1) c_valid[i] <= 1'b0;
 	end else if (f2_start) begin
 		c_count <= 0;
 		for (i = 0; i < 32; i = i + 1) c_valid[i] <= 1'b0;
@@ -186,57 +203,123 @@ always @(posedge clk) begin
 end
 
 //------------------------------------------------------------------
-// Runtime walk (combinational, list order, running block state)
+// Runtime walk: the matching entries, in list order, one per clock
 //------------------------------------------------------------------
-reg        blk;
-integer    j;
-
+// Match mask: which entries address this read. The compare is the cheap part
+// (28 bits of equality each); everything a match does is the one shared
+// datapath below, so the cost is one type evaluation instead of thirty-two.
+reg  [31:0] mmask;
+integer     mj;
 always @(*) begin
-	hit         = 1'b0;
-	patch       = chk_word[15:0];
-	patch_hi_en = 1'b0;
-	patch_hi    = chk_word[31:16];
-	blk         = blk_reg;
+	mmask = 32'd0;
+	for (mj = 0; mj < 32; mj = mj + 1)
+		mmask[mj] = c_valid[mj] && (c_addr[mj] == chk_addr[27:0]);
+end
 
-	if (chk_en && !lockout) begin
-		for (j = 0; j < 32; j = j + 1) begin
-			if (c_valid[j] && c_addr[j] == chk_addr[27:0]) begin
-				case (c_type[j])
-				// ---- unconditional writes (gated by running blk)
-				4'h0: if (!blk) begin
-					hit = 1'b1;
-					patch     = c_raw[j][15:0];
-					patch_hi_en = 1'b1;
-					patch_hi  = c_raw[j][31:16];
-				end
-				4'h1: if (!blk) begin
-					hit   = 1'b1;
-					patch = c_raw[j][15:0];
-				end
-				4'h2: if (!blk) begin
-					hit = 1'b1;
-					// lane0 = low byte of the halfword, lane1 = high byte
-					patch = chk_addr[0] ?
-						{c_raw[j][7:0], chk_word[7:0]} :
-						{chk_word[15:8], c_raw[j][7:0]};
-				end
-				// ---- conditionals: eval on matching read, update blk
-				4'h3: blk = !(c_raw[j] >  chk_word);
-				4'h4: blk = !(c_raw[j] <  chk_word);
-				4'h5: blk = !(c_raw[j] == chk_word);
-				4'h6: blk = !(c_raw[j] != chk_word);
-				4'h7, 4'h8, 4'h9, 4'hA:
-					blk = !(
-						(c_type[j] == 4'h7) ? ((chk_word[15:0] & ~c_raw[j][31:16]) <  c_raw[j][15:0]) :
-						(c_type[j] == 4'h8) ? ((chk_word[15:0] & ~c_raw[j][31:16]) >  c_raw[j][15:0]) :
-						(c_type[j] == 4'h9) ? ((chk_word[15:0] & ~c_raw[j][31:16]) == c_raw[j][15:0]) :
-						                     ((chk_word[15:0] & ~c_raw[j][31:16]) != c_raw[j][15:0]));
-				default: ;   // B/C/D/E/F and unknown: no-op
-				endcase
-			end
-		end
+reg         chk_d;
+wire        new_chk = chk_en & ~chk_d;
+reg  [31:0] pend;                       // matches still to evaluate
+reg         blk_cur;                    // guard entering the next entry
+reg         acc_hit;
+reg  [15:0] acc_lo, acc_hi;
+reg         acc_hi_en;
+
+// a fresh read works from the mask, a continuing walk from what is left
+wire [31:0] work = new_chk ? mmask : pend;
+// zero or one entry left: this cycle completes the walk
+wire        last = (work & (work - 32'd1)) == 32'd0;
+
+reg  [4:0]  sidx;
+always @(*) begin
+	sidx = 5'd0;
+	for (mj = 31; mj >= 0; mj = mj - 1)
+		if (work[mj]) sidx = mj[4:0];      // lowest match wins
+end
+
+wire [31:0] sraw  = c_raw[sidx];
+wire [3:0]  stype = c_type[sidx];
+wire        blk_in = new_chk ? blk_reg : blk_cur;
+
+// one entry's effect on the guard and on the substituted value
+reg         nblk, nhit, nhi_en;
+reg  [15:0] nlo, nhi;
+always @(*) begin
+	nblk = blk_in; nhit = 1'b0; nlo = 16'h0000; nhi = 16'h0000; nhi_en = 1'b0;
+	// no match left: nothing is evaluated (sidx still points at entry 0, which
+	// must not be mistaken for a hit)
+	if (work != 32'd0) case (stype)
+	4'h0: if (!blk_in) begin
+		nhit = 1'b1; nlo = sraw[15:0]; nhi_en = 1'b1; nhi = sraw[31:16];
 	end
-end// persist the block decision; new-file load resets guard + lockout
+	4'h1: if (!blk_in) begin
+		nhit = 1'b1; nlo = sraw[15:0];
+	end
+	4'h2: if (!blk_in) begin
+		nhit = 1'b1;
+		// lane0 = low byte of the halfword, lane1 = high byte
+		nlo = chk_addr[0] ? {sraw[7:0], chk_word[7:0]}
+		                  : {chk_word[15:8], sraw[7:0]};
+	end
+	4'h3: nblk = !(sraw >  chk_word);
+	4'h4: nblk = !(sraw <  chk_word);
+	4'h5: nblk = !(sraw == chk_word);
+	4'h6: nblk = !(sraw != chk_word);
+	4'h7, 4'h8, 4'h9, 4'hA:
+		nblk = !(
+			(stype == 4'h7) ? ((chk_word[15:0] & ~sraw[31:16]) <  sraw[15:0]) :
+			(stype == 4'h8) ? ((chk_word[15:0] & ~sraw[31:16]) >  sraw[15:0]) :
+			(stype == 4'h9) ? ((chk_word[15:0] & ~sraw[31:16]) == sraw[15:0]) :
+			                  ((chk_word[15:0] & ~sraw[31:16]) != sraw[15:0]));
+	default: ;   // B/C/D/E/F and unknown: no-op
+	endcase
+end
+
+// this read's answer: what an earlier clock of this walk accumulated (nothing
+// on a fresh read — the register still holds the previous read's result), plus
+// this cycle's entry when it is the last one
+wire        base_hit   = ~new_chk & acc_hit;
+wire [15:0] base_lo    = new_chk ? chk_word[15:0] : acc_lo;
+wire        base_hi_en = ~new_chk & acc_hi_en;
+wire [15:0] base_hi    = new_chk ? chk_word[31:16] : acc_hi;
+
+wire        fin_nhit  = last && nhit;
+wire [15:0] fin_lo    = fin_nhit ? nlo : base_lo;
+wire        fin_hi_en = fin_nhit ? nhi_en : (base_hi_en & ~last);
+wire [15:0] fin_hi    = fin_nhit ? nhi : base_hi;
+
+assign hit         = chk_en && !lockout && (fin_nhit | base_hit);
+assign patch       = chk_en && !lockout ? fin_lo : chk_word[15:0];
+assign patch_hi_en = chk_en && !lockout && fin_hi_en;
+assign patch_hi    = chk_en && !lockout ? fin_hi : chk_word[31:16];
+assign chk_ready   = ~chk_en | last;
+
+always @(posedge clk) begin
+	chk_d <= chk_en;
+	if (reset) begin
+		pend      <= 32'd0;
+		blk_cur   <= 1'b0;
+		acc_hit   <= 1'b0;
+		acc_lo    <= 16'h0000;
+		acc_hi    <= 16'h0000;
+		acc_hi_en <= 1'b0;
+	end else if (new_chk) begin
+		pend      <= mmask & ~(32'd1 << sidx);
+		blk_cur   <= nblk;
+		acc_hit   <= nhit;
+		acc_lo    <= nhit ? nlo : chk_word[15:0];
+		acc_hi_en <= nhi_en;
+		acc_hi    <= nhi;
+	end else if (work != 32'd0) begin
+		pend      <= work & ~(32'd1 << sidx);
+		blk_cur   <= nblk;
+		acc_hit   <= acc_hit | nhit;
+		acc_lo    <= nhit ? nlo : acc_lo;
+		acc_hi_en <= nhit ? nhi_en : acc_hi_en;
+		acc_hi    <= nhit ? nhi : acc_hi;
+	end
+end
+
+// persist the block decision; new-file load resets guard + lockout
 always @(posedge clk) begin
 	if (reset) begin
 		blk_reg <= 1'b0;
@@ -245,8 +328,8 @@ always @(posedge clk) begin
 		if (f2_start) begin
 			blk_reg <= 1'b0;
 			lockout <= 1'b0;
-		end else
-			blk_reg <= blk;
+		end else if (!lockout && last && work != 32'd0)
+			blk_reg <= nblk;      // the last matching entry decides
 		if (clr_cheats) lockout <= 1'b1;
 	end
 end
