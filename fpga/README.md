@@ -11,10 +11,34 @@ below — the two are intentionally kept in step.
 
 ## Status
 
-Honest state: **milestones M1 + M2**. The framework wiring, the OSD
-menu, the memory map, the SDRAM controller, the complete video path,
-the input path (DS keys, stylus, mic) and the DDR3 cartridge path for
-256 Mbit+ games are real and simulate correctly. The rebuilt system bus
+Honest state: **M1 and M2 complete, M3 and M4 working, M5 and M6 planned** —
+and "working" here means the list below, with nothing implied. Every block
+named is implemented and has a testbench that exercises it; what is not there
+is written down rather than left to be discovered:
+
+- **M3, the 3D path** — the GXFIFO stream, the serialised matrix multiplier,
+  triangle assembly, a flat RGB555 rasteriser, the VRAM write-back and the 3D
+  layer's compositing over engine A are in and measured. Missing: W-buffer
+  depth test, fog, edge marking, toon shading, the alpha test, QUADS and
+  QUAD_STRIP (their vertices are consumed, nothing is drawn), and the span
+  fill — the rasteriser walks the bounding box a pixel per cycle, which is
+  correct but slower than the hardware's budget for a dense mesh.
+- **M4, sound, saves and the cartridge** — the sixteen SPU channels, the
+  AUXSPI probe with the emulated chip behind it (EEPROM and FRAM read *and*
+  write), the MT-32-pi MIDI link and the system I/O a firmware boot needs are
+  in. Missing: the SPU's two capture units (`0x4000508`), the two FLASH parts'
+  data path (they identify correctly, reads answer `FFh`), `.sav` persistence
+  and erase, and the `0x0555`/`0x0AAA` cart unlock sequence.
+- **M5, sensors** — the microphone is the R3 button and nothing else: the
+  host-device mic, the rumble pak and local DS-to-DS wireless are absent.
+- **M6, the front end** — the cheat engine and the DS-native menu are in; save
+  states, rewind and replay are rows in that menu whose hardware does not
+  exist yet.
+
+Underneath that: the framework wiring, the OSD menu, the memory map, the
+SDRAM controller, the complete video path, the input path (DS keys, stylus,
+mic) and the DDR3 cartridge path for 256 Mbit+ games are real and simulate
+correctly. The rebuilt system bus
 is complete and simulated: `main_bus` decodes the DS memory map,
 serves both CPUs and the DMA engine from private WRAM/IO/BIOS regions
 with round-robin arbitration, sequences 32-bit accesses over SDRAM
@@ -31,7 +55,7 @@ immediate/vblank/hblank triggers, repeat and completion IRQs, and
 before each refresh) so scanline traffic does not pay ACT + tRCD per
 access. On top
 of that, the video/audio filter layer (`video_filter`, `palette`,
-`audio_filter`) is wired into the output chains. M3 has started:
+`audio_filter`) is wired into the output chains. M3's 3D path:
 `geometry_engine` decodes the GXFIFO command stream, holds the
 projection and modelview matrices with a push/pop stack, maps vertices
 through the viewport and feeds `raster_engine`. Every multiply in that
@@ -121,7 +145,7 @@ run on their own dividers — the channel state at `clk_sys`/4 = 16.756991 MHz
 game by even a cent. What the ARM7 actually needs from the audio side —
 ARM7-only registers, bus-paced fetches — the fabric already gives it.
 
-M4's audio work has started from the outside in: the DS has no MIDI
+M4's audio work came from the outside in: the DS has no MIDI
 hardware, so the ARM9 AUX SPI port at `0x04000150` is turned into a real
 31.25 kbaud MIDI link (`rtl/audio/midi_port.sv`) for an MT-32-pi on the
 user port, with its 48 kHz I2S return mixed back in by
@@ -1236,15 +1260,18 @@ diagnostics overlay only — NTSC-U, NTSC-J and PAL carts all boot.
 
 ## Milestones
 
-| # | Scope | State |
-|---|-------|-------|
-| M1 | Skeleton, boot, HLE BIOS, main RAM, input + DDR3 cart paths | complete |
-| M2 | 2D engines A/B, VRAM banking, DMA | complete |
-| M3 | 3D geometry + flat-shaded rasterizer + VRAM write-back + 3D layer compositing done (burst fetch: 322 clocks/line); 2D BG/OBJ fetch converted to bursts (4bpp BG line: 567 clocks) and the OAM scan pipelined (820 → 258); a two-sprite line now fits at 1196/1280; depth/fog/edge, alpha test, quads, span fill next | in progress |
-| M4 | **SPU's sixteen channels done** (PCM8/PCM16/ADPCM, looping, panning, master volume and the 48 kHz mix; capture units still open); a save controller over the detected chip + `.sav`, Slot-2-free DS saves, cart unlock commands (the AUXSPI chip and its probe are already here) next; MIDI/MT-32-pi port and its OSD rows already in place (the internal demo stream stands in for game MIDI until the CPUs run). The system I/O the firmware boots against — timers, IPC, maths, per-CPU IRQ banks, HALT, the RTC and the SPI bus with its three devices — is done | in progress |
-| M5 | Microphone and rumble paths (the SPI touchscreen's AUX channel and the power device's amplifier bits are in place), local DS-to-DS wireless | planned |
-| M6 | Save states via DDR3, replay, OSD polish (cheat engine done; the menu is now DS-native — the DS's own rows, the lid chord, the firmware language) | planned |
+| # | Scope | State | Left |
+|---|-------|-------|------|
+| M1 | Skeleton, boot, HLE BIOS, main RAM, input + DDR3 cart paths | **complete** | — |
+| M2 | 2D engines A/B, VRAM banking, DMA | **complete** | — |
+| M3 | GXFIFO → serialised multiplier → triangle setup → flat rasteriser → VRAM write-back → 3D layer composited by engine A; both 2D engines' fetches in bursts and the OAM scan pipelined so a line fits its period | **working** | W-buffer depth, fog, edge marking, toon shading, alpha test, QUADS/QUAD_STRIP, span fill |
+| M4 | Sixteen SPU channels (PCM8/PCM16/ADPCM, loops, pan, master volume, 48 kHz mix); AUXSPI save probe over an emulated EEPROM/FRAM/FLASH chip; MT-32-pi MIDI and its return mix; timers, IPC, maths, per-CPU IRQ banks, HALT, RTC and the three-device SPI bus | **working** | SPU capture units, FLASH data path, `.sav` persistence and erase, cart unlock sequence |
+| M5 | Microphone via the R3 button and the SPI touchscreen; the lid chord on `EXTKEYIN` | **partial** | Host-device microphone, rumble pak, DS-to-DS wireless |
+| M6 | Cheat engine (Action Replay, 8 entries per clock) and the DS-native menu, profiles and the video/audio filter rows | **partial** | Save states, rewind, replay |
 
-The OSD menu, all three refresh modes (59.82 / 59.95 / 60.00 Hz), the
-system bus fabric, the cheat engine and the AV filter layer are
-simulation-verified; everything else fills in behind them.
+What each of those measured, for the record: a 4bpp BG line fetches in 567
+clocks and a burst 3D line in 322, the OAM scan went from 820 to 258, and a
+two-sprite line lands at 1196 of its 1280-clock period. The OSD menu, all
+three refresh modes (59.82 / 59.95 / 60.00 Hz), the system bus fabric, the
+cheat engine and the AV filter layer are simulation-verified; the gaps above
+are what still needs writing.
