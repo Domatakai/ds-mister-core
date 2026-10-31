@@ -1,28 +1,53 @@
 # Area budget: fitting the NDS core on the DE10-Nano's A6
 
-Measured from the last full compile (`NDS.map.rpt`, Quartus 17.0.0, device
-`5CSEBA6U23I7`) and from standalone `quartus_map` probes of the candidate
-rewrites. Device capacities were read from a trivial fit on the same part, not
-from a datasheet.
+Measured from a full compile of the current tree (`quartus_sh --flow compile
+NDS`, Quartus 17.0.0, device `5CSEBA6U23I7`, 2026-10-31, run from `/tmp/ndsfull`
+because the fitter needs a path outside OneDrive) and from standalone
+`quartus_map` probes of the candidate rewrites. Device capacities were read
+from a trivial fit on the same part, not from a datasheet.
 
-## The four budgets
+## The budgets, as the design stands
 
 | resource | used | device | headroom |
 |---|---|---|---|
-| combinational nodes (ALUTs) | 141,879 | 83,820 | **−58,059 (169%)** |
-| registers | 68,515 | 83,820 | 15,305 (82%) |
-| DSP blocks | 124 | 112 | **−12 (111%)** |
-| M10K bits | 1,849,281 | 5,662,720 | 3,813,439 (33%) |
+| ALMs needed (mapper) | 59,346 | 41,910 | **−17,436 (142%)** |
+| combinational nodes (ALUTs) | 84,130 | 83,820 | **−310 (100.4%)** |
+| registers | 54,096 | 83,820 | 29,724 (65%) |
+| DSP blocks | 96 | 112 | 16 (86%) |
+| M10K bits | 1,873,204 | 5,662,720 | 3,789,516 (33%) |
+| I/O pins | 145 | 314 | 169 (46%) |
 
 41,910 ALMs each give two combinational nodes and two registers, so the LUT and
-register limits are the same 83,820 — registers are *not* comfortable, they are
-at 82%, and any fix that adds pipeline stages spends the same budget.
+register limits are the same 83,820. Logic is over on both counts, narrowly on
+one and badly on the other: 84,130 combinational nodes, 310 over the 83,820 the
+mapper checks (100.4%), and 59,346 ALMs against 41,910 (142%). There are two
+walls and the stricter one decides: even trimmed under 83,820 the fitter fails
+on LABs, which is what the `170012` build measured at 5,877 against 4,191.
 
-Two blocks are over: logic by 58k and DSP by 12. The DSP overrun is why the
-geometry engine's multipliers spill into LUTs — Quartus ran out of DSPs and
-fell back, which is the single largest LUT cost in the design.
+The full compile stops at the fitter, in its own words:
 
-## Where the 141,879 ALUTs are
+```
+Error (170011): Design contains 84256 blocks of type combinational node.  However, the device contains only 83820 blocks.
+Error (11802): Can't fit design in device.
+```
+
+Post-optimisation the fitter sees 84,256 nodes and 55,403 ALMs (132%), so it
+trips the node check before placing anything, and the timing analyzer never
+runs: there is no Fmax for this build, only the mapper's numbers above.
+
+Nothing else is close to its budget. Pins are *not* a constraint and never
+were: 145 of the 314 I/O the part exposes, 46%, so the periphery has 169 spare
+pins. PLLs are 3 of 6. DSPs are 96 of 112 — they were over at 124 until item 1
+serialised the geometry engine's matrix multiply. The 33% memory figure is the
+mapper's bit count against 5.66 Mbit; a failed fit allocates no blocks, so the
+`0 / 553` in its summary is not a usage number. What does not fit is logic.
+
+This file started from a pre-item baseline of 141,879 combinational ALUTs,
+68,515 registers and 124 DSP blocks — 169% of the device's logic and 111% of
+its DSPs. Every figure below is measured against that start, and the rows above
+are where the items left it.
+
+## Where the 141,879 ALUTs were
 
 Core (`emu`, 124,519) and framework (17,360):
 
@@ -356,7 +381,8 @@ What does fit, with margin:
 Item 7 is out (see above: the shared renderer needs 128% of the line period), so
 the *only* projected build that fit — the 2D core with the merge — is not
 buildable. The same build with two renderers is the 88,400 row: no fit, and the
-measured design is 83,303 ALUTs / 58,791 ALMs today, so what the A6 actually
+measured design is **84,130 ALUTs / 59,346 ALMs** today (the table at the top),
+so what the A6 actually
 needs before any of this is about 24,000 ALUTs of things this list does not
 contain.
 
