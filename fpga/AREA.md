@@ -4,8 +4,8 @@ Measured from a full compile of the current tree (`quartus_sh --flow compile
 NDS`, Quartus 17.0.0, device `5CSEBA6U23I7`, 2026-10-31, run from `/tmp/ndsfull`
 because the fitter needs a path outside OneDrive), from the `quartus_map` pass
 that precedes it, and from standalone `quartus_map` probes of the candidate
-rewrites. Device capacities were read
-from a trivial fit on the same part, not from a datasheet.
+rewrites. Device capacities were read from a trivial fit on the same part, not
+from a datasheet.
 
 ## The budgets, as the design stands
 
@@ -23,8 +23,8 @@ from a trivial fit on the same part, not from a datasheet.
 register limits are the same 83,820. The node count is now *under* that limit —
 83,245, 575 spare — so the mapper's `170011` check passes and the fitter reaches
 placement. What it runs out of there is LABs: 5,883 required against 4,191, 140%.
-A LAB holds ten ALMs, so 5,883 LABs is the same statement as 58,830 ALMs and the
-gap is about 16,200 ALMs, roughly 28% of the design.
+A LAB holds ten ALMs, so 5,883 LABs is the same statement as 58,830 ALMs, and
+the gap is 16,474 ALMs at the mapper's count — 28% of the design.
 
 The full compile stops at the fitter, in its own words:
 
