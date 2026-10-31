@@ -96,7 +96,7 @@ matter, and the answer is that only whole subsystems are.
 
 | cut | measured ALUTs | ≈ ALMs | what it costs |
 |---|---|---|---|
-| one renderer shared by both engines | 8,566 | 6,030 | no feature; 109% line occupancy |
+| one renderer shared by both engines | 8,550 | 6,030 | no feature; 109% line occupancy |
 | 3D engine (geometry 4,319 + raster 3,021) | 7,340 | 5,176 | all 3D |
 | cheat engine (5,096 after the walk trim) | 5,096 | 3,594 | cheat codes |
 | SPU | 5,157 | 3,637 | audio output |
