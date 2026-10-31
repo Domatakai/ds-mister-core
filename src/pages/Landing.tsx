@@ -108,10 +108,10 @@ const ARCHITECTURE: [string, string, string][] = [
 const ROADMAP: [string, string, string, "Complete" | "In progress" | "Next" | "Planned"][] = [
   ["M1", "Skeleton & boot", "ARM7/ARM9, IPC, HLE BIOS, main RAM, region-free boot from SD.", "Complete"],
   ["M2", "2D pipeline", "Engines A/B, VRAM banking, DMA, HDMI output with rotation.", "Complete"],
-  ["M3", "3D pipeline", "Geometry engine, rasterizer, capture unit, held at 59.826 Hz.", "In progress"],
-  ["M4", "Media & saves", "Save-type autodetection, save states to SD, Slot-2 and DLDI.", "Next"],
-  ["M5", "Sound & wireless", "SPU core to I²S, microphone, rumble, local DS-to-DS play.", "Planned"],
-  ["M6", "OSD polish", "Cheat browser, per-game profiles, frame graph, input replay.", "Planned"],
+  ["M3", "3D pipeline", "GXFIFO, serialised multiplier, flat rasterizer, VRAM write-back, 3D layer over engine A.", "In progress"],
+  ["M4", "Sound, saves & cartridge", "Sixteen SPU channels, AUXSPI save probe, MT-32-pi MIDI, timers, IPC, RTC, SPI.", "In progress"],
+  ["M5", "Sensors", "Microphone on R3, SPI touchscreen and the lid chord; host mic, rumble, wireless still out.", "In progress"],
+  ["M6", "Front end", "Cheat engine and the DS-native menu, profiles and filter rows; save states, rewind, replay still out.", "In progress"],
 ];
 
 const HERO_PREVIEW: OsdRow[] = [
@@ -532,8 +532,8 @@ export default function Landing() {
             <SectionHead
               index="04"
               title="Roadmap"
-              lede="Six milestones, shipped in the open. Two are done, one is being
-              synthesized week by week, three are cut into the fabric next."
+              lede="Six milestones, shipped in the open. Two are done, two are in the
+              fabric, and two are partway there."
             />
           </Reveal>
           <div className="mt-6">

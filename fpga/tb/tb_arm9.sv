@@ -117,6 +117,14 @@ always @(posedge clk) begin
 	end else wait_cnt <= 2'd0;
 end
 
+wire        hle_go, hle_done, hle_handled, hle_wr0, hle_wr1, hle_wr3;
+wire  [7:0] hle_num;
+wire [31:0] hle_r0, hle_r1, hle_r2, hle_r3;
+wire [31:0] hle_res0, hle_res1, hle_res3;
+wire        hle_b_req, hle_b_wr, hle_b_ack;
+wire [31:0] hle_b_addr, hle_b_wlane, hle_b_rdata;
+wire  [3:0] hle_b_be;
+
 //------------------------------------------------------------------
 // device
 //------------------------------------------------------------------
@@ -130,7 +138,38 @@ arm9_core #(.FETCH_BUF(FETCH_BUF)) dut (
 	.bus_rd(bus_rd), .bus_wr(bus_wr),
 	.bus_rdata(bus_rdata), .bus_ready(bus_ready),
 	.irq(irq), .fiq(fiq), .halt(halt),
-	.halted(halted), .thumb_state(thumb_state), .pc_out(pc_out)
+	.halted(halted), .thumb_state(thumb_state), .pc_out(pc_out),
+	.hle_go(hle_go), .hle_num(hle_num),
+	.hle_r0(hle_r0), .hle_r1(hle_r1), .hle_r2(hle_r2), .hle_r3(hle_r3),
+	.hle_done(hle_done), .hle_handled(hle_handled),
+	.hle_res0(hle_res0), .hle_res1(hle_res1), .hle_res3(hle_res3),
+	.hle_wr0(hle_wr0), .hle_wr1(hle_wr1), .hle_wr3(hle_wr3),
+	.hle_b_req(hle_b_req), .hle_b_wr(hle_b_wr), .hle_b_be(hle_b_be),
+	.hle_b_addr(hle_b_addr), .hle_b_wlane(hle_b_wlane),
+	.hle_b_ack(hle_b_ack), .hle_b_rdata(hle_b_rdata)
+);
+
+
+//------------------------------------------------------------------
+// the shared BIOS bank: one engine, this core's side of it wired
+//------------------------------------------------------------------
+swi_share hle (
+	.clk(clk), .reset(reset), .ce9(1'b1), .ce7(1'b1),
+	.c7_go(1'b0), .c7_num(8'h00),
+	.c7_r0(32'd0), .c7_r1(32'd0), .c7_r2(32'd0), .c7_r3(32'd0),
+	.c7_done(), .c7_handled(), .c7_res0(), .c7_res1(), .c7_res3(),
+	.c7_wr0(), .c7_wr1(), .c7_wr3(),
+	.c7_b_req(), .c7_b_wr(), .c7_b_be(), .c7_b_addr(), .c7_b_wlane(),
+	.c7_b_ack(1'b0), .c7_b_rdata(32'd0),
+	.c9_go(hle_go), .c9_num(hle_num),
+	.c9_r0(hle_r0), .c9_r1(hle_r1), .c9_r2(hle_r2), .c9_r3(hle_r3),
+	.c9_done(hle_done), .c9_handled(hle_handled),
+	.c9_res0(hle_res0), .c9_res1(hle_res1), .c9_res3(hle_res3),
+	.c9_wr0(hle_wr0), .c9_wr1(hle_wr1), .c9_wr3(hle_wr3),
+	.c9_b_req(hle_b_req), .c9_b_wr(hle_b_wr), .c9_b_be(hle_b_be),
+	.c9_b_addr(hle_b_addr), .c9_b_wlane(hle_b_wlane),
+	.c9_b_ack(hle_b_ack), .c9_b_rdata(hle_b_rdata),
+	.busy(), .owner()
 );
 
 //------------------------------------------------------------------
@@ -183,6 +222,17 @@ task check_scratch(input [15:0] off, input [31:0] want, input [8*44-1:0] what);
 	end
 endtask
 
+task check_lo(input [13:0] idx, input [31:0] want, input [8*44-1:0] what);
+	begin
+		checks = checks + 1;
+		if (lo[idx] !== want) begin
+			errors = errors + 1;
+			$display("  FAIL %0s: lo[%0d] = %h, expected %h",
+			         what, idx, lo[idx], want);
+		end
+	end
+endtask
+
 task check_val(input integer got, input integer want, input [8*44-1:0] what);
 	begin
 		checks = checks + 1;
@@ -223,6 +273,34 @@ end
 //------------------------------------------------------------------
 integer li;
 `include "tb_arm9_prog.svh"
+
+//------------------------------------------------------------------
+// program D: BIOS calls on the HLE bank, hand-assembled here rather than
+// generated -- the same two calls tb_arm7 makes, through the ARM9's own SWI
+// trap, so both cores are shown to reach the engine and come back
+//------------------------------------------------------------------
+task load_d;
+	begin
+		for (li = 0; li < 65536; li = li + 1) ram[li] = 32'h0000_0000;
+
+		ram[18'd0]  = 32'hE3A00064;  // 0x00 MOV r0,#100
+		ram[18'd1]  = 32'hE3A01007;  //      MOV r1,#7
+		ram[18'd2]  = 32'hEF090000;  // 0x08 SWI #0x09        Div
+		ram[18'd3]  = 32'hE3A04C01;  //      MOV r4,#0x100      result block
+		ram[18'd4]  = 32'hE5840000;  //      STR r0,[r4]        quotient
+		ram[18'd5]  = 32'hE5841004;  //      STR r1,[r4,#4]     remainder
+		ram[18'd6]  = 32'hE5843008;  //      STR r3,[r4,#8]     |quotient|
+		ram[18'd7]  = 32'hE3A00040;  // 0x1C MOV r0,#0x40        CpuSet source
+		ram[18'd8]  = 32'hE3A01080;  //      MOV r1,#0x80        destination
+		ram[18'd9]  = 32'hE3A02002;  //      MOV r2,#2           two units
+		ram[18'd10] = 32'hE3822404;  //      ORR r2,r2,#0x04000000  (32-bit units)
+		ram[18'd11] = 32'hE3A05C03;  //      MOV r5,#0x300       must survive the call
+		ram[18'd12] = 32'hEF0B0000;  // 0x30 SWI #0x0B        CpuSet
+		ram[18'd13] = 32'hE5916000;  //      LDR r6,[r1]
+		ram[18'd14] = 32'hE5917004;  //      LDR r7,[r1,#4]
+		ram[18'd15] = 32'hEAFF_FFFE;  // 0x3C B .                (marker)
+	end
+endtask
 
 integer i;
 integer guard;
@@ -425,6 +503,24 @@ initial begin
 	check_val(und_seen, 1'b1, "the core sat in undefined mode");
 	check_val(abt_seen, 1'b1, "the core sat in abort mode");
 	check_val(thumb_state, 1'b0, "ARM state at the end of the BLX trip");
+
+	//==================== program D: the BIOS SWI bank ====================
+	lo[14'h0010] = 32'hDEAD_BEEF;   // the CpuSet source words at 0x40/0x44
+	lo[14'h0011] = 32'h0BAD_F00D;
+	load_d;
+	reset_core;
+	run_to(32'h0200_003C, 20000, "program D");
+
+	check_lo(14'h0040, 32'd14,    "HLE Div quotient");
+	check_lo(14'h0041, 32'd2,     "HLE Div remainder");
+	check_lo(14'h0042, 32'd14,    "HLE Div |quotient|");
+	check_lo(14'h0020, 32'hDEAD_BEEF, "CpuSet wrote its destination");
+	check_lo(14'h0021, 32'h0BAD_F00D, "CpuSet wrote its second word");
+	check_lo(14'h0010, 32'hDEAD_BEEF, "CpuSet left the source alone");
+	check_reg(6,  32'hDEAD_BEEF,  "CpuSet copy read back, first word");
+	check_reg(7,  32'h0BAD_F00D,  "CpuSet copy read back, second word");
+	check_reg(5,  32'h0000_0300,  "CpuSet wrote no registers");
+	check_val(dut.mode, 5'h13, "SVC after the HLE call");
 
 	$display("  fetch buffer %0s: %0d bus reads", FETCH_BUF ? "on " : "off", bus_reads);
 	$display("  %0d checks, %0d failure(s)", checks, errors);

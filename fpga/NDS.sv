@@ -1287,6 +1287,52 @@ wire        m7_ready;
 wire        m7_halted, m7_thumb;
 wire [31:0] m7_pc;
 
+//------------------------------------------------------------------
+// The BIOS SWI bank: one engine, arbitrated between the two cores
+//
+// It used to be one engine inside each core (2,784 combinational ALUTs in the
+// mapper's per-entity table). One shared copy halves that; the arbiter hands
+// it to whichever core is waiting and routes its bus access onto *that* core's
+// master, so Halt and IntrWait still read the caller's own IE/IF.
+//------------------------------------------------------------------
+wire        hle9_go, hle9_done, hle9_handled, hle9_wr0, hle9_wr1, hle9_wr3;
+wire  [7:0] hle9_num;
+wire [31:0] hle9_r0, hle9_r1, hle9_r2, hle9_r3;
+wire [31:0] hle9_res0, hle9_res1, hle9_res3;
+wire        hle9_b_req, hle9_b_wr, hle9_b_ack;
+wire [31:0] hle9_b_addr, hle9_b_wlane, hle9_b_rdata;
+wire  [3:0] hle9_b_be;
+
+wire        hle7_go, hle7_done, hle7_handled, hle7_wr0, hle7_wr1, hle7_wr3;
+wire  [7:0] hle7_num;
+wire [31:0] hle7_r0, hle7_r1, hle7_r2, hle7_r3;
+wire [31:0] hle7_res0, hle7_res1, hle7_res3;
+wire        hle7_b_req, hle7_b_wr, hle7_b_ack;
+wire [31:0] hle7_b_addr, hle7_b_wlane, hle7_b_rdata;
+wire  [3:0] hle7_b_be;
+
+swi_share swi_share (
+	.clk(clk_sys), .reset(reset),
+	.ce9(ce9), .ce7(ce7),
+	.c9_go(hle9_go), .c9_num(hle9_num),
+	.c9_r0(hle9_r0), .c9_r1(hle9_r1), .c9_r2(hle9_r2), .c9_r3(hle9_r3),
+	.c9_done(hle9_done), .c9_handled(hle9_handled),
+	.c9_res0(hle9_res0), .c9_res1(hle9_res1), .c9_res3(hle9_res3),
+	.c9_wr0(hle9_wr0), .c9_wr1(hle9_wr1), .c9_wr3(hle9_wr3),
+	.c9_b_req(hle9_b_req), .c9_b_wr(hle9_b_wr), .c9_b_be(hle9_b_be),
+	.c9_b_addr(hle9_b_addr), .c9_b_wlane(hle9_b_wlane),
+	.c9_b_ack(hle9_b_ack), .c9_b_rdata(hle9_b_rdata),
+	.c7_go(hle7_go), .c7_num(hle7_num),
+	.c7_r0(hle7_r0), .c7_r1(hle7_r1), .c7_r2(hle7_r2), .c7_r3(hle7_r3),
+	.c7_done(hle7_done), .c7_handled(hle7_handled),
+	.c7_res0(hle7_res0), .c7_res1(hle7_res1), .c7_res3(hle7_res3),
+	.c7_wr0(hle7_wr0), .c7_wr1(hle7_wr1), .c7_wr3(hle7_wr3),
+	.c7_b_req(hle7_b_req), .c7_b_wr(hle7_b_wr), .c7_b_be(hle7_b_be),
+	.c7_b_addr(hle7_b_addr), .c7_b_wlane(hle7_b_wlane),
+	.c7_b_ack(hle7_b_ack), .c7_b_rdata(hle7_b_rdata),
+	.busy(), .owner()
+);
+
 wire cart_present = slot_valid[active_game_slot];
 wire arm7_reset   = reset | ~cart_present;
 wire arm9_reset   = reset | ~cart_present;
@@ -1309,7 +1355,15 @@ arm9_core arm9 (
 	.halt(arm7_halt),
 	.halted(m9_halted),
 	.thumb_state(m9_thumb),
-	.pc_out(m9_pc)
+	.pc_out(m9_pc),
+	.hle_go(hle9_go), .hle_num(hle9_num),
+	.hle_r0(hle9_r0), .hle_r1(hle9_r1), .hle_r2(hle9_r2), .hle_r3(hle9_r3),
+	.hle_done(hle9_done), .hle_handled(hle9_handled),
+	.hle_res0(hle9_res0), .hle_res1(hle9_res1), .hle_res3(hle9_res3),
+	.hle_wr0(hle9_wr0), .hle_wr1(hle9_wr1), .hle_wr3(hle9_wr3),
+	.hle_b_req(hle9_b_req), .hle_b_wr(hle9_b_wr), .hle_b_be(hle9_b_be),
+	.hle_b_addr(hle9_b_addr), .hle_b_wlane(hle9_b_wlane),
+	.hle_b_ack(hle9_b_ack), .hle_b_rdata(hle9_b_rdata)
 );
 
 cpu_ce_bridge bus9 (
@@ -1340,7 +1394,15 @@ arm7_core arm7 (
 	.halt(arm7_halt),
 	.halted(m7_halted),
 	.thumb_state(m7_thumb),
-	.pc_out(m7_pc)
+	.pc_out(m7_pc),
+	.hle_go(hle7_go), .hle_num(hle7_num),
+	.hle_r0(hle7_r0), .hle_r1(hle7_r1), .hle_r2(hle7_r2), .hle_r3(hle7_r3),
+	.hle_done(hle7_done), .hle_handled(hle7_handled),
+	.hle_res0(hle7_res0), .hle_res1(hle7_res1), .hle_res3(hle7_res3),
+	.hle_wr0(hle7_wr0), .hle_wr1(hle7_wr1), .hle_wr3(hle7_wr3),
+	.hle_b_req(hle7_b_req), .hle_b_wr(hle7_b_wr), .hle_b_be(hle7_b_be),
+	.hle_b_addr(hle7_b_addr), .hle_b_wlane(hle7_b_wlane),
+	.hle_b_ack(hle7_b_ack), .hle_b_rdata(hle7_b_rdata)
 );
 
 cpu_ce_bridge bus7 (

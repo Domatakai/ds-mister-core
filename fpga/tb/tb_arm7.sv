@@ -112,6 +112,14 @@ always @(posedge clk) begin
 	end else wait_cnt <= 2'd0;
 end
 
+wire        hle_go, hle_done, hle_handled, hle_wr0, hle_wr1, hle_wr3;
+wire  [7:0] hle_num;
+wire [31:0] hle_r0, hle_r1, hle_r2, hle_r3;
+wire [31:0] hle_res0, hle_res1, hle_res3;
+wire        hle_b_req, hle_b_wr, hle_b_ack;
+wire [31:0] hle_b_addr, hle_b_wlane, hle_b_rdata;
+wire  [3:0] hle_b_be;
+
 //------------------------------------------------------------------
 // device
 //------------------------------------------------------------------
@@ -125,7 +133,38 @@ arm7_core #(.FETCH_BUF(FETCH_BUF)) dut (
 	.bus_rd(bus_rd), .bus_wr(bus_wr),
 	.bus_rdata(bus_rdata), .bus_ready(bus_ready),
 	.irq(irq), .fiq(fiq), .halt(halt),
-	.halted(halted), .thumb_state(thumb_state), .pc_out(pc_out)
+	.halted(halted), .thumb_state(thumb_state), .pc_out(pc_out),
+	.hle_go(hle_go), .hle_num(hle_num),
+	.hle_r0(hle_r0), .hle_r1(hle_r1), .hle_r2(hle_r2), .hle_r3(hle_r3),
+	.hle_done(hle_done), .hle_handled(hle_handled),
+	.hle_res0(hle_res0), .hle_res1(hle_res1), .hle_res3(hle_res3),
+	.hle_wr0(hle_wr0), .hle_wr1(hle_wr1), .hle_wr3(hle_wr3),
+	.hle_b_req(hle_b_req), .hle_b_wr(hle_b_wr), .hle_b_be(hle_b_be),
+	.hle_b_addr(hle_b_addr), .hle_b_wlane(hle_b_wlane),
+	.hle_b_ack(hle_b_ack), .hle_b_rdata(hle_b_rdata)
+);
+
+
+//------------------------------------------------------------------
+// the shared BIOS bank: one engine, this core's side of it wired
+//------------------------------------------------------------------
+swi_share hle (
+	.clk(clk), .reset(reset), .ce9(1'b1), .ce7(1'b1),
+	.c9_go(1'b0), .c9_num(8'h00),
+	.c9_r0(32'd0), .c9_r1(32'd0), .c9_r2(32'd0), .c9_r3(32'd0),
+	.c9_done(), .c9_handled(), .c9_res0(), .c9_res1(), .c9_res3(),
+	.c9_wr0(), .c9_wr1(), .c9_wr3(),
+	.c9_b_req(), .c9_b_wr(), .c9_b_be(), .c9_b_addr(), .c9_b_wlane(),
+	.c9_b_ack(1'b0), .c9_b_rdata(32'd0),
+	.c7_go(hle_go), .c7_num(hle_num),
+	.c7_r0(hle_r0), .c7_r1(hle_r1), .c7_r2(hle_r2), .c7_r3(hle_r3),
+	.c7_done(hle_done), .c7_handled(hle_handled),
+	.c7_res0(hle_res0), .c7_res1(hle_res1), .c7_res3(hle_res3),
+	.c7_wr0(hle_wr0), .c7_wr1(hle_wr1), .c7_wr3(hle_wr3),
+	.c7_b_req(hle_b_req), .c7_b_wr(hle_b_wr), .c7_b_be(hle_b_be),
+	.c7_b_addr(hle_b_addr), .c7_b_wlane(hle_b_wlane),
+	.c7_b_ack(hle_b_ack), .c7_b_rdata(hle_b_rdata),
+	.busy(), .owner()
 );
 
 //------------------------------------------------------------------
@@ -224,6 +263,34 @@ task load_b;
 		ram[18'd67] = 32'h4B01_D1F9;  // BNE 0x102 ; LDR r3,[pc,#4]
 		ram[18'd68] = 32'h46C0_4718;  // BX r3 ; NOP
 		ram[18'd69] = 32'h0200_0070;  // 0x114 literal: back to the marker
+	end
+endtask
+
+// Phase 3: BIOS calls on the HLE bank, through the core's real SWI trap.
+// The program divides 100 by 7 (Div writes r0/r1/r3), stores the three
+// results, then asks CpuSet to copy two words with the 32-bit flag, and
+// reads them back through the core's own LDR. If either call had vectorised
+// to 0x08 instead of running on the bank, the results below would be stale.
+task load_c;
+	begin
+		for (li = 0; li < 65536; li = li + 1) ram[li] = 32'h0000_0000;
+
+		ram[18'd0]  = 32'hE3A00064;  // 0x00 MOV r0,#100
+		ram[18'd1]  = 32'hE3A01007;  //      MOV r1,#7
+		ram[18'd2]  = 32'hEF090000;  // 0x08 SWI #0x09        Div
+		ram[18'd3]  = 32'hE3A04C01;  //      MOV r4,#0x100      result block
+		ram[18'd4]  = 32'hE5840000;  //      STR r0,[r4]        quotient
+		ram[18'd5]  = 32'hE5841004;  //      STR r1,[r4,#4]     remainder
+		ram[18'd6]  = 32'hE5843008;  //      STR r3,[r4,#8]     |quotient|
+		ram[18'd7]  = 32'hE3A00040;  // 0x1C MOV r0,#0x40        CpuSet source
+		ram[18'd8]  = 32'hE3A01080;  //      MOV r1,#0x80        destination
+		ram[18'd9]  = 32'hE3A02002;  //      MOV r2,#2           two units
+		ram[18'd10] = 32'hE3822404;  //      ORR r2,r2,#0x04000000  (32-bit units)
+		ram[18'd11] = 32'hE3A03A05;  //      MOV r3,#0x5000          (a value to survive)
+		ram[18'd12] = 32'hEF0B0000;  // 0x30 SWI #0x0B        CpuSet
+		ram[18'd13] = 32'hE5915000;  //      LDR r5,[r1]
+		ram[18'd14] = 32'hE5916004;  //      LDR r6,[r1,#4]
+		ram[18'd15] = 32'hEAFF_FFFE;  // 0x3C B .                (marker)
 	end
 endtask
 
@@ -432,6 +499,51 @@ initial begin
 	check_lo(14'h1000, 32'h0000_0099, "SWP reached memory");
 	check_reg(0,  32'h0000_0022,  "Thumb POP first word");
 	check_reg(1,  32'h0000_0033,  "Thumb POP second word");
+
+	// ---- phase 3: BIOS calls on the HLE bank ----
+	lo[16'h0040 >> 2] = 32'hDEAD_BEEF;   // the CpuSet source words
+	lo[16'h0044 >> 2] = 32'h0BAD_F00D;
+	load_c();
+	reset = 1;
+	repeat (4) @(posedge clk);
+	reset = 0;
+
+	guard = 0;
+	while (pc_out !== 32'h0200_003C && guard < 20000) begin
+		@(posedge clk);
+		guard = guard + 1;
+	end
+	repeat (8) @(posedge clk);
+	checks = checks + 1;
+	if (pc_out !== 32'h0200_003C) begin
+		errors = errors + 1;
+		$display("  FAIL the BIOS-call program did not reach its marker (pc = %h)", pc_out);
+	end
+
+	// Div: 100 / 7 = 14 remainder 2, r3 = |quotient| -- read back out of the
+	// block the program stored them to, because r0/r1/r3 are reloaded for the
+	// CpuSet request below
+	check_lo(14'h0040, 32'd14,    "Div wrote its quotient to memory");
+	check_lo(14'h0041, 32'd2,     "Div wrote its remainder to memory");
+	check_lo(14'h0042, 32'd14,    "Div wrote |quotient| to memory");
+	// CpuSet: the copy landed where the request pointed
+	check_reg(5,  32'hDEAD_BEEF,  "CpuSet copy, first word");
+	check_reg(6,  32'h0BAD_F00D,  "CpuSet copy, second word");
+	check_lo(14'h0020, 32'hDEAD_BEEF, "CpuSet wrote its destination");
+	check_lo(14'h0021, 32'h0BAD_F00D, "CpuSet wrote its second word");
+	check_lo(14'h0010, 32'hDEAD_BEEF, "CpuSet left the source alone");
+	check_reg(3,  32'h0000_5000,  "CpuSet wrote no registers") ;
+	// and the return went back to the caller's mode, not the vector
+	checks = checks + 1;
+	if (dut.mode !== 5'h13) begin
+		errors = errors + 1;
+		$display("  FAIL mode after the HLE call: %h", dut.mode);
+	end
+	checks = checks + 1;
+	if (dut.i !== 1'b1) begin
+		errors = errors + 1;
+		$display("  FAIL I bit not restored from SPSR after the HLE call");
+	end
 
 	$display("  fetch buffer %0s: %0d bus reads", FETCH_BUF ? "on " : "off", bus_reads);
 	$display("  %0d checks, %0d failure(s)", checks, errors);

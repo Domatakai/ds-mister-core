@@ -262,9 +262,16 @@ end
 // line FIFO: 16-bit words -> 64-bit DDR3 lines
 //------------------------------------------------------------------
 localparam FIFO_DEPTH = 64;
-reg [63:0] fifo_data [0:FIFO_DEPTH-1];
-reg [28:0] fifo_line [0:FIFO_DEPTH-1];
-reg  [7:0] fifo_be   [0:FIFO_DEPTH-1];
+
+// One 101-bit entry {be, line, data} in block RAM: 64 x 101 = 6,464 bits, one
+// M10K. This was three register arrays (6,464 flops, the bulk of cart_slot's
+// 7,640) whose only access pattern is "write once, read once, in order" — so
+// it infers as a simple dual-port RAM. The cost is one cycle: a RAM read is
+// registered, so the drain fetches the head entry and issues it on the next
+// cycle (see Block B).
+reg [100:0] fifo_mem [0:FIFO_DEPTH-1];
+reg [100:0] fifo_q    = 101'd0;   // registered read port
+reg         fifo_q_ok = 1'b0;     // fifo_q holds the entry at rd_ptr
 reg  [5:0] wr_ptr = 0;
 reg  [5:0] rd_ptr = 0;
 
@@ -296,6 +303,21 @@ reg        tail_flush = 0;
 // a full slot stops accepting new lines: the window could not read them
 // anyway, and the next slot's game must not be overwritten
 wire slot_full = (line_no[22:0] == SLOT_LINES);
+
+// packing: the value and byte enables this entry is written with, so the RAM
+// has exactly one write statement (two would stop it inferring)
+wire [63:0] tail_data = (pack_idx == 2'd1) ? {48'd0, pack[0]} :
+                        (pack_idx == 2'd2) ? {32'd0, pack[1], pack[0]} :
+                                             {16'd0, pack[2], pack[1], pack[0]};
+wire  [7:0] tail_be   = (pack_idx == 2'd1) ? 8'h03 :
+                        (pack_idx == 2'd2) ? 8'h0F : 8'h3F;
+wire        line_done = ioctl_wr && is_rom && !fifo_full && !slot_full
+                        && (pack_idx == 2'd3);
+wire        tail_done = tail_flush && (pack_idx != 2'd0) && !fifo_full;
+wire        fifo_push = line_done || tail_done;
+wire [63:0] push_data = line_done ? {ioctl_dout, pack[2], pack[1], pack[0]}
+                                  : tail_data;
+wire  [7:0] push_be   = line_done ? 8'hFF : tail_be;
 
 always @(posedge clk) begin
 	dl_d <= rom_dl;
@@ -348,9 +370,6 @@ always @(posedge clk) begin
 		if (ioctl_wr && is_rom && !fifo_full && !slot_full) begin
 			pack[pack_idx] <= ioctl_dout;
 			if (pack_idx == 2'd3) begin
-				fifo_data[wr_ptr] <= {ioctl_dout, pack[2], pack[1], pack[0]};
-				fifo_line[wr_ptr] <= line_no;
-				fifo_be[wr_ptr]   <= 8'hFF;
 				wr_ptr   <= wr_ptr + 6'd1;
 				line_no  <= line_no + 29'd1;
 				pack_idx <= 2'd0;
@@ -364,23 +383,15 @@ always @(posedge clk) begin
 
 		// flush that partial line, retrying until the FIFO has room
 		// (the FIFO could be near full when the stream ends)
-		if (tail_flush && pack_idx != 2'd0 && !fifo_full) begin
-			case (pack_idx)
-				2'd1:    fifo_data[wr_ptr] <= {48'd0, pack[0]};
-				2'd2:    fifo_data[wr_ptr] <= {32'd0, pack[1], pack[0]};
-				default: fifo_data[wr_ptr] <= {16'd0, pack[2], pack[1], pack[0]};
-			endcase
-			fifo_line[wr_ptr] <= line_no;
-			case (pack_idx)
-				2'd1:    fifo_be[wr_ptr] <= 8'h03;
-				2'd2:    fifo_be[wr_ptr] <= 8'h0F;
-				default: fifo_be[wr_ptr] <= 8'h3F;
-			endcase
+		if (tail_done) begin
 			wr_ptr      <= wr_ptr + 6'd1;
 			line_no     <= line_no + 29'd1;
 			pack_idx    <= 2'd0;
 			tail_flush  <= 1'b0;
 		end
+
+		// the one write statement the RAM is inferred from
+		if (fifo_push) fifo_mem[wr_ptr] <= {push_be, line_no, push_data};
 	end
 
 	if (reset) begin
@@ -414,24 +425,41 @@ end
 reg draining = 0;
 reg [28:0] ddr_addr_wr = 0;
 reg [28:0] ddr_addr_rd = 0;
-always @(posedge clk) begin
-	// accept: clear only when the controller took the write
-	if (ddr_we && !ddr_busy) begin
-		ddr_we   <= 1'b0;
-		draining <= 1'b0;
-	end
+// the port, the controller and the read bridge all have to be idle before a
+// line can be issued
+wire drain_free = !ddr_we && !draining && !ddr_busy && !ddr_rd
+                  && !(rstate == R_IDLE && (pending_req || win_req));
 
-	// grant the next line when the port, the controller and the read
-	// bridge are all idle
-	if (!fifo_empty && !ddr_we && !draining && !ddr_busy && !ddr_rd
-	    && !(rstate == R_IDLE && (pending_req || win_req))) begin
-		ddr_burstcnt <= 8'd1;
-		ddr_be       <= fifo_be[rd_ptr];
-		ddr_addr_wr  <= fifo_line[rd_ptr];
-		ddr_din      <= fifo_data[rd_ptr];
-		ddr_we       <= 1'b1;
-		draining     <= 1'b1;
-		rd_ptr       <= rd_ptr + 6'd1;
+always @(posedge clk) begin
+	if (reset) begin
+		ddr_we    <= 1'b0;
+		draining  <= 1'b0;
+		fifo_q_ok <= 1'b0;
+	end else begin
+		// accept: clear only when the controller took the write
+		if (ddr_we && !ddr_busy) begin
+			ddr_we   <= 1'b0;
+			draining <= 1'b0;
+		end
+
+		// The RAM's read port is registered, so the drain fetches the head
+		// entry and issues it on the next cycle. Fetching while the previous
+		// write is still waiting for BUSY hides the extra cycle.
+		if (!fifo_q_ok && !fifo_empty) begin
+			fifo_q    <= fifo_mem[rd_ptr];
+			fifo_q_ok <= 1'b1;
+		end
+
+		if (fifo_q_ok && drain_free) begin
+			ddr_burstcnt <= 8'd1;
+			ddr_be       <= fifo_q[100:93];
+			ddr_addr_wr  <= fifo_q[92:64];
+			ddr_din      <= fifo_q[63:0];
+			ddr_we       <= 1'b1;
+			draining     <= 1'b1;
+			rd_ptr       <= rd_ptr + 6'd1;
+			fifo_q_ok    <= 1'b0;
+		end
 	end
 
 	// read path: latch the line number when a request first arrives

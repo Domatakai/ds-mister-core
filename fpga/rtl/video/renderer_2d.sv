@@ -186,14 +186,16 @@ function automatic bg_enabled;
 endfunction
 
 //------------------------------------------------------------------
-// Line buffers. An entry holds two composite pixels of 21 bits
-// {kind[1:0], prio[1:0], opaque, rgb[15:0]}, so one 42-bit word is a pixel
-// pair and 128 words are one 256-pixel line.
+// Line buffers. An entry holds four composite pixels of 21 bits
+// {kind[1:0], prio[1:0], opaque, rgb[15:0]}, so one 84-bit word is a pixel
+// quad and 64 words are one 256-pixel line. Quads rather than pairs are what
+// let the backdrop fill write four pixels a clock (64 fill clocks instead of
+// 128) with the same 10,752 bits of storage.
 //
 //   * `wbank` is the line being composited, held in registers: the composite
 //     does a read-modify-write per pixel against the pixel already there, and
 //     that read has to land in the same cycle as the write.
-//   * `lbuf` holds *both display banks* in block RAM, addressed {bank, pair}.
+//   * `lbuf` holds *both display banks* in block RAM, addressed {bank, quad}.
 //     Every write to `wbank` is mirrored into the back bank, so when the swap
 //     makes it the front bank it is already a finished line — the display
 //     reads bank `front_is_a` while the composite fills the other one
@@ -205,8 +207,8 @@ endfunction
 // address. The composer already holds its own decision for one CE, and
 // NDS.sv delays the video timing chain by the same cycle to match.
 //------------------------------------------------------------------
-reg [41:0] wbank [0:127];              // line being composited (registers)
-reg [41:0] lbuf  [0:255];              // two display banks (block RAM)
+reg [83:0] wbank [0:63];               // line being composited (registers)
+reg [83:0] lbuf  [0:127];              // two display banks (block RAM)
 reg        front_is_a = 1'b1;          // which display bank holds the finished line
 
 reg [7:0]  back_line = 8'hFF;          // line currently valid in the back bank
@@ -228,7 +230,7 @@ wire       disp_bank  = front_is_a ^ swp;
 // happened, so the one the composite fills is simply its complement.
 wire       back_bank  = ~front_is_a;   // the one the composite is filling
 
-reg  [41:0] disp_q = 42'h0_0000;
+reg  [83:0] disp_q = 84'h0;
 
 // One write port into the display copy, shared by the fill and the composite.
 // Both the read and the single write live in the main clocked process (see
@@ -238,10 +240,14 @@ reg  [41:0] disp_q = 42'h0_0000;
 // 276009). A register for enable/address/data per site and one array write
 // statement is what makes it a simple dual-port RAM with read-old-data.
 reg        lb_we;
-reg  [7:0] lb_wa;
-reg [41:0] lb_wd;
+reg  [6:0] lb_wa;
+reg [83:0] lb_wd;
 
-wire [20:0] fe = px[0] ? disp_q[41:21] : disp_q[20:0];
+// which of the quad's four pixels the display is on
+wire [20:0] fe = (px[1:0] == 2'd0) ? disp_q[20:0]
+               : (px[1:0] == 2'd1) ? disp_q[41:21]
+               : (px[1:0] == 2'd2) ? disp_q[62:42]
+                                   : disp_q[83:63];
 
 // `on` and px stay live: the read settles a clock after the address, well
 // inside one pixel CE (clk/5), so the pixel is present when it is sampled.
@@ -288,7 +294,8 @@ localparam [4:0]
 	S_LAYER     = 5'd4,   // pick the next enabled BG layer
 	S_MAP_REQ   = 5'd5,
 	S_MAP_WAIT  = 5'd6,
-	S_PB_REQ    = 5'd7,   // 4bpp palette-bank load (pbi 0..15)
+	// 7 and 21 were the per-entry palette-bank states; both fills below are
+	// rolling pipelines now, so those states are unreachable and gone.
 	S_PB_WAIT   = 5'd8,
 	S_TILE_REQ  = 5'd9,
 	S_TILE_WAIT = 5'd10,
@@ -302,16 +309,22 @@ localparam [4:0]
 	S_SPIXC     = 5'd18,  // composite one OBJ pixel
 	S_SPAL_REQ  = 5'd19,  // 8bpp OBJ per-pixel palette read
 	S_SPAL_WAIT = 5'd20,
-	S_SPB_REQ   = 5'd21,  // OBJ palette-bank load (spbi 0..15)
 	S_SPB_WAIT  = 5'd22,
 	S_DONE      = 5'd23,
 	S_D3_RUN    = 5'd24,  // 3D layer merge: burst fetch + composite
 	S_COL       = 5'd25,  // latch this column's map entry
-	S_COL_CHK   = 5'd26,  // palette-bank check before compositing a column
-	S_PXC_GO    = 5'd27,  // start the next column's tile prefetch
-	S_PF_WAIT   = 5'd28,  // collect the prefetched tile row
-	S_OAM_SCAN  = 5'd29,  // pipelined OAM walk: one attribute per clock
-	S_HIT_NEXT  = 5'd30;  // advance to the next sprite that hit
+	S_PF_WAIT   = 5'd26,  // collect the prefetched tile row
+	S_OAM_SCAN  = 5'd27,  // pipelined OAM walk: one attribute per clock
+	S_HIT_NEXT  = 5'd28;  // advance to the next sprite that hit
+	// S_COL_CHK and S_PXC_GO used to sit between a column's pixels: one clock
+	// to check the 4bpp palette bank and one to start the next column's fetch,
+	// both with exactly one job. Both now ride on the cycle that already
+	// advances the column -- the fetch there is a clock earlier than its state
+	// was, which is what lets the prefetch land behind the eight pixels -- and
+	// the wait is skipped outright when the burst has landed. Two clocks a
+	// column, so a 256-pixel BG layer measures 567 -> 504 clocks of walk and
+	// 1196 -> 1133 for the line; the quad-wide backdrop fill takes another 64
+	// (BG 440, line 1069 -- tb_renderer_2d +states).
 
 reg [4:0]  fstate = S_IDLE;
 reg [7:0]  tgt = 8'hFF;        // line being fetched into the back bank
@@ -329,8 +342,8 @@ reg [1:0]  lk = 2'd3;          // current BG layer, walks 3->0
 reg [5:0]  col = 6'd0;         // screen tile column 0..32
 reg [1:0]  hw_i = 2'd0;        // halfword within the current tile row
 reg [1:0]  pxi = 2'd0;         // pixel within the halfword
-reg [3:0]  pbi = 4'd0;         // palette-bank fill index
-reg [6:0]  fill_i = 7'd0;      // backdrop-fill pair index
+reg [4:0]  pbi = 5'd0;         // palette-bank fill index
+reg [5:0]  fill_i = 6'd0;      // backdrop-fill quad index
 reg [15:0] map_e = 16'd0;      // map entry of the column being composited
 // Map row: one burst covers a 32-entry half-row, two cover a 64-wide map,
 // so a layer's whole map line costs one or two grants instead of 32.
@@ -347,7 +360,7 @@ reg        tcur = 1'b0;        // buffer the composite is reading
 reg  [2:0] twr = 3'd0;         // write index into the other buffer
 reg        pf_on = 1'b0;       // a tile prefetch is in flight
 reg        pf_rdy = 1'b0;      // ... and its last beat has arrived
-reg  [4:0] bg_ret = S_TILE_REQ;// where a palette-bank load returns to
+reg  [4:0] bg_ret = S_PXC;     // where a palette-bank load returns to
 reg [15:0] pcache [0:15];      // shared 16-entry palette cache
 reg [3:0]  pcache_bank = 4'd0;
 reg        pcache_obj = 1'b0;  // cache holds OBJ palettes when set
@@ -397,7 +410,7 @@ reg [15:0] sdata = 16'd0;      // current sprite halfword
 // a 64-wide 4bpp sprite) instead of one round trip per halfword
 reg [15:0] sbuf [0:31];        // a 64-wide 8bpp row is 32 halfwords
 reg  [5:0] swr = 6'd0;         // write index while the row burst streams
-reg [3:0]  spbi = 4'd0;        // OBJ palette-bank fill index
+reg [4:0]  spbi = 5'd0;        // OBJ palette-bank fill index
 // 3D merge pass: the line is fetched as D3_CHUNK-halfword bursts and each
 // beat is composited the cycle it arrives, so the pass is paced by the
 // memory burst rate rather than by a round trip per pixel. Smaller chunks
@@ -465,6 +478,7 @@ wire [6:0]  mcol_f_n= {1'b0, l_hofs[8:3]} + {1'b0, col} + 7'd1;
 wire [6:0]  mrow_f  = {1'b0, l_vofs[8:3]} + {2'd0, tgt[7:3]};
 wire [5:0]  mcol    = mcol_f[5:0] & (bg_wide ? 6'd63 : 6'd31);
 wire [5:0]  mcol_n  = mcol_f_n[5:0] & (bg_wide ? 6'd63 : 6'd31);
+wire [5:0]  mcol_n2 = (mcol_f_n[5:0] + 6'd1) & (bg_wide ? 6'd63 : 6'd31);
 wire [5:0]  mrow    = mrow_f[5:0] & (bg_tall ? 6'd63 : 6'd31);
 // GBATEK block layout: 64x32 -> right at +2K; 32x64 -> bottom at +2K;
 // 64x64 -> TR +2K, BL +4K, BR +6K. A map row is 32 consecutive entries per
@@ -503,6 +517,11 @@ wire [19:0] tile_addr = trow_addr(map_e, vrow);
 wire [15:0] map_e_n = map_row[mcol_n];
 wire [2:0]  vrow_n  = map_e_n[11] ? (3'd7 - y_in) : y_in;
 wire [19:0] tile_addr_n = trow_addr(map_e_n, vrow_n);
+// the fetch is raised on the cycle that advances the column, so the row it
+// asks for is the one two columns along
+wire [15:0] map_e_n2 = map_row[mcol_n2];
+wire [2:0]  vrow_n2  = map_e_n2[11] ? (3'd7 - y_in) : y_in;
+wire [19:0] tile_addr_n2 = trow_addr(map_e_n2, vrow_n2);
 
 wire [2:0]  bg_pph  = bg_bpp8 ? 3'd2 : 3'd4;   // pixels per halfword
 wire [3:0]  bg_tlp  = (bg_pph == 3'd4 ? {hw_i, 2'd0} : {1'b0, hw_i, 1'b0})
@@ -523,6 +542,17 @@ wire [7:0]  bg_idx = bg_bpp8 ? (pxi[0] ? bg_hw[15:8] : bg_hw[7:0])
 // sub-tile offset (otherwise column 31 already ends at x=255)
 wire        col_last = (col == 6'd32) ||
                        ((col == 6'd31) && (bghofs[lk][2:0] == 3'd0));
+
+// 4bpp resolves through the 16-entry palette bank cache, so the bank an entry
+// selects has to be resident before its column composites; 8bpp reads the port
+// per pixel instead. Called from the two cycles that begin a column.
+function automatic need_pal;
+	input [15:0] me;
+	begin
+		need_pal = !bg_bpp8 && !(pcache_ok && !pcache_obj
+		                         && pcache_bank == me[15:12]);
+	end
+endfunction
 
 //------------------------------------------------------------------
 // Sprite geometry
@@ -593,28 +623,82 @@ task automatic write_px;
 	input [1:0]  nk;
 	input [1:0]  np;
 	input [15:0] colr;
-	reg [41:0] e;
+	reg [83:0] e;
 	reg [20:0] cur;
 	begin
 		// assigned before the guard: a local written only inside it is what
 		// Verific reports as warning 10776 ("may have unintended latch
 		// behavior"), which is noise here -- the guard is what keeps the
 		// array index in range, so the defaults are never observable
-		e   = 42'd0;
+		e   = 84'd0;
 		cur = 21'd0;
 		if (xs >= 0 && xs < 256) begin
-			e = wbank[xs[8:1]];
-			cur = xs[0] ? e[41:21] : e[20:0];
+			e = wbank[xs[8:2]];
+			case (xs[1:0])
+			2'd0:    cur = e[20:0];
+			2'd1:    cur = e[41:21];
+			2'd2:    cur = e[62:42];
+			default: cur = e[83:63];
+			endcase
 			if (px_win(nk, cur[20:19], np, cur[18:17])) begin
-				if (xs[0]) e[41:21] = {nk, np, 1'b1, colr};
-				else       e[20:0]  = {nk, np, 1'b1, colr};
-				wbank[xs[8:1]] <= e;
-				// the mirror address is {bank, pair} -- 7 bits of pair, or the
+				case (xs[1:0])
+				2'd0:    e[20:0]  = {nk, np, 1'b1, colr};
+				2'd1:    e[41:21] = {nk, np, 1'b1, colr};
+				2'd2:    e[62:42] = {nk, np, 1'b1, colr};
+				default: e[83:63] = {nk, np, 1'b1, colr};
+				endcase
+				wbank[xs[8:2]] <= e;
+				// the mirror address is {bank, quad} -- 6 bits of quad, or the
 				// bank bit would shift the index past the end of the array
 				lb_we <= 1'b1;                        // the display's copy
-				lb_wa <= {back_bank, xs[7:1]};
+				lb_wa <= {back_bank, xs[7:2]};
 				lb_wd <= e;
 			end
+		end
+	end
+endtask
+
+//------------------------------------------------------------------
+// Next column. Called from the pixel state when the prefetch has already
+// landed (the common case: the burst streams during the eight pixels) and
+// from the wait state when it has not. The other buffer becomes current,
+// the column advances, and its palette bank is settled when 4bpp -- the
+// new entry comes in as an argument so both callers are one line.
+//------------------------------------------------------------------
+task automatic bg_adv_col;
+	input [15:0] me;
+	begin
+		twr    <= 3'd0;
+		pf_rdy <= 1'b0;
+		tcur   <= ~tcur;              // the buffer just filled is current now
+		col    <= col + 6'd1;
+		map_e  <= me;
+		hw_i   <= 2'd0;
+		pxi    <= 2'd0;
+		// the row two columns along, asked for here rather than on the next
+		// column's first pixel: the burst needs the eight pixels plus the
+		// clock this advance used to spend as a state of its own. `col` is
+		// still the column being left, so skip when the one just entered is
+		// the last of the layer.
+		if (!((col == 6'd31) || ((col == 6'd30) && (bghofs[lk][2:0] == 3'd0)))) begin
+			v_req  <= 1'b1;
+			v_addr <= tile_addr_n2;
+			v_len  <= bg_nhw;
+			pf_on  <= 1'b1;
+			pf_rdy <= 1'b0;
+			twr    <= 3'd0;
+		end
+		if (need_pal(me)) begin
+			pcache_bank <= me[15:12];
+			pcache_obj  <= 1'b0;
+			pcache_ok   <= 1'b0;
+			pbi         <= 5'd1;
+			pal_addr    <= {2'd0, me[15:12], 4'd0};
+			port_wc     <= 2'd2;
+			bg_ret      <= S_PXC;
+			fstate      <= S_PB_WAIT;
+		end else begin
+			fstate <= S_PXC;
 		end
 	end
 endtask
@@ -633,7 +717,7 @@ always @(posedge clk) begin
 	// cycle returns the old data (the banks never overlap in practice --
 	// the display reads the front bank while the composite writes the
 	// back one -- but this is the order the RAM inferencer needs to see)
-	disp_q <= lbuf[{disp_bank, px[7:1]}];
+	disp_q <= lbuf[{disp_bank, px[7:2]}];
 
 	// the display copy's write port: idle unless a site below drives it
 	lb_we <= 1'b0;
@@ -678,23 +762,22 @@ always @(posedge clk) begin
 	end
 
 	S_FILL: begin
-		// fill the back bank with the backdrop, one pair entry per
-		// cycle (BOTH pixels of the pair); pal_hold holds colour 0
-		// one whole pair word, into the working bank and the display's copy
-		wbank[fill_i]                 <= {{KIND_BD, 2'd3, 1'b1, pal_hold},
-		                                  {KIND_BD, 2'd3, 1'b1, pal_hold}};
+		// fill the back bank with the backdrop, one quad entry per cycle
+		// (ALL FOUR pixels of it); pal_hold holds colour 0. Sixty-four
+		// clocks for the 256-pixel line, against 128 when an entry was a
+		// pair and the fill could only write two pixels a clock.
+		wbank[fill_i] <= {4{{KIND_BD, 2'd3, 1'b1, pal_hold}}};
 		lb_we <= 1'b1;                          // the display's copy
 		lb_wa <= {back_bank, fill_i};
-		lb_wd <= {{KIND_BD, 2'd3, 1'b1, pal_hold},
-		          {KIND_BD, 2'd3, 1'b1, pal_hold}};
+		lb_wd <= {4{{KIND_BD, 2'd3, 1'b1, pal_hold}}};
 
-		if (fill_i == 7'd127) begin
-			fill_i    <= 7'd0;
+		if (fill_i == 6'd63) begin
+			fill_i    <= 6'd0;
 			lk        <= 2'd3;
 			phase_bg  <= 1'b1;
 			fstate    <= S_LAYER;
 		end else begin
-			fill_i <= fill_i + 7'd1;
+			fill_i <= fill_i + 6'd1;
 		end
 	end
 
@@ -764,45 +847,25 @@ always @(posedge clk) begin
 		map_e  <= map_row[mcol];
 		hw_i   <= 2'd0;
 		pxi    <= 2'd0;
-		bg_ret <= S_TILE_REQ;
-		fstate <= S_COL_CHK;
-	end
-
-	S_COL_CHK: begin
-		// 4bpp: the palette bank this entry selects has to be resident
-		if (!bg_bpp8 && !(pcache_ok && !pcache_obj
-		                 && pcache_bank == map_e[15:12])) begin
-			pcache_bank <= map_e[15:12];
-			pcache_obj  <= 1'b0;
-			pcache_ok   <= 1'b0;
-			pbi         <= 4'd0;
-			pal_addr    <= {2'd0, map_e[15:12], 4'd0};
-			port_wc     <= 2'd2;
-			fstate      <= S_PB_WAIT;
-		end else begin
-			fstate <= bg_ret;
-		end
-	end
-
-	S_PB_REQ: begin			pal_addr <= {2'd0, pcache_bank, pbi};
-		port_wc  <= 2'd2;
-		fstate   <= S_PB_WAIT;
+		fstate <= S_TILE_REQ;
 	end
 
 	S_PB_WAIT: begin
-		if (port_wc != 2'd1) port_wc <= port_wc - 2'd1;
-		else begin
-			pcache[pbi] <= pal_data;
-			if (pbi == 4'd15) begin
-				pcache_ok <= 1'b1;
-				hw_i      <= 2'd0;
-				pxi       <= 2'd0;
-				fstate    <= bg_ret;
-			end else begin
-				pbi      <= pbi + 4'd1;
-				pal_addr <= {2'd0, pcache_bank, pbi + 4'd1};
-				port_wc  <= 2'd2;
-			end
+		// one address per clock: pal_data is the entry whose address
+		// was visible two clocks back, so the 16-entry bank costs 17
+		// clocks here instead of 32 when each entry paid its own
+		// handshake. The first cycle fills the pipe, the last two drain.
+		if (pbi >= 5'd2) pcache[pbi - 5'd2] <= pal_data;
+		if (pbi == 5'd17) begin
+			pbi       <= 5'd0;
+			port_wc   <= 2'd0;
+			pcache_ok <= 1'b1;
+			hw_i      <= 2'd0;
+			pxi       <= 2'd0;
+			fstate    <= bg_ret;
+		end else begin
+			if (pbi <= 5'd15) pal_addr <= {2'd0, pcache_bank, pbi[3:0]};
+			pbi <= pbi + 5'd1;
 		end
 	end
 
@@ -825,38 +888,27 @@ always @(posedge clk) begin
 			twr      <= 3'd0;
 			pxi      <= 2'd0;
 			pal_ready<= 1'b0;
-			fstate   <= S_PXC_GO;
+			// the column's data is here: settle its palette bank (4bpp) and
+			// composite. This is where S_COL_CHK's own clock used to be.
+			if (need_pal(map_e)) begin
+				pcache_bank <= map_e[15:12];
+				pcache_obj  <= 1'b0;
+				pcache_ok   <= 1'b0;
+				pbi         <= 5'd1;
+				pal_addr    <= {2'd0, map_e[15:12], 4'd0};
+				port_wc     <= 2'd2;
+				bg_ret      <= S_PXC;
+				fstate      <= S_PB_WAIT;
+			end else begin
+				fstate <= S_PXC;
+			end
 		end
-	end
-
-	S_PXC_GO: begin
-		// this column's row is in the buffer: start the next column's fetch
-		// now so it streams in while these 8 pixels are composited
-		if (!col_last) begin
-			v_req  <= 1'b1;
-			v_addr <= tile_addr_n;
-			v_len  <= bg_nhw;
-			pf_on  <= 1'b1;
-			pf_rdy <= 1'b0;
-			twr    <= 3'd0;
-		end
-		fstate <= S_PXC;
 	end
 
 	S_PF_WAIT: begin
-		// the beats (and the completion pulse) were collected while the
-		// column was compositing
-		if (pf_rdy) begin
-			twr    <= 3'd0;
-			pf_rdy <= 1'b0;
-			tcur   <= ~tcur;          // this buffer is the current one now
-			col    <= col + 6'd1;
-			map_e  <= map_e_n;
-			hw_i   <= 2'd0;
-			pxi    <= 2'd0;
-			bg_ret <= S_PXC_GO;       // row is already there: no fetch
-			fstate <= S_COL_CHK;
-		end
+		// only reached when the burst did not finish behind the pixels; the
+		// completion and the advance happen on the cycle it does
+		if (pf_rdy) bg_adv_col(map_e_n);
 	end
 
 	S_PXC: begin
@@ -870,6 +922,18 @@ always @(posedge clk) begin
 			pal_obj  <= 1'b0;
 			fstate   <= S_PAL_WAIT;
 		end else begin
+			// column 0 is entered from S_COL, so no advance has raised its
+			// neighbour's fetch yet; every other column arrives with one in
+			// flight (pf_on) or already landed (pf_rdy). The last column has
+			// no neighbour, and the advance skips it there.
+			if (!col_last && !pf_on && !pf_rdy && hw_i == 2'd0 && pxi == 2'd0) begin
+				v_req  <= 1'b1;
+				v_addr <= tile_addr_n;
+				v_len  <= bg_nhw;
+				pf_on  <= 1'b1;
+				pf_rdy <= 1'b0;
+				twr    <= 3'd0;
+			end
 			if (bg_xs_ok && (bg_bpp8 ? (bg_idx != 8'd0) : (bg_idx != 4'd0))) begin
 				write_px(bg_xs, KIND_BG, bg_prio,
 				         bg_bpp8 ? pal_hold : pcache[bg_idx[3:0]]);
@@ -893,14 +957,12 @@ always @(posedge clk) begin
 							lk <= lk - 2'd1;
 							fstate <= S_LAYER;
 						end
-					end else if (pf_on) begin
-						// the next column's row has been streaming in meanwhile
-						fstate <= S_PF_WAIT;
+					end else if (pf_rdy) begin
+						// the next column's row is already in the buffer: advance
+						// on the last pixel instead of spending a clock waiting
+						bg_adv_col(map_e_n);
 					end else begin
-						col    <= col + 6'd1;
-						map_e  <= map_e_n;
-						bg_ret <= S_TILE_REQ;
-						fstate <= S_COL_CHK;
+						fstate <= S_PF_WAIT;
 					end
 				end else begin
 					hw_i <= hw_i + 2'd1;    // next halfword is already buffered
@@ -1001,7 +1063,7 @@ always @(posedge clk) begin
 				pcache_bank <= oam_data[15:12];
 				pcache_obj  <= 1'b1;
 				pcache_ok   <= 1'b0;
-				spbi        <= 4'd0;
+				spbi        <= 5'd1;
 				pal_addr    <= 10'd512 + {2'd0, oam_data[15:12], 4'd0};
 				port_wc     <= 2'd2;
 				fstate      <= S_SPB_WAIT;
@@ -1093,26 +1155,19 @@ always @(posedge clk) begin
 		end
 	end
 
-	S_SPB_REQ: begin
-		pal_addr <= 10'd512 + {2'd0, pcache_bank, pbi};
-		port_wc  <= 2'd2;
-		fstate   <= S_SPB_WAIT;
-	end
-
 	S_SPB_WAIT: begin
-		if (port_wc != 2'd1) port_wc <= port_wc - 2'd1;
-		else begin
-			pcache[spbi] <= pal_data;
-			if (spbi == 4'd15) begin
-				pcache_ok <= 1'b1;
-				shw       <= 6'd0;
-				spx       <= 2'd0;
-				fstate    <= S_SHW_REQ;
-			end else begin
-				spbi     <= spbi + 4'd1;
-				pal_addr <= 10'd512 + {2'd0, pcache_bank, spbi + 4'd1};
-				port_wc  <= 2'd2;
-			end
+		// the same rolling fill as the BG bank, into the shared cache
+		if (spbi >= 5'd2) pcache[spbi - 5'd2] <= pal_data;
+		if (spbi == 5'd17) begin
+			spbi      <= 5'd0;
+			port_wc   <= 2'd0;
+			pcache_ok <= 1'b1;
+			shw       <= 6'd0;
+			spx       <= 2'd0;
+			fstate    <= S_SHW_REQ;
+		end else begin
+			if (spbi <= 5'd15) pal_addr <= 10'd512 + {2'd0, pcache_bank, spbi[3:0]};
+			spbi <= spbi + 5'd1;
 		end
 	end
 
@@ -1236,11 +1291,11 @@ always @(posedge clk) begin
 		twr        <= 3'd0;
 		tcur       <= 1'b0;
 		pf_on      <= 1'b0;
-		bg_ret     <= S_TILE_REQ;
+		bg_ret     <= S_PXC;
 		swr        <= 6'd0;
-		pbi        <= 4'd0;
-		fill_i     <= 7'd0;
-		spbi       <= 4'd0;
+		pbi        <= 5'd0;
+		fill_i     <= 6'd0;
+		spbi       <= 5'd0;
 		os_idx     <= 7'd0;
 		ostep      <= 2'd0;
 		sc_n       <= 9'd0;

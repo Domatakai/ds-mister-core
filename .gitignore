@@ -15,3 +15,6 @@ fpga/serv_req_info.txt
 
 # Freebuff runtime (sponsored-task sandbox and caches)
 .freebuff/
+
+# Imported-conversation dumps written by the runtime
+.cloud-attachments/

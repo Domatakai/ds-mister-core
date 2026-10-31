@@ -80,6 +80,19 @@ wire        c7_rd, c7_wr, c7_ready;
 wire        c9_halted, c9_thumb, c7_halted, c7_thumb;
 wire [31:0] pc9, pc7;
 
+// the shared BIOS bank, exactly as the design wires it: one engine, both
+// cores' callers and both bus sides
+wire        h9_go, h9_done, h9_handled, h9_wr0, h9_wr1, h9_wr3, h9_b_req, h9_b_wr, h9_b_ack;
+wire  [7:0] h9_num;
+wire [31:0] h9_r0, h9_r1, h9_r2, h9_r3, h9_res0, h9_res1, h9_res3;
+wire [31:0] h9_b_addr, h9_b_wlane, h9_b_rdata;
+wire  [3:0] h9_b_be;
+wire        h7_go, h7_done, h7_handled, h7_wr0, h7_wr1, h7_wr3, h7_b_req, h7_b_wr, h7_b_ack;
+wire  [7:0] h7_num;
+wire [31:0] h7_r0, h7_r1, h7_r2, h7_r3, h7_res0, h7_res1, h7_res3;
+wire [31:0] h7_b_addr, h7_b_wlane, h7_b_rdata;
+wire  [3:0] h7_b_be;
+
 wire [31:0] m9_addr, m9_wdata, m9_rdata;
 wire [31:0] m7_addr, m7_wdata, m7_rdata;
 wire  [3:0] m9_be, m7_be;
@@ -93,7 +106,15 @@ arm9_core u9 (
 	.bus_rd(c9_rd), .bus_wr(c9_wr),
 	.bus_rdata(c9_rdata), .bus_ready(c9_ready),
 	.irq(1'b0), .fiq(1'b0), .halt(1'b0),
-	.halted(c9_halted), .thumb_state(c9_thumb), .pc_out(pc9)
+	.halted(c9_halted), .thumb_state(c9_thumb), .pc_out(pc9),
+	.hle_go(h9_go), .hle_num(h9_num),
+	.hle_r0(h9_r0), .hle_r1(h9_r1), .hle_r2(h9_r2), .hle_r3(h9_r3),
+	.hle_done(h9_done), .hle_handled(h9_handled),
+	.hle_res0(h9_res0), .hle_res1(h9_res1), .hle_res3(h9_res3),
+	.hle_wr0(h9_wr0), .hle_wr1(h9_wr1), .hle_wr3(h9_wr3),
+	.hle_b_req(h9_b_req), .hle_b_wr(h9_b_wr), .hle_b_be(h9_b_be),
+	.hle_b_addr(h9_b_addr), .hle_b_wlane(h9_b_wlane),
+	.hle_b_ack(h9_b_ack), .hle_b_rdata(h9_b_rdata)
 );
 
 cpu_ce_bridge b9 (
@@ -113,7 +134,15 @@ arm7_core u7 (
 	.bus_rd(c7_rd), .bus_wr(c7_wr),
 	.bus_rdata(c7_rdata), .bus_ready(c7_ready),
 	.irq(1'b0), .fiq(1'b0), .halt(1'b0),
-	.halted(c7_halted), .thumb_state(c7_thumb), .pc_out(pc7)
+	.halted(c7_halted), .thumb_state(c7_thumb), .pc_out(pc7),
+	.hle_go(h7_go), .hle_num(h7_num),
+	.hle_r0(h7_r0), .hle_r1(h7_r1), .hle_r2(h7_r2), .hle_r3(h7_r3),
+	.hle_done(h7_done), .hle_handled(h7_handled),
+	.hle_res0(h7_res0), .hle_res1(h7_res1), .hle_res3(h7_res3),
+	.hle_wr0(h7_wr0), .hle_wr1(h7_wr1), .hle_wr3(h7_wr3),
+	.hle_b_req(h7_b_req), .hle_b_wr(h7_b_wr), .hle_b_be(h7_b_be),
+	.hle_b_addr(h7_b_addr), .hle_b_wlane(h7_b_wlane),
+	.hle_b_ack(h7_b_ack), .hle_b_rdata(h7_b_rdata)
 );
 
 cpu_ce_bridge b7 (
@@ -124,6 +153,27 @@ cpu_ce_bridge b7 (
 	.bus_addr(m7_addr), .bus_wdata(m7_wdata), .bus_be(m7_be),
 	.bus_rd(m7_rd), .bus_wr(m7_wr),
 	.bus_rdata(m7_rdata), .bus_ready(m7_ready)
+);
+
+swi_share hle (
+	.clk(clk), .reset(reset9 | reset7), .ce9(ce9), .ce7(ce7),
+	.c9_go(h9_go), .c9_num(h9_num),
+	.c9_r0(h9_r0), .c9_r1(h9_r1), .c9_r2(h9_r2), .c9_r3(h9_r3),
+	.c9_done(h9_done), .c9_handled(h9_handled),
+	.c9_res0(h9_res0), .c9_res1(h9_res1), .c9_res3(h9_res3),
+	.c9_wr0(h9_wr0), .c9_wr1(h9_wr1), .c9_wr3(h9_wr3),
+	.c9_b_req(h9_b_req), .c9_b_wr(h9_b_wr), .c9_b_be(h9_b_be),
+	.c9_b_addr(h9_b_addr), .c9_b_wlane(h9_b_wlane),
+	.c9_b_ack(h9_b_ack), .c9_b_rdata(h9_b_rdata),
+	.c7_go(h7_go), .c7_num(h7_num),
+	.c7_r0(h7_r0), .c7_r1(h7_r1), .c7_r2(h7_r2), .c7_r3(h7_r3),
+	.c7_done(h7_done), .c7_handled(h7_handled),
+	.c7_res0(h7_res0), .c7_res1(h7_res1), .c7_res3(h7_res3),
+	.c7_wr0(h7_wr0), .c7_wr1(h7_wr1), .c7_wr3(h7_wr3),
+	.c7_b_req(h7_b_req), .c7_b_wr(h7_b_wr), .c7_b_be(h7_b_be),
+	.c7_b_addr(h7_b_addr), .c7_b_wlane(h7_b_wlane),
+	.c7_b_ack(h7_b_ack), .c7_b_rdata(h7_b_rdata),
+	.busy(), .owner()
 );
 
 //------------------------------------------------------------------

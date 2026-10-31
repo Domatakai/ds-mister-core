@@ -87,7 +87,28 @@ module arm9_core #(
 	input             halt,       // HALTCNT bit 7: stop until an interrupt
 	output            halted,
 	output            thumb_state,
-	output     [31:0] pc_out
+	output     [31:0] pc_out,
+
+	// ---- BIOS SWI bank (one shared engine, arbitrated: `swi_share`) ----
+	// A call is CPU state, so it leaves the core: `hle_go` rises with the
+	// number and r0..r3, the arbiter hands the one shared engine over, and the
+	// engine's bus access comes back on `hle_b_*` only while this core owns it
+	// — which is what lets the engine reach *this* core's IE/IF for Halt and
+	// IntrWait.
+	output reg        hle_go,
+	output reg  [7:0] hle_num,
+	output     [31:0] hle_r0, hle_r1, hle_r2, hle_r3,
+	input             hle_done,
+	input             hle_handled,
+	input      [31:0] hle_res0, hle_res1, hle_res3,
+	input             hle_wr0, hle_wr1, hle_wr3,
+	input             hle_b_req,
+	input             hle_b_wr,
+	input      [31:0] hle_b_addr,
+	input      [31:0] hle_b_wlane,
+	input       [3:0] hle_b_be,
+	output            hle_b_ack,
+	output     [31:0] hle_b_rdata
 );
 
 //------------------------------------------------------------------
@@ -168,8 +189,24 @@ localparam S_RST  = 4'd0,
            S_MEM  = 4'd4,
            S_MW   = 4'd5,
            S_BLK  = 4'd6,
-           S_HALT = 4'd7;
+           S_HALT = 4'd7,
+           S_SWI  = 4'd8;   // a BIOS call, running on the HLE bank
 reg [3:0] state;
+
+// BIOS SWI hand-off (see swi_hle and swi_share): the core traps the call,
+// mirrors the shared engine's bus requests onto its own master and returns
+// when it is done. The engine itself is not here any more — one is arbitrated
+// between this core and the other — so `hle_go`/`hle_num` are ports.
+//
+// The acknowledge is combinational: the engine must see `m_ack` in the very
+// cycle the bus answers, so it drops the request at that edge and the bus is
+// not presented with the same access twice
+assign hle_b_ack   = hle_b_req & bus_ready;
+assign hle_b_rdata = bus_rdata;
+assign hle_r0 = regs[0];
+assign hle_r1 = regs[1];
+assign hle_r2 = regs[2];
+assign hle_r3 = regs[3];
 
 // fetch buffer: the word the last fetch returned, and whether it is still a
 // valid copy of memory (a store or a cache-maintenance write clears it)
@@ -708,6 +745,7 @@ always @(posedge clk) begin
 		dw_phase <= 1'b0;
 		f_valid  <= 1'b0;
 		bl_pending <= 1'b0;
+		hle_go   <= 1'b0;
 	end else if (ce) begin
 		case (state)
 
@@ -772,6 +810,37 @@ always @(posedge clk) begin
 
 		S_HALT: begin
 			if (irq || fiq) state <= S_FETCH;
+		end
+
+		//--------------------------------------------------------
+		// BIOS call on the HLE bank: mirror its requests onto the bus
+		//--------------------------------------------------------
+		S_SWI: begin
+			bus_addr  <= hle_b_addr;
+			bus_wdata <= hle_b_wlane;
+			bus_be    <= hle_b_be;
+			bus_rd    <= hle_b_req & ~hle_b_wr;
+			bus_wr    <= hle_b_req &  hle_b_wr;
+			if (hle_done) begin
+				hle_go  <= 1'b0;
+				bus_rd  <= 1'b0;
+				bus_wr  <= 1'b0;
+				// the call may have written memory: the fetch buffer is a
+				// copy of what was there, so it can no longer be trusted
+				f_valid <= 1'b0;
+				if (hle_handled) begin
+					if (hle_wr0) regs[0] <= hle_res0;
+					if (hle_wr1) regs[1] <= hle_res1;
+					if (hle_wr3) regs[3] <= hle_res3;
+					// the SVC bank was set up at the trap, so the core's own
+					// exception return is exactly the way back out
+					`EXC_RET(r14_b[3])
+				end else begin
+					// not in the bank: vector as before, high or low
+					pc <= vbase + 32'h0000_0008;
+					state <= S_FETCH;
+				end
+			end
 		end
 
 		//--------------------------------------------------------
@@ -1123,15 +1192,17 @@ always @(posedge clk) begin
 					state    <= S_BLK;
 
 				end else if (insn[15:8] == 8'b11011111) begin
-					// ---- SWI ----
+					// ---- SWI ---- the call runs on the HLE bank, with the SVC
+					// bank set up as if the exception had been taken
 					spsr_svc <= cpsr_w;
 					r14_b[3] <= pc;
 					regs[14] <= pc;
 					mode     <= 5'h13;
 					i        <= 1'b1;
 					t        <= 1'b0;
-					pc       <= vbase + 32'h0000_0008;
-					state    <= S_FETCH;
+					hle_num  <= insn[7:0];
+					hle_go   <= 1'b1;
+					state    <= S_SWI;
 
 				end else if (insn[15:12] == 4'b1101 && insn[11]) begin
 					// ---- 15. LDMIA ----
@@ -1586,15 +1657,17 @@ always @(posedge clk) begin
 						pc    <= pc + 32'd4 + {{6{insn[23]}}, insn[23:0], 2'b00};
 						state <= S_FETCH;
 					end else if (insn[27:24] == 4'hF) begin
-						// SWI
+						// SWI — the number is the top byte of the comment field
+						// (GBATEK), and the call runs on the HLE bank
 						spsr_svc <= cpsr_w;
 						r14_b[3] <= pc;
 						regs[14] <= pc;
 						mode     <= 5'h13;
 						i        <= 1'b1;
 						t        <= 1'b0;
-						pc       <= vbase + 32'h0000_0008;
-						state    <= S_FETCH;
+						hle_num  <= insn[23:16];
+						hle_go   <= 1'b1;
+						state    <= S_SWI;
 					end else
 						// everything else — including every coprocessor that is
 						// not CP15, which the DS ARM9 does not have
@@ -1775,6 +1848,7 @@ end
 `undef UND
 `undef PABT
 `undef EXC_RET
+
 
 endmodule
 

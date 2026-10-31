@@ -83,7 +83,28 @@ module arm7_core #(
 	input             halt,       // HALTCNT bit 7: stop until an interrupt
 	output            halted,
 	output            thumb_state,
-	output     [31:0] pc_out
+	output     [31:0] pc_out,
+
+	// ---- BIOS SWI bank (one shared engine, arbitrated: `swi_share`) ----
+	// A call is CPU state, so it leaves the core: `hle_go` rises with the
+	// number and r0..r3, the arbiter hands the one shared engine over, and the
+	// engine's bus access comes back on `hle_b_*` only while this core owns it
+	// — which is what lets the engine reach *this* core's IE/IF for Halt and
+	// IntrWait.
+	output reg        hle_go,
+	output reg  [7:0] hle_num,
+	output     [31:0] hle_r0, hle_r1, hle_r2, hle_r3,
+	input             hle_done,
+	input             hle_handled,
+	input      [31:0] hle_res0, hle_res1, hle_res3,
+	input             hle_wr0, hle_wr1, hle_wr3,
+	input             hle_b_req,
+	input             hle_b_wr,
+	input      [31:0] hle_b_addr,
+	input      [31:0] hle_b_wlane,
+	input       [3:0] hle_b_be,
+	output            hle_b_ack,
+	output     [31:0] hle_b_rdata
 );
 
 //------------------------------------------------------------------
@@ -118,6 +139,21 @@ reg        wb_en;
 reg  [4:0] wb_reg;
 reg [31:0] wb_val;
 
+// BIOS SWI hand-off (see swi_hle and swi_share): the core traps the call,
+// mirrors the shared engine's bus requests onto its own master and returns
+// when it is done. The engine itself is not here any more — one is arbitrated
+// between this core and the other — so `hle_go`/`hle_num` are ports.
+//
+// The acknowledge is combinational: the engine must see `m_ack` in the very
+// cycle the bus answers, so it drops the request at that edge and the bus is
+// not presented with the same access twice
+assign hle_b_ack   = hle_b_req & bus_ready;
+assign hle_b_rdata = bus_rdata;
+assign hle_r0 = regs[0];
+assign hle_r1 = regs[1];
+assign hle_r2 = regs[2];
+assign hle_r3 = regs[3];
+
 // swap
 reg        swap_en, swap_phase;
 reg [31:0] swap_src, swap_val;
@@ -134,7 +170,8 @@ localparam S_RST  = 4'd0,
            S_MEM  = 4'd4,
            S_MW   = 4'd5,
            S_BLK  = 4'd6,
-           S_HALT = 4'd7;
+           S_HALT = 4'd7,
+           S_SWI  = 4'd8;   // a BIOS call, running on the HLE bank
 reg [3:0] state;
 
 // fetch buffer: the word the last fetch returned, and whether it is still a
@@ -494,6 +531,7 @@ always @(posedge clk) begin
 		swap_phase <= 1'b0;
 		wb_en    <= 1'b0;
 		f_valid  <= 1'b0;
+		hle_go   <= 1'b0;
 	end else if (ce) begin
 		case (state)
 
@@ -551,6 +589,55 @@ always @(posedge clk) begin
 
 		S_HALT: begin
 			if (irq || fiq) state <= S_FETCH;
+		end
+
+		//--------------------------------------------------------
+		// BIOS call on the HLE bank: mirror its requests onto the bus
+		//--------------------------------------------------------
+		S_SWI: begin
+			// the engine's request, presented exactly as the core's own
+			// accesses are (address and enables stable with the strobe)
+			bus_addr  <= hle_b_addr;
+			bus_wdata <= hle_b_wlane;
+			bus_be    <= hle_b_be;
+			bus_rd    <= hle_b_req & ~hle_b_wr;
+			bus_wr    <= hle_b_req &  hle_b_wr;
+			if (hle_done) begin
+				hle_go  <= 1'b0;
+				bus_rd  <= 1'b0;
+				bus_wr  <= 1'b0;
+				// the call may have written memory: the fetch buffer is a
+				// copy of what was there, so it can no longer be trusted
+				f_valid <= 1'b0;
+				if (hle_handled) begin
+					if (hle_wr0) regs[0] <= hle_res0;
+					if (hle_wr1) regs[1] <= hle_res1;
+					if (hle_wr3) regs[3] <= hle_res3;
+					// return from the exception the call stood in for, the same
+					// way a `MOVS pc,lr` return does: CPSR from SPSR and the
+					// caller's bank back into r13/r14 (and r8..r12 if the
+					// caller was in FIQ)
+					n <= spsr_svc[31]; z <= spsr_svc[30];
+					c <= spsr_svc[29]; v <= spsr_svc[28];
+					i <= spsr_svc[7];  f <= spsr_svc[6];
+					t <= spsr_svc[5];
+					mode     <= spsr_svc[4:0];
+					regs[13] <= r13_b[midx(spsr_svc[4:0])];
+					regs[14] <= r14_b[midx(spsr_svc[4:0])];
+					if (midx(spsr_svc[4:0]) == 3'd1) begin
+						regs[8]  <= r8f_b[0];
+						regs[9]  <= r8f_b[1];
+						regs[10] <= r8f_b[2];
+						regs[11] <= r8f_b[3];
+						regs[12] <= r8f_b[4];
+					end
+					pc   <= r14_b[3];
+				end else begin
+					// not in the bank: vector as before
+					pc <= 32'h0000_0008;
+				end
+				state <= S_FETCH;
+			end
 		end
 
 		//--------------------------------------------------------
@@ -890,14 +977,17 @@ always @(posedge clk) begin
 					state    <= S_BLK;
 
 				end else if (insn[15:8] == 8'b11011111) begin
-					// ---- SWI ----
+					// ---- SWI ---- the BIOS call goes to the HLE bank, with
+					// the SVC bank set up as if the exception had been taken
+					// so an unimplemented number can still vector to 0x08
 					spsr_svc <= cpsr_w;
 					r14_b[3] <= pc;
 					regs[14] <= pc;
 					mode     <= 5'h13;
 					i        <= 1'b1;
-					pc       <= 32'h0000_0008;
-					state    <= S_FETCH;
+					hle_num  <= insn[7:0];
+					hle_go   <= 1'b1;
+					state    <= S_SWI;
 
 				end else if (insn[15:12] == 4'b1101 && insn[11]) begin
 					// ---- 15. LDMIA ----
@@ -1181,14 +1271,16 @@ always @(posedge clk) begin
 					pc    <= pc + 32'd4 + {{6{insn[23]}}, insn[23:0], 2'b00};
 					state <= S_FETCH;
 				end else if (insn[27:24] == 4'hF) begin
-					// SWI
+					// SWI — the number is the top byte of the comment field
+					// (GBATEK), and the call runs on the HLE bank
 					spsr_svc <= cpsr_w;
 					r14_b[3] <= pc;
 					regs[14] <= pc;
 					mode     <= 5'h13;
 					i        <= 1'b1;
-					pc       <= 32'h0000_0008;
-					state    <= S_FETCH;
+					hle_num  <= insn[23:16];
+					hle_go   <= 1'b1;
+					state    <= S_SWI;
 				end else begin
 					// undefined instruction (including any coprocessor op)
 					spsr_und <= cpsr_w;

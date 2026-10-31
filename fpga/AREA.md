@@ -112,8 +112,9 @@ the read path: 3,342 ALUTs each, measured. A 256×42 dual-port M10K is 0 ALUTs a
 registers, and only ~4 of the 372 spare M10Ks. *Accuracy: none lost*; the read
 becomes registered, which costs one pixel-CE of latency on the composer
 contract. This also matters because registers are at 82%: it takes the design
-to 56%. As built the word is 34 bits rather than 42 (the display only reads
-`{opaque, rgb}` of each pixel), so the pair RAM is 8,704 bits; the working bank
+to 56%. As built the word is 68 bits rather than 84 (the display only reads
+`{opaque, rgb}` of each pixel), so the array is 128 x 68 = 8,704 bits -- exactly
+what the pair form held as 256 x 34; the working bank
 stays in registers because its read-modify-write must land in the write cycle.
 
 **4. Cheat walk, 32 entries → 8 per cycle — 3,625 ALUTs.**
@@ -163,12 +164,103 @@ sample `na_x`/`na_y` combinationally through their line-buffer RAM.
 *Lesson for the rest of this list:* every remaining number in it is an estimate,
 and this one was 25× high. Measure a block before planning work on it.
 
-**7. One 2D renderer shared by both engines — ~5,500 ALUTs** (estimate).
-After (3) the two instances hold 10,146 and 6,703 ALUTs of logic that would be
-one copy. *Accuracy: none in pixels*; the cost is line budget and VRAM
-arbitration — two lines per period instead of one, ~644 clocks against the
-1,280 measured for a single 4bpp+sprites line, so it fits but the margin is
-gone. Highest risk item of the seven.
+**7. One 2D renderer shared by both engines — measured: does not fit the line
+budget, so not landed.** The saving is real: the two instances are 9,255 and
+9,211 ALUTs, so one copy plus the second register bank and the port steering
+(the palette, OAM and VRAM ports have to be pointed at the engine that owns
+the renderer, and both front line-buffer banks must stay readable at once)
+comes to ~9,900 — about **8,550 ALUTs, 6,030 ALMs**, taking the design to
+~52,760 ALMs, still **126%** of the A6's 41,910. What rules it out is the
+line budget, not the area.
+
+The budget arithmetic, all measured rather than estimated:
+
+| | clocks |
+|---|---|
+| line period, native refresh (330 x 5 pixel CEs, 679 lines, 67.0274 MHz) | **1,650** |
+| engine A's line: BG 425 + OBJ 330 + 3D merge 284 (`tb_renderer_2d`) | **1,039** (63%) |
+| engine B's line: the same minus the merge | **755** (46%) |
+| both lines through one renderer | **1,794 = 109%** |
+
+Serialising the two engines pools 1,794 clocks of work into a 1,650-clock
+period, so the fetcher misses its swap on every line that has a sprite on it
+and each screen keeps showing the previous line. The renderer's own design
+budget is 1,280 (the figure its benches check against), which the pool
+overruns by 140%. The old note here said "~644 clocks against 1,280 ... it
+fits but the margin is gone": 644 was the pre-burst cost of a BG phase alone,
+not a line, and it is 1,039 once the OBJ pass and the merge are counted.
+
+Nothing cheap closes the 144-clock gap. The OAM walk is 258 of everything,
+per engine: it is already one OAM address per clock over a two-clock
+pipeline, and interleaving A and B entries through one walk still costs 512
+for both (the ports are separate BRAMs but the walk is serial), so pooling
+buys nothing there. The BG phase is 34 grants a line and is dominated by the
+grant latency, not the beats. What would pay is fetching a tile row once per
+8-line tile-row band and compositing 8 lines from a cache — a BG fetch
+redesign, and 16 KB of tile cache per engine at 4 bpp — i.e. a project of its
+own, and worth more to the *current* two-renderer design than to a merged one.
+
+So item 7 stays unimplemented on purpose: it costs 109% line occupancy for
+8,550 ALUTs that still do not produce a fit. `tb_renderer_2d` (1,039 clocks),
+`tb_composer` and `tb_3d_path` are green on the two-renderer design as it
+stands.
+
+### The tile-row cache, built and measured (reverted)
+
+The obvious way to buy the line budget back is to stop fetching a tile row per
+column per line. A 4bpp tile is eight halfwords of contiguous VRAM (four tile
+rows) and an 8bpp tile is 16 (two rows, and eight halfwords is half a tile), so
+the fetch can ask for eight halfwords once and serve the next three lines
+(4bpp) or the next line (8bpp) out of block RAM. That was built: a per-column
+entry of eight halfwords keyed by tile-row group and band, refilled by the
+existing per-column burst (widened to eight), read out one clock behind its
+address so Quartus sees a block RAM, staged into the tile buffer beside the
+composite, and dropped whenever a BGxCNT/HOFS/VOFS write moves the tiles.
+
+It works, and it is not worth having. Measured in `tb_renderer_2d`, 4bpp with
+one BG layer, two sprites and the 3D merge. The `before` rows are the design as it stands; the refill and cached rows were measured before the state fold and the quad fill landed, so they are a snapshot from that tree rather than a re-run against it:
+
+| line | clocks | BG | grants | beats |
+|---|---|---|---|---|
+| before (a row burst per column) | 1,039 | 425 | 35 | 100 |
+| band refill (first line of the group) | **1,388** | 759 | 35 | 292 |
+| cached (rest of the group) | **1,191** | 562 | **3** | **36** |
+| 8bpp 64-wide, before | 512 | 512 | 34 | 192 |
+| 8bpp 64-wide, refill | 767 | 767 | 34 | 320 |
+| 8bpp 64-wide, cached | 574 | 574 | 2 | 64 |
+
+Grants fall by an order of magnitude and beats by two thirds, and the line is
+still not faster: 1,191 against 1,039. The reason is that the fetch was never
+the cost. A column's row burst is a grant latency plus two beats, about twelve
+clocks, and it streams *while* the column's eight pixels composite — the
+prefetch hides all of it. What bounds the BG phase is the composite itself
+(eight clocks) plus roughly six clocks of per-column state overhead, so a
+column costs 17 clocks whatever the data comes from. The cache cannot shorten
+the composite, and its refill — 18 clocks a column, eight beats against eight
+pixels — is the one thing that no longer fits behind it.
+
+Averaged over a group the change is a small loss, and it puts the worst line
+over the 1,280 budget rather than under it: 4bpp is (1,388 + 3 x 1,191) / 4 =
+**1,240** against 1,039, 8bpp is (767 + 574) / 2 = **670** against 512. So it
+was reverted; `renderer_2d` and `tb_renderer_2d` are back at the committed
+state (1,039 clocks, 35 grants, 100 beats; 8bpp 512).
+
+What the measurement changes: the fetch is not the lever, the composite and its
+per-column overhead are. 33 columns x ~6 overhead clocks is ~200 clocks a line
+of pure state transitions (S_PF_WAIT, S_COL_CHK, S_PXC_GO), which is worth more
+than any fetch rework and is lossless. That is now done: `S_COL_CHK` and
+`S_PXC_GO` are gone, both jobs riding on the cycle that already advances the
+column -- the bank check there, and the next column's fetch too, a clock
+earlier than the state it replaced -- and the wait is skipped when the burst
+has landed. It measures one clock a column, not three: 63 clocks off the BG
+walk (567 -> 504, the line 1,196 -> 1,133). The backdrop fill then went from a
+pair a clock to a quad a clock, another 64: BG 504 -> 440, the line
+1,133 -> 1,069. Both palette-bank fills then stopped paying a handshake per
+entry -- one address a clock, data two clocks behind, 17 clocks a fill instead
+of 32 -- for another 30: BG 440 -> 425, the OBJ pass 345 -> 330, the line
+1,069 -> 1,039. And it sets the floor for item 7: even a
+free BG fetch leaves ~375 clocks of BG phase, so two engines still need ~1,700
+clocks of the 1,650-clock line.
 
 **8. Single-pass scaler in the framework — ~4,000 ALUTs** (estimate).
 `ascal` is 8,344 with 4,864 in scaler leaves. Nearest/integer scaling instead of
@@ -180,8 +272,51 @@ blocks the upscale.*
 address adder across states is the only real saving and it must keep `tb_arm7`
 and `tb_arm9` green. Not worth doing before the items above.
 
-**10. Registers → BRAM in cart_slot and the save path — ~1,500 ALUTs** (estimate).
-7,640 registers hold line buffers that are read sequentially.
+**10. Registers → BRAM in cart_slot — done: 2,452 ALUTs and 6,150 registers,\nmeasured.** (The estimate was ~1,500 ALUTs; it was low.)
+`cart_slot`'s download FIFO was three register arrays — 64 x 64-bit data,
+64 x 29-bit line, 64 x 8-bit byte enables, 6,464 flops — written once and read
+once in order, which is exactly a simple dual-port RAM. They are now one
+64 x 101-bit array (`{be, line, data}`) in one M10K, with the drain fetching the
+head entry and issuing it on the next cycle to absorb the registered read.
+Measured at design level: `cart_slot` **3,590 → 1,138 ALUTs, 7,640 → 1,490
+registers**, block RAM +7,488 bits, and the design **85,696 → 83,303 ALUTs,
+60,181 → 54,032 registers, 62,271 → 58,791 ALMs**. `tb_cart_slot` 62/62 (tail
+flush, byte enables, hold-across-BUSY), `tb_ddr_bridge` and `tb_main_bus` green.
+
+This is the first time the design has been *under* the 83,820-node limit at the
+mapper (83,303), so the fitter got past the `170011` check that killed every
+earlier build and ran placement for 26:46. It then failed on the wall that
+matters, in its own words:
+
+```
+Error (170012): Fitter requires 5877 LABs to implement the design, but the
+                device contains only 4191 LABs
+Error (11802):  Can't fit design in device.
+```
+
+A LAB is ten ALMs, so that is 58,770 against 41,910 (140%), matching the
+mapper. The gap is **1,686 LABs**, about **24,000 combinational ALUTs** — not
+the 2,002 nodes the node check used to complain about. Placement cannot close
+it, which is why the error now names the LAB count instead.
+
+### Where items 5-10 actually stand (measured, not estimated)
+
+| item | state | measured effect |
+|---|---|---|
+| 5. serialise the SPU mixer | **in** | 4,188 → 4,098 ALUTs, `tb_spu` bit-identical |
+| 6. per-row composer remap | **measured: nothing to gain** | the module is 73 ALUTs standalone |
+| 7. one 2D renderer for both engines | **rejected on measurement** | worth ~8,550 ALUTs (~6,030 ALMs), but the two lines need 1,794 clocks in a 1,650-clock period (109%) — the picture, not the area, is what fails |
+| 8. single-pass framework scaler | **not done** | `ascal` is **2,883** ALUTs in context (the 8,344 in the old estimate is stale), so the ceiling is ~2,800 and it costs upscale quality |
+| 9. CPU datapath sharing | **not done** | arm9 18,732 + arm7 10,448 ALUTs; only the shifter/adder can be shared, ~2,000 at high risk to two green benches |
+| 10. cart FIFO into block RAM | **in** | 2,452 ALUTs and 6,150 registers |
+
+The arithmetic after 5, 6 and 10: at 57,993 ALMs the design needs **16,083
+ALMs (about 23,000 ALUTs) removed** to fit. Items 7, 8 and 9 together are worth
+at most ~14,000 ALUTs (~9,700 ALMs) on these measured numbers, and 8 and 9 buy
+that with visible quality loss and heavy surgery. Even all three leave the
+design around 48,000 ALMs — 115% — so **items 5-10 cannot deliver a fit**. What
+can is dropping the 3D pipeline (geometry 4,147 + rasteriser + the merge pass)
+together with item 7, or a larger device.
 
 ## What the arithmetic says
 
@@ -218,11 +353,19 @@ What does fit, with margin:
 | 2D DS core | drop geometry + raster, then items 2,3,4,5,6,9,10 and 7 | 82,900 | 1.1% |
 | 2D DS core, lean | the same without the shared renderer | 88,400 | does not fit |
 
+Item 7 is out (see above: the shared renderer needs 128% of the line period), so
+the *only* projected build that fit — the 2D core with the merge — is not
+buildable. The same build with two renderers is the 88,400 row: no fit, and the
+measured design is 83,303 ALUTs / 58,791 ALMs today, so what the A6 actually
+needs before any of this is about 24,000 ALUTs of things this list does not
+contain.
+
 That is: a DS core with the two ARM cores, both 2D engines, sound, cart and
-save support fits the A6 once the four lossless items are taken *and* the two
-renderers are merged *and* the 3D pipeline is gone. Keeping 3D needs either a
-bigger device (the DE10-Nano's A6 is the top of that part) or a much slower 3D
-implementation that shares the rasteriser's datapath with the 2D engine.
+save support would fit the A6 once the four lossless items are taken *and* the
+3D pipeline is gone *and* the renderers could be merged — and the last of those
+is measurably not possible at 59.83 Hz. Keeping 3D needs either a bigger device
+(the DE10-Nano's A6 is the top of that part) or a much slower 3D implementation
+that shares the rasteriser's datapath with the 2D engine.
 
 Items 1–4 are worth doing regardless of that decision: 36.9k of measured,
 lossless saving, and item 1 clears the DSP overrun that makes the fit fail a
@@ -242,6 +385,7 @@ level at a time; the design itself must be mapped from a path outside OneDrive
 | 3. line buffers into block RAM | **in**, `tb_renderer_2d`, `tb_composer` and `tb_3d_path` green | `renderer_2d` 3,218 ALUTs and 8,738 registers less than the same source with the array in logic, 8,704 BRAM bits |
 | 1. serialised matrix multiply | **in**, `tb_geometry_engine` and `tb_3d_path` green | `geometry_engine` 22,433 → 4,319 ALUTs (4,025 in context), 106 → 6 DSP |
 | 5. SPU mixer serialised | **in**, `tb_spu` green, bit-identical samples | `spu` 4,188 → 4,098 ALUTs standalone (90, not the ~1,000 estimated); 16 of ~1,396 clocks per 48 kHz sample |
+| 10. cart FIFO into block RAM | **in**, `tb_cart_slot` 62/62, `tb_ddr_bridge` and `tb_main_bus` green | `cart_slot` 3,590 → 1,138 ALUTs and 7,640 → 1,490 registers; design −2,393 ALUTs, −6,149 registers |
 
 ## Measured on a full compile
 
@@ -345,7 +489,12 @@ the burst-fetch and OAM-scan work that landed between the two builds. Registers
 fell 69,183 → 59,318, of which 2 × 8,738 belongs to item 3.
 
 There are no warnings on `lbuf`: the RAM infers cleanly, 8,704 bits per
-renderer, which is one M10K each (8,704 of 10,240 bits) — two of the 553. The
+renderer (128 words x 68 bits, four pixels of `{opaque, rgb}` each). Quartus
+17.0 maps it as a Simple Dual Port RAM, 128 x 68, with no Info 276009, and the
+fitter spends **two M10K blocks** on it (20,480 implementation bits). The pair
+form of the same buffer (256 x 34) took **one** (10,240 bits), so the quad word
+that halved the backdrop fill costs one extra M10K per renderer -- four of the
+553 for both. The lane select on the read path is all the logic it adds. The
 `Total RAM Blocks 0 / 553` row in `NDS.fit.summary` is an artefact of the
 aborted placement, not a memory total; the bit count above is the reliable
 figure (33%, ~183 block-equivalents of the 553). The two `Critical Warning
@@ -362,8 +511,8 @@ the next in the other — and it is now in:
 |---|---|---|
 | `renderer_2d` combinational ALUTs | 12,820 | **9,602** |
 | `renderer_2d` dedicated registers | 16,811 | **8,073** |
-| `renderer_2d` block memory bits | 0 | **8,704** (256 × 34) |
-| `tb_renderer_2d` | PASS | PASS (line fetch 1,196 clocks) |
+| `renderer_2d` block memory bits | 0 | **8,704** (128 × 68 = 256 × 34), 2 M10K |
+| `tb_renderer_2d` | PASS | PASS (line fetch 1,039 clocks) |
 | `tb_composer`, `tb_3d_path` | PASS | PASS |
 
 Both columns are the same source mapped twice (the second with `ramstyle =
@@ -385,10 +534,107 @@ Three things had to be got right beyond deciding where the array lives:
   a *single* write statement last, fed by enable/address/data registers that
   the fill and the composite both set. Split across two processes, or with two
   write sites in one process, Quartus reports Info 276009 ("unsupported
-  read-during-write behavior") and builds 10,752 registers instead. The word
-  is 34 bits wide, not 42: only `{opaque, rgb}` of each pixel is ever read back,
-  so the kind/priority bits are dropped rather than stored.
+read-during-write behavior") and builds 10,752 registers instead. The word
+is 68 bits wide, not 84: only `{opaque, rgb}` of each pixel is ever read back,
+so the kind/priority bits are dropped rather than stored.
 
 The working bank (`wbank`) stays in registers: its read-modify-write must land
 in the same cycle as the write, which a simple dual-port cannot do. That is the
 5,376 registers still there.
+
+## The BIOS SWI bank (`swi_hle`)
+
+`swi_hle` is new logic, not a trim, so it is worth pricing: mapped alone as
+top level (`quartus_map`, `5CSEBA6U23I7`, family defaults), it is **1,214
+combinational ALUTs and 788 registers**, no memory bits and no DSP. In the
+design there are two of them, one per core, and they cost more there than
+alone because of the muxing onto each core's own master: **1,397 + 1,387 =
+2,784 combinational ALUTs and 1,574 registers** (the per-entity table in
+`NDS.map.rpt`). Neither instance raises a synthesis warning.
+
+Where it goes: the byte-lane generator and the variable shift in BIT_UNPACK
+and RL are one 32-bit shifter; Div/Sqrt share a 32-bit subtract-compare adder
+and the 22-bit count; CpuSet/CpuFastSet reuse the same address incrementer as
+the LZ77/RL copy loops. Nothing here is a table — the LZ77/RL windows live in
+memory, not in flops — so there is no cheap second trim: the shifter is the
+only candidate (it is the largest single piece, shared by three calls), and
+removing it would cost bit-packed BIOS formats that games do use. If the fit margin disappears, this module is the first
+thing to look at with `quartus_map` before touching the renderers again.
+
+## Full compile with the BIOS SWI bank
+
+`quartus_sh --flow compile NDS` on `5CSEBA6U23I7`, run from `/tmp/ndsfull` as
+a clean build (no `db/`, no `incremental_db/`), 34:44 wall time, peak 3.3 GB
+resident:
+
+| | result | device | use |
+|---|---|---|---|
+| Analysis & synthesis | 0 errors, 150 warnings | | |
+| Combinational ALUTs for logic | 87,111 | 83,820 | **104.0%** |
+| ALMs needed (mapper) | 62,881 | 41,910 | **150%** |
+| Dedicated logic registers (synth) | 60,816 | 83,820 | 73% |
+| Block memory bits (M10K) | 1,865,716 | 5,662,720 | 33% |
+| DSP blocks | 96 | 112 | 86% |
+| Fitter | failed: **87,237** combinational nodes | 83,820 | **104.1%** |
+| Fitter ALM count | 59,843 | 41,910 | **143%** |
+
+The fitter stops at node-count legality, before placement:
+
+```
+Error (170011): Design contains 87237 blocks of type combinational node.
+                However, the device contains only 83820 blocks.
+Error (11802):  Can't fit design in device.
+```
+
+So the answer to "does the A6 still fit" is **no**, and it did not fit before
+this change either — the previous recorded build was 84,123 nodes (303 over),
+this one is 87,237 (3,417 over). The bank accounts for 2,784 of those nodes
+(1,397 in `arm7_core`, 1,387 in `arm9_core`); the other ~630 come from the
+muxes that put the engine's requests onto each core's bus master.
+
+There is no timing report from this build, and no `NDS.rbf`: placement never
+runs, so TimeQuest never runs. Any Fmax claim about this tree (including the
+67.03 MHz core domain) is from an earlier, smaller design and does not cover
+the added logic.
+
+### Sharing the engine (landed)
+
+`swi_share` now arbitrates one `swi_hle` between the two cores, and the two
+per-core instances are gone. Mapped again with `quartus_map` (same device and
+settings):
+
+| | before | after | device | use |
+|---|---|---|---|---|
+| Combinational ALUTs for logic | 87,111 | **85,696** | 83,820 | **102.2%** |
+| ALMs needed (mapper) | 62,881 | **62,271** | 41,910 | **149%** |
+| Dedicated logic registers | 60,816 | **60,181** | 83,820 | 72% |
+| Analysis & synthesis | 0 errors, 150 warnings | 0 errors, 86 warnings | | |
+| Fitter (full `quartus_fit`, 21:40) | failed: 87,237 nodes | failed: **85,822** | 83,820 | **102.4%** |
+| Fitter ALM count | 59,843 | **59,072** | 41,910 | **141%** |
+| Fitter registers | 59,993 | **59,358** | 83,820 | 71% |
+
+The two engines were 1,397 + 1,387 ALUTs and 1,574 registers; the shared bank
+is 1,550 ALUTs (1,448 of them the engine, 102 the arbiter) and 793 registers.
+Net: **1,415 ALUTs and 635 registers saved**, which is what the 2,784 → 1,550
+per-entity diff predicts.
+
+Still not a fit. The fitter reports **85,822 combinational nodes against
+83,820 (102.4%)** and stops at node-count legality, so placement never starts,
+TimeQuest never runs and there is no `NDS.rbf` — the same `170011` / `11802`
+pair as before, only 2,002 nodes over instead of 3,417. Its own ALM count fell
+59,843 → 59,072 (141%) and registers 59,993 → 59,358.
+
+At 141% ALMs the honest gap is still the ~20,000 nodes the ranked list above
+calls for: registers alone are 71% of the device, so node-count shaving does
+not reach a fit until items 5-10 land. Nothing about a timing claim survives
+this either — any Fmax figure for the 67.03 MHz core domain predates the HLE
+work and does not cover it.
+
+What the sharing cost, and why it is not free: the engine is started by a
+pulse the arbiter generates, not by the caller's level, because two callers
+can both be holding `go` when the engine changes hands and a muxed level would
+never fall between them. `swi_hle` also dispatches on the rising edge of `go`
+now, so a request that outlives its completion cannot re-run the call — the
+per-core version relied on the core dropping `go` in the `done` cycle, which
+is true but fragile. Both are covered by `tb_swi_share` (44 checks), and the
+ARM7/ARM9 benches still pass unchanged (43 and 109 checks).

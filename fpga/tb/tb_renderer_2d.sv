@@ -213,10 +213,16 @@ reg [4:0] f_prev = 5'd0;
 reg [7:0] bl_prev = 8'hFF;
 reg       bg_prev = 1'b0;
 
+integer st_cnt [0:31];
+integer si;
+initial for (si = 0; si < 32; si = si + 1) st_cnt[si] = 0;
+
 always @(posedge clk) begin
 	cyc = cyc + 1;
+	if (dut.fstate != 5'd0) st_cnt[dut.fstate] = st_cnt[dut.fstate] + 1;
 	if (dut.fstate == 5'd1 && f_prev != 5'd1) begin   // S_BD_REQ: line start
 		t0 = cyc;  b0 = vram_bursts;  k0 = vram_beats;
+		for (si = 0; si < 32; si = si + 1) st_cnt[si] = 0;
 	end
 	// the BG walk is done when the fetch side leaves the BG phase for the
 	// OBJ pass (or straight for the merge)
@@ -229,6 +235,12 @@ always @(posedge clk) begin
 		line_clk    = cyc - t0;
 		line_bursts = vram_bursts - b0;
 		line_beats  = vram_beats - k0;
+		if ($test$plusargs("states")) begin
+			$display("   states line %0d: total %0d", dut.tgt, line_clk);
+			for (si = 0; si < 32; si = si + 1)
+				if (st_cnt[si] != 0)
+					$display("     S%-2d = %0d", si, st_cnt[si]);
+		end
 	end
 	f_prev  = dut.fstate;
 	bl_prev = dut.back_line;

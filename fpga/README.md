@@ -11,7 +11,7 @@ below — the two are intentionally kept in step.
 
 ## Status
 
-Honest state: **M1 and M2 complete, M3 and M4 working, M5 and M6 planned** —
+Honest state: **M1 and M2 complete, M3 and M4 working, M5 and M6 partial** —
 and "working" here means the list below, with nothing implied. Every block
 named is implemented and has a testbench that exercises it; what is not there
 is written down rather than left to be discovered:
@@ -84,6 +84,43 @@ bus — no BIOS image, so each boots from the active slot's cart header
 entry point (0x24 / 0x34) — and each has a bench that runs hand-assembled
 programs against a bus model with the same protocol (`tb_arm9`,
 `tb_arm7`).
+
+A `SWI` no longer needs a BIOS image to do anything. `swi_hle` is a small
+bank of the BIOS calls a DS game actually makes, shared by both cores:
+**Div** (`09h`), **Sqrt** (`0Dh`), **CpuSet** (`0Bh`), **CpuFastSet**
+(`0Ch`), **LZ77UnCompWram/Vram** (`11h`/`12h`), **RLUnCompWram/Vram**
+(`14h`/`15h`), **Halt** (`06h`), **IntrWait** (`04h`) and
+**VBlankIntrWait** (`05h`). Each core traps every `SWI`, sets its SVC bank
+up exactly as the exception would, and hands the number to the engine; the
+engine issues the reads and writes the call needs through the same bus
+master the core uses (one access in flight, address and byte enables held
+with the strobe, `ack` in the cycle the bus answers), then the core writes
+back the registers GBATEK says the call returns and performs the exception
+return from `SPSR`. A number the bank does not implement still vectors to
+`08h` with `LR`/`SPSR` set, so unknown calls behave exactly as before;
+`SoftReset` and `WaitByLoop` are deliberately not in the bank.
+
+Where the hardware is the interface, the engine talks to it rather than
+faking the result: `IntrWait` writes `IME`, reads `IE`/`IF` and returns
+only when the requested flags fire (clearing them when the discard bit is
+set), `Halt` waits on the same `IE & IF` condition, and the decompressors
+stream through the bus a byte at a time, so VRAM writes land through the
+vram path with the rest of the memory chain in the way. `Div` is 32
+restoring steps and `Sqrt` 16 digit pairs, so neither needs a divider or a
+lookup table: the whole bank is control logic on one adder and one bus
+access at a time (`tb_swi_hle`, plus a BIOS-call program in each core's
+bench that runs the trap, the engine and the return).
+
+There is **one** engine, not one per core. `swi_share` arbitrates it
+round-robin (the caller that ran last yields, so neither can starve the
+other), routes its bus access onto the owner's master and hands the
+completion back to that core only — so a Halt or IntrWait still reads the
+caller's own `IE`/`IF`, and a `Div` aimed at the ARM9's memory cannot be
+served out of the ARM7's. A core whose call is not yet granted simply keeps
+its `SWI` state, exactly as it would keep it waiting on slow memory
+(`tb_swi_share`: both calling in the same cycle, round robin both ways, an
+SWI outside the bank, CpuSet on each side, and the ARM7 calling with `ce7`
+at half rate).
 
 `clk_sys` is the DS's own 67.0274 MHz, out of a PLL: [`rtl/pll.v`](rtl/pll.v)
 multiplies the framework's 50 MHz reference up with a fractional-VCO
@@ -305,11 +342,26 @@ units the hardware has:
 
 Measured in `tb_renderer_2d`, which charges a grant latency plus one clock
 per beat and counts both: a 256-pixel 4bpp BG line with two 8x8 sprites and
-the 3D merge takes **1196 clocks total — BG 567, OBJ pass 345, merge 284** —
+the 3D merge takes **1039 clocks total — BG 425, OBJ pass 330, merge 284** —
 in **35 grants / 100 beats**, against roughly one grant per halfword (~98
-for this line) before the fetch became bursts. The BG phase alone is **567
-clocks of the 1280-clock line period**; an 8 bpp 64x64-map line takes 639
+for this line) before the fetch became bursts. The BG phase alone is **425
+clocks of the 1280-clock line period**; an 8 bpp 64x64-map line takes 512
 clocks (34 grants, 192 beats, both map halves and four-halfword tile rows).
+
+Each column of that walk now costs its eight pixels plus whatever is left of
+the prefetch. The 4bpp palette-bank check and the next column's fetch ride on
+the cycle that advances the column — where they used to be two states of their
+own, and raising the fetch there is a clock earlier than the state it replaced
+— so the burst lands behind the eight pixels and the wait between columns is
+skipped outright. That took the BG phase from 567 to 504 clocks and the whole
+line from 1196 to 1133. The backdrop fill, which wrote one pixel pair a clock,
+now writes a quad — the line-buffer entries are 84 bits — so its 128 clocks are
+64 and the line is 1069. Both palette-bank fills then stopped paying a
+handshake per entry: the sixteen entries are issued one address a clock and read
+two clocks behind, 17 clocks where it used to be 32, for the 4bpp BG bank and a
+sprite's OBJ bank alike. Another 30 off the line — BG 440 -> 425, OBJ 345 -> 330
+— and it is 1039 (`vvp /tmp/tb_rd +states` prints the per-state histogram the
+figures come from).
 
 ### The per-line OAM scan is a pipeline
 
@@ -333,7 +385,7 @@ four halfwords, but the address was `3*n + ostep`, so entry 1 would have
 read entry 0's ATTR3. It is `4*n + ostep` now, and `tb_renderer_2d` puts a
 second sprite in entry 1 to prove it.
 
-So a sprite line fits: **1196 clocks against 1280** with two sprites and
+So a sprite line fits: **1039 clocks against 1280** with two sprites and
 the 3D layer on. Still open: 8 bpp BG resolves one palette colour per
 read, a sprite wider than 8 pixels is addressed as one contiguous row
 instead of GBATEK's 1D tile order (a pre-existing simplification, now a
@@ -512,6 +564,14 @@ fpga/
     cpu/arm7_core.sv          ARM7TDMI: ARMv4T ARM + Thumb, CPSR/SPSR
                               banks, exceptions, HALT, bus master, one-word
                               fetch buffer (Thumb halfwords share a bus read)
+                                                          [SIM-VERIFIED]
+    cpu/swi_hle.sv            the BIOS SWI bank: Div, Sqrt, CpuSet/CpuFastSet,
+                              LZ77/RL decompress, Halt, IntrWait/VBlankIntrWait,
+                              one bus access in flight
+                                                          [SIM-VERIFIED]
+    cpu/swi_share.sv          one swi_hle for both cores: round-robin grant,
+                              the engine's bus access routed onto the owner's
+                              master, completion back to that core only
                                                           [SIM-VERIFIED]
     cpu/cpu_ce.sv             the DS's 2:1 CPU clock ratio as enable
                               patterns (Normal / ARM7 x2 / ARM7 x4)
@@ -865,10 +925,11 @@ vvp /tmp/tb_in
 #     pc,lr returns, HALTCNT holding the core until an interrupt, then a
 #     second program for STMIA/LDMIA writeback, LDRH/STRH, LDRSB/LDRSH sign
 #     extension, SWP's read and write halves, and Thumb PUSH/POP
-iverilog -g2012 -o /tmp/tb_arm7 tb/tb_arm7.sv rtl/cpu/arm7_core.sv
+iverilog -g2012 -o /tmp/tb_arm7 tb/tb_arm7.sv rtl/cpu/arm7_core.sv \
+         rtl/cpu/swi_hle.sv rtl/cpu/swi_share.sv
 vvp /tmp/tb_arm7
-# fetch buffer on : 167 bus reads
-# TB ARM7 PASS (31 checks)
+# fetch buffer on : 187 bus reads
+# TB ARM7 PASS (43 checks)
 # iverilog -Ptb_arm7.FETCH_BUF=0 ... prints the same program without the
 # buffer: 178 bus reads, 22.69 us against 22.03 us
 
@@ -886,10 +947,11 @@ vvp /tmp/tb_arm7
 #     c2/c5/c9, c7 reading as zero, V moving the vectors down), SWI and BKPT
 #     through the low vector, an undefined coprocessor opcode, MSR/MRS over
 #     the flag fields, and Thumb PUSH/POP, BKPT and BLX
-iverilog -g2012 -I tb -o /tmp/tb_arm9 tb/tb_arm9.sv rtl/cpu/arm9_core.sv
+iverilog -g2012 -I tb -o /tmp/tb_arm9 tb/tb_arm9.sv rtl/cpu/arm9_core.sv \
+         rtl/cpu/swi_hle.sv rtl/cpu/swi_share.sv
 vvp /tmp/tb_arm9
-# fetch buffer on : 367 bus reads
-# TB ARM9 PASS (98 checks)
+# fetch buffer on : 387 bus reads
+# TB ARM9 PASS (109 checks)
 # iverilog -Ptb_arm9.FETCH_BUF=0 ... prints the same program without the
 # buffer (372 bus reads)
 
@@ -902,7 +964,8 @@ vvp /tmp/tb_arm9
 #     that the ARM7's own cycles are twice as long — then prints what that does
 #     to wall-clock time, which is 1.12x, not 2x (see the CPU section above)
 iverilog -g2012 -I tb -o /tmp/tb_clk tb/tb_cpu_clk.sv \
-         rtl/cpu/arm9_core.sv rtl/cpu/arm7_core.sv \
+         rtl/cpu/arm9_core.sv rtl/cpu/arm7_core.sv rtl/cpu/swi_hle.sv \
+         rtl/cpu/swi_share.sv \
          rtl/cpu/cpu_ce.sv rtl/cpu/cpu_ce_bridge.sv \
          rtl/bus/main_bus.sv rtl/mem/mem_arbiter.sv rtl/cart/cheat_engine.sv \
          rtl/audio/midi_port.sv rtl/bus/ipc.sv rtl/bus/nds_timers.sv \
@@ -917,7 +980,28 @@ vvp /tmp/tb_clk
 # both cores at once: ARM9 6906 cycles, ARM7 6920 cycles
 # TB CPUCLK PASS (23 checks)
 
-# 3e. DDR3 clock-domain bridge — the core's 67.0274 MHz against the
+# 3e. BIOS SWI bank — every call in `swi_hle` against a memory model with the
+#     same protocol as the cores' bus: Div (signed, and division by zero),
+#     Sqrt (0, 1, 2, 144, 145, 0xFFFFFFFF), CpuSet 32/16-bit copies and fill,
+#     CpuFastSet copy and fill, LZ77 including an overlapping back-reference,
+#     RL runs and literals, and the three wait calls against IME/IE/IF
+iverilog -g2012 -o /tmp/tb_swi_hle tb/tb_swi_hle.sv rtl/cpu/swi_hle.sv
+vvp /tmp/tb_swi_hle
+# tb_swi_hle: PASS (42 checks)
+
+# 3e-2. the shared bank — one engine, two callers, each with its OWN memory
+#       model, so this checks not just the numbers but which master the
+#       engine's accesses went out on: both calling in the same cycle (one
+#       runs, the other waits), round robin in both directions (whoever ran
+#       last yields, so neither starves), an SWI outside the bank, CpuSet on
+#       each side landing only in that side's memory, the ARM7 calling with
+#       ce7 at half rate, and never two masters on the engine at once
+iverilog -g2012 -o /tmp/tb_swi_share tb/tb_swi_share.sv \
+         rtl/cpu/swi_hle.sv rtl/cpu/swi_share.sv
+vvp /tmp/tb_swi_share
+# TB SWI_SHARE PASS (44 checks)
+
+# 3f. DDR3 clock-domain bridge — the core's 67.0274 MHz against the
 #     framework's 50 MHz DDRAM reference (deliberately not an integer ratio):
 #     a read returns the line the model served, a write arrives with its byte
 #     enables, RD/WE are held under BUSY and the read waits for DOUT_READY,
@@ -1269,9 +1353,9 @@ diagnostics overlay only — NTSC-U, NTSC-J and PAL carts all boot.
 | M5 | Microphone via the R3 button and the SPI touchscreen; the lid chord on `EXTKEYIN` | **partial** | Host-device microphone, rumble pak, DS-to-DS wireless |
 | M6 | Cheat engine (Action Replay, 8 entries per clock) and the DS-native menu, profiles and the video/audio filter rows | **partial** | Save states, rewind, replay |
 
-What each of those measured, for the record: a 4bpp BG line fetches in 567
+What each of those measured, for the record: a 4bpp BG line fetches in 425
 clocks and a burst 3D line in 322, the OAM scan went from 820 to 258, and a
-two-sprite line lands at 1196 of its 1280-clock period. The OSD menu, all
+two-sprite line lands at 1039 of its 1280-clock period. The OSD menu, all
 three refresh modes (59.82 / 59.95 / 60.00 Hz), the system bus fabric, the
 cheat engine and the AV filter layer are simulation-verified; the gaps above
 are what still needs writing.
