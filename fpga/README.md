@@ -895,7 +895,11 @@ the next reboot.
   python tools/run_benches.py --only tb_spu  # one bench
 
 Run the steps by hand with the commands below; each comment shows the verdict
-and the numbers it prints.
+and the numbers it prints. On a bare shell put both toolchain directories on
+`PATH`, the suite's `bin/` and its `lib/`: `vvp` loads `libvvp-1.dll` from the
+latter, so with `bin/` alone every compile succeeds and the simulation then
+exits 127 with "cannot open shared object file". The runner sets both itself,
+which is why this only bites the by-hand commands.
 
 ```bash
 cd fpga
