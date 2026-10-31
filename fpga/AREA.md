@@ -2,38 +2,41 @@
 
 Measured from a full compile of the current tree (`quartus_sh --flow compile
 NDS`, Quartus 17.0.0, device `5CSEBA6U23I7`, 2026-10-31, run from `/tmp/ndsfull`
-because the fitter needs a path outside OneDrive) and from standalone
-`quartus_map` probes of the candidate rewrites. Device capacities were read
+because the fitter needs a path outside OneDrive), from the `quartus_map` pass
+that precedes it, and from standalone `quartus_map` probes of the candidate
+rewrites. Device capacities were read
 from a trivial fit on the same part, not from a datasheet.
 
 ## The budgets, as the design stands
 
 | resource | used | device | headroom |
 |---|---|---|---|
-| ALMs needed (mapper) | 59,346 | 41,910 | **−17,436 (142%)** |
-| combinational nodes (ALUTs) | 84,130 | 83,820 | **−310 (100.4%)** |
-| registers | 54,096 | 83,820 | 29,724 (65%) |
+| ALMs needed (mapper) | 58,384 | 41,910 | **−16,474 (139%)** |
+| ALMs used (fitter) | 58,065 | 41,910 | **−16,155 (139%)** |
+| combinational nodes (ALUTs) | 83,245 | 83,820 | 575 (99.3%) |
+| registers | 53,704 | 83,820 | 30,116 (64%) |
 | DSP blocks | 96 | 112 | 16 (86%) |
-| M10K bits | 1,873,204 | 5,662,720 | 3,789,516 (33%) |
+| M10K bits | 1,873,331 | 5,662,720 | 3,789,389 (33%) |
 | I/O pins | 145 | 314 | 169 (46%) |
 
 41,910 ALMs each give two combinational nodes and two registers, so the LUT and
-register limits are the same 83,820. Logic is over on both counts, narrowly on
-one and badly on the other: 84,130 combinational nodes, 310 over the 83,820 the
-mapper checks (100.4%), and 59,346 ALMs against 41,910 (142%). There are two
-walls and the stricter one decides: even trimmed under 83,820 the fitter fails
-on LABs, which is what the `170012` build measured at 5,877 against 4,191.
+register limits are the same 83,820. The node count is now *under* that limit —
+83,245, 575 spare — so the mapper's `170011` check passes and the fitter reaches
+placement. What it runs out of there is LABs: 5,883 required against 4,191, 140%.
+A LAB holds ten ALMs, so 5,883 LABs is the same statement as 58,830 ALMs and the
+gap is about 16,200 ALMs, roughly 28% of the design.
 
 The full compile stops at the fitter, in its own words:
 
 ```
-Error (170011): Design contains 84256 blocks of type combinational node.  However, the device contains only 83820 blocks.
+Error (170012): Fitter requires 5883 LABs to implement the design, but the device contains only 4191 LABs
 Error (11802): Can't fit design in device.
 ```
 
-Post-optimisation the fitter sees 84,256 nodes and 55,403 ALMs (132%), so it
-trips the node check before placing anything, and the timing analyzer never
-runs: there is no Fmax for this build, only the mapper's numbers above.
+That is 26:26 into the flow and it comes after placement, so the number in it is
+the fitter's own post-placement count, not a pre-flight estimate. The timing
+analyzer still never runs: there is no Fmax for this build, only the mapper's
+numbers above.
 
 Nothing else is close to its budget. Pins are *not* a constraint and never
 were: 145 of the 314 I/O the part exposes, 46%, so the periphery has 169 spare
@@ -46,6 +49,33 @@ This file started from a pre-item baseline of 141,879 combinational ALUTs,
 68,515 registers and 124 DSP blocks — 169% of the device's logic and 111% of
 its DSPs. Every figure below is measured against that start, and the rows above
 are where the items left it.
+
+## The project was mapping itself for speed
+
+`NDS.qsf` asked for `OPTIMIZATION_MODE "HIGH PERFORMANCE EFFORT"` and
+`OPTIMIZATION_TECHNIQUE SPEED` while also setting
+`PHYSICAL_SYNTHESIS_COMBO_LOGIC_FOR_AREA`. The design is area-starved, so those
+worked against the third. Mapping the *same sources* twice, changing only the
+optimisation assignments, measures what they were costing:
+
+| | speed | area | change |
+|---|---|---|---|
+| combinational ALUTs | 84,130 | **83,245** | −885 |
+| ALMs needed | 59,346 | **58,384** | −962 |
+| registers | 54,092 | 53,704 | −388 |
+| DSP blocks | 96 | 96 | — |
+| block memory bits | 1,873,204 | 1,873,331 | +127 |
+
+The qsf now asks for area — `OPTIMIZATION_MODE "BALANCED"`,
+`OPTIMIZATION_TECHNIQUE AREA`, `ALM_REGISTER_PACKING_EFFORT HIGH`,
+`SYNTH_TIMING_DRIVEN_SYNTHESIS OFF` — with no RTL change, and
+`tools/run_benches.py` is 33/33 either way. Those 885 nodes are what turns the
+`170011` check from a wall into a pass: the fit now fails one stage later, on
+LABs, which is the wall this file has been describing all along.
+
+`QII_AUTO_PACKED_REGISTERS MINIMAL_AREA` is rejected as an illegal value by
+Quartus 17.0, which is why the register packing comes from
+`ALM_REGISTER_PACKING_EFFORT` alone.
 
 ## Where the 141,879 ALUTs were
 
@@ -381,7 +411,7 @@ What does fit, with margin:
 Item 7 is out (see above: the shared renderer needs 128% of the line period), so
 the *only* projected build that fit — the 2D core with the merge — is not
 buildable. The same build with two renderers is the 88,400 row: no fit, and the
-measured design is **84,130 ALUTs / 59,346 ALMs** today (the table at the top),
+measured design is **83,245 ALUTs / 58,384 ALMs** today (the table at the top),
 so what the A6 actually
 needs before any of this is about 24,000 ALUTs of things this list does not
 contain.
