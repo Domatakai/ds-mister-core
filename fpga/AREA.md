@@ -86,6 +86,37 @@ features, `PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION` and
 all: the flow ran 30 minutes and sat in placement retries with no output for the
 last 16 of them, and was stopped. Neither setting is in the qsf.
 
+## What it would take to fit
+
+The device needs 16,474 ALMs back. No tool setting supplies them: everything the
+mapper and fitter offer was measured above and is worth about 1,000, and one
+lever made the mapping worse. The inventory says which blocks are big enough to
+matter, and the answer is that only whole subsystems are.
+
+| cut | measured ALUTs | ≈ ALMs | what it costs |
+|---|---|---|---|
+| one renderer shared by both engines | 8,566 | 6,030 | no feature; 109% line occupancy |
+| 3D engine (geometry 4,319 + raster 3,021) | 7,340 | 5,176 | all 3D |
+| cheat engine (5,096 after the walk trim) | 5,096 | 3,594 | cheat codes |
+| SPU | 5,157 | 3,637 | audio output |
+
+The ALM column uses the ratio the fitter itself reports on the renderer probe
+(8,550 ALUTs → 6,030 ALMs, 1.42 nodes/ALM), not the ideal two-per-ALM packing.
+All four come to 18,437 ALMs, roughly 2,000 more than required: that is the only
+combination in this design that reaches a fit, and it costs 3D, cheats and
+sound. Any one of them alone leaves the design over the A6.
+
+The first row is the only one that loses no feature, and it is also the one the
+line budget rules out: pooling both engines through one renderer is 1,794 clocks
+into a 1,650-clock line, 109%, which is why item 7 stays unimplemented. Buying
+that back means the tile-row cache (built and reverted, above) — a project of
+its own, and worth more to the two-renderer design than to a merged one.
+
+So the design does not fit this part by any means available here: not by
+settings, not by the lossless trims the ranked list has left, and not by any
+single feature removal. A fit is a scope decision — drop 3D, cheats and audio to
+fit an A6, or target a larger device.
+
 ## Where the 141,879 ALUTs were
 
 Core (`emu`, 124,519) and framework (17,360):
