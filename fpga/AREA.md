@@ -77,6 +77,15 @@ LABs, which is the wall this file has been describing all along.
 Quartus 17.0, which is why the register packing comes from
 `ALM_REGISTER_PACKING_EFFORT` alone.
 
+Two further levers were measured and rejected. `ALLOW_ANY_RAM_SIZE_FOR_RECOGNITION`
+and `ALLOW_ANY_ROM_SIZE_FOR_RECOGNITION` both on map to **83,608 nodes and
+58,539 ALMs** — worse than the area build by 363 nodes and 155 ALMs — so no
+small memory is hiding in this design. Switching off the other two speed-only
+features, `PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION` and
+`ROUTER_LCELL_INSERTION_AND_LOGIC_DUPLICATION`, produced no fitter result at
+all: the flow ran 30 minutes and sat in placement retries with no output for the
+last 16 of them, and was stopped. Neither setting is in the qsf.
+
 ## Where the 141,879 ALUTs were
 
 Core (`emu`, 124,519) and framework (17,360):
