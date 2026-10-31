@@ -82,9 +82,10 @@ and `ALLOW_ANY_ROM_SIZE_FOR_RECOGNITION` both on map to **83,608 nodes and
 58,539 ALMs** — worse than the area build by 363 nodes and 155 ALMs — so no
 small memory is hiding in this design. Switching off the other two speed-only
 features, `PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION` and
-`ROUTER_LCELL_INSERTION_AND_LOGIC_DUPLICATION`, produced no fitter result at
-all: the flow ran 30 minutes and sat in placement retries with no output for the
-last 16 of them, and was stopped. Neither setting is in the qsf.
+`ROUTER_LCELL_INSERTION_AND_LOGIC_DUPLICATION`, changes nothing that matters:
+fitted on its own the design still needs **5,883 LABs**, exactly the count it
+needs with them on, and placement preparation stretches from under 18 minutes to
+21:51. Neither setting is in the qsf.
 
 ## What it would take to fit
 
