@@ -688,6 +688,14 @@ cd fpga
 quartus_sh --flow compile NDS            # or open NDS.qpf in the IDE
 ```
 
+`NDS.qsf` is set up for **area**, not speed: `OPTIMIZATION_MODE "BALANCED"`,
+`OPTIMIZATION_TECHNIQUE AREA`, `ALM_REGISTER_PACKING_EFFORT HIGH` and
+`SYNTH_TIMING_DRIVEN_SYNTHESIS OFF`. Mapping the same sources with the older
+speed settings costs 885 combinational nodes and 962 ALMs, and those 885 nodes
+are the difference between passing the mapper's `170011` node check and
+tripping it, so they are worth keeping unless you deliberately trade area for
+Fmax.
+
 Windows: run `fpga\build.bat` (or `build.bat "<quartus>\bin64"` for a
 non-default install location). It defaults to
 `C:\intelFPGA_lite\17.0\quartus\bin64`, runs the same flow, and prints
@@ -695,7 +703,10 @@ where `NDS.rbf` landed and how to copy it to the SD card.
 
 First full compile (analysis + fit + ASM + timing) takes roughly
 10–20 min on a modern multicore machine (`NUM_PARALLEL_PROCESSORS ALL`
-is set). Success criteria:
+is set). The design is still over the A6, so today the flow stops at the
+fitter with `170012` (5,883 LABs required, 4,191 available), never reaches the
+assembler and reports no timing; `AREA.md` has the measured budget and the
+ranked list of what would have to go. Once it fits, success criteria are:
 
 - `output_files/NDS.rbf` exists (GENERATE_RBF_FILE is on),
 - TimeQuest reports no failing paths on the 67.0274 MHz `clk_sys` domain
