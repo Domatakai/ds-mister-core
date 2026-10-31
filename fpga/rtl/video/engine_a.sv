@@ -77,7 +77,11 @@ renderer_2d renderer (
 	.d3_ready(d3_ready),
 	.d3_bs_valid(d3_bs_valid),
 	.d3_bs_data(d3_bs_data),
+`ifdef NDS_NO_3D
+	.d3_present(1'b0),      // 3D pipeline compiled out (NDS_NO_3D)
+`else
 	.d3_present(1'b1),
+`endif
 	.obj_base(20'h1_0000)   // OBJ tiles start at +64 KB (DS A engine)
 );
 

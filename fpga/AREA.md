@@ -87,36 +87,38 @@ fitted on its own the design still needs **5,883 LABs**, exactly the count it
 needs with them on, and placement preparation stretches from under 18 minutes to
 21:51. Neither setting is in the qsf.
 
-## What it would take to fit
+## What it would take to fit (measured)
 
-The device needs 16,474 ALMs back. No tool setting supplies them: everything the
-mapper and fitter offer was measured above and is worth about 1,000, and one
-lever made the mapping worse. The inventory says which blocks are big enough to
-matter, and the answer is that only whole subsystems are.
+The device needs 16,474 ALMs back. Rather than projecting the cuts, the design
+now has switches for them: `NDS_NO_3D`, `NDS_NO_CHEAT` and `NDS_NO_SPU` compile
+the 3D pipeline, the cheat engine and the SPU out of `NDS.sv` and tie their
+ports off. Each row below is a real `quartus_map` on `5CSEBA6U23I7` with the
+committed area settings, the macro passed on the command line:
 
-| cut | measured ALUTs | ≈ ALMs | what it costs |
-|---|---|---|---|
-| one renderer shared by both engines | 8,550 | 6,030 | no feature; 109% line occupancy |
-| 3D engine (geometry 4,319 + raster 3,021) | 7,340 | 5,176 | all 3D |
-| cheat engine (5,096 after the walk trim) | 5,096 | 3,594 | cheat codes |
-| SPU | 5,157 | 3,637 | audio output |
+| build | ALMs | ALUTs | registers | DSP | vs A6 |
+|---|---|---|---|---|---|
+| full (the committed default) | 58,384 | 83,245 | 53,704 | 96 | 139% |
+| `NDS_NO_3D` | 54,220 | 78,095 | 46,448 | 74 | 129% |
+| `NDS_NO_3D` + `NDS_NO_CHEAT` + `NDS_NO_SPU` | **48,427** | **70,198** | **38,751** | **66** | **116%** |
 
-The ALM column uses the ratio the fitter itself reports on the renderer probe
-(8,550 ALUTs → 6,030 ALMs, 1.42 nodes/ALM), not the ideal two-per-ALM packing.
-All four come to 18,437 ALMs, roughly 2,000 more than required: that is the only
-combination in this design that reaches a fit, and it costs 3D, cheats and
-sound. Any one of them alone leaves the design over the A6.
+So the 3D pipeline is worth **4,164 ALMs, 5,150 ALUTs, 7,256 registers and 22
+DSP blocks**, and the cheat engine plus the SPU together are worth **5,793 ALMs,
+7,897 ALUTs and 7,697 registers**. Both are less than the standalone-ALUT projections this file
+carried before, because mapping the whole design shares logic that mapping a
+block alone counts twice: the real conversion is 1.24 nodes per ALM for the 3D
+cut and 1.36 for cheat plus SPU, not the 1.42 the renderer probe suggested.
+Item-level numbers in the ranked list are therefore upper bounds, useful for
+ordering work and not for promising savings.
 
-The first row is the only one that loses no feature, and it is also the one the
-line budget rules out: pooling both engines through one renderer is 1,794 clocks
-into a 1,650-clock line, 109%, which is why item 7 stays unimplemented. Buying
-that back means the tile-row cache (built and reverted, above) — a project of
-its own, and worth more to the two-renderer design than to a merged one.
+That leaves the merged renderer as the last lossless lever, ~8,550 ALUTs (~6,030
+ALMs by the probe's ratio). On top of the lean build that is **~42,400 ALMs,
+101%** — about 500 ALMs over. Measured, no combination of the four cuts fits: a
+fit also needs one more item of roughly 1,000 ALMs (an OSD, the scanline filter
+or the shadowmask) *and* the merged renderer, which is the one item that
+currently fails the line budget at 109%.
 
-So the design does not fit this part by any means available here: not by
-settings, not by the lossless trims the ranked list has left, and not by any
-single feature removal. A fit is a scope decision — drop 3D, cheats and audio to
-fit an A6, or target a larger device.
+So a fit remains a scope decision, not a setting. 3D, cheats and sound are each
+worth having, and all three together are still not enough on their own.
 
 ## Where the 141,879 ALUTs were
 

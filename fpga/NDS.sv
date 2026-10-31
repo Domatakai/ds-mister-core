@@ -1102,6 +1102,7 @@ main_bus main_bus (
 // and the flat-shaded rasterizer are live; covered pixels are written into
 // the VRAM bank whose VRAMCNT MST selects the 3D engine.
 //------------------------------------------------------------------
+`ifndef NDS_NO_3D
 geometry_engine geometry_engine (
 	.clk(clk_sys),
 	.reset(reset),
@@ -1129,6 +1130,19 @@ raster_engine raster_engine (
 	.px_rgb555(px3_rgb555),
 	.px_ready(px3_ready)
 );
+`else
+	// 3D pipeline compiled out: the GXFIFO port reads as zero and the
+	// rasteriser presents no pixels, so the arbiter's 3D port stays idle.
+	assign gx_rdata      = 32'd0;
+	assign gx_vtx_valid  = 1'b0;
+	assign gx_vtx_x      = 32'sd0;
+	assign gx_vtx_y      = 32'sd0;
+	assign gx_vtx_color  = 8'd0;
+	assign gx_vtx_poly   = 2'd0;
+	assign px3_valid     = 1'b0;
+	assign px3_addr      = 16'd0;
+	assign px3_rgb555    = 16'd0;
+`endif
 
 vram_arbiter vram_arbiter (
 	.clk(clk_sys),
@@ -1208,6 +1222,7 @@ dma_engine dma_engine (
 	.irq_set(dma_irq)
 );
 
+`ifndef NDS_NO_CHEAT
 cheat_engine cheat_engine (
 	.clk(clk_sys),
 	.reset(reset),
@@ -1224,6 +1239,14 @@ cheat_engine cheat_engine (
 	.patch_hi(cheat_patch_hi),
 	.chk_ready(cheat_ready)
 );
+`else
+	// cheat engine compiled out (NDS_NO_CHEAT): no patching, always ready
+	assign cheat_hit         = 1'b0;
+	assign cheat_patch       = 16'd0;
+	assign cheat_patch_hi_en = 1'b0;
+	assign cheat_patch_hi    = 16'd0;
+	assign cheat_ready       = 1'b1;
+`endif
 
 //------------------------------------------------------------------
 // CPUs
@@ -1426,6 +1449,7 @@ cpu_ce_bridge bus7 (
 wire [15:0] spu_l, spu_r;
 wire        spu_tick;
 
+`ifndef NDS_NO_SPU
 spu spu (
 	.clk(clk_sys),
 	.reset(reset),
@@ -1444,6 +1468,15 @@ spu spu (
 	.audio_l(spu_l),
 	.audio_r(spu_r)
 );
+`else
+	// SPU compiled out (NDS_NO_SPU): silence, and no fourth arbiter master
+	assign spu_l        = 16'd0;
+	assign spu_r        = 16'd0;
+	assign spu_tick     = 1'b0;
+	assign spu_reg_rdata= 16'd0;
+	assign spu_mem_req  = 1'b0;
+	assign spu_mem_addr = 25'd0;
+`endif
 
 wire [15:0] spu_f_l, spu_f_r;
 

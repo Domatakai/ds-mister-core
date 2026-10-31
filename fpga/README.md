@@ -696,6 +696,23 @@ are the difference between passing the mapper's `170011` node check and
 tripping it, so they are worth keeping unless you deliberately trade area for
 Fmax.
 
+### Reduced builds
+
+Three subsystems can be compiled out for area experiments, without touching the
+default build:
+
+```bash
+quartus_map NDS --verilog_macro="NDS_NO_3D=1"     # no 3D pipeline
+quartus_map NDS --verilog_macro="NDS_NO_CHEAT=1"  # no cheat engine
+quartus_map NDS --verilog_macro="NDS_NO_SPU=1"    # no SPU (silent audio)
+```
+
+Pass them through the command line: on a project Quartus has open, a
+`VERILOG_MACRO` written into the `.qsf` can be rewritten out from under you.
+Measured on the A6 with the area settings, `NDS_NO_3D` maps to 54,220 ALMs and
+all three together to 48,427 — still 116% of the device, so these are
+measurement switches, not a fitting configuration. `AREA.md` has the table.
+
 Windows: run `fpga\build.bat` (or `build.bat "<quartus>\bin64"` for a
 non-default install location). It defaults to
 `C:\intelFPGA_lite\17.0\quartus\bin64`, runs the same flow, and prints
