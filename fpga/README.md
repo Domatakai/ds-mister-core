@@ -426,8 +426,13 @@ dropped. Header byte 0x80 (device capacity) is captured into
 and cart save data; `mem_arbiter` shares it between the bus RAM window
 (CPU traffic), the cart save path (fixed priority, saves are
 latency-sensitive bursts) and the VRAM path behind `vram_arbiter`. The cart window read bridge (`win_*`) is wired to `main_bus`
-with a pending latch so a request survives DDR busy periods, and a
-prefetch FIFO then meets waitstates.
+with a pending latch so a request survives DDR busy periods. A line is
+8 bytes and a fetch burst walks the four halfwords in it, so the read
+side keeps the line it last fetched (`pf_line`/`pf_data`) and answers
+the other three halfwords without touching DDR — one round trip per
+line instead of one per halfword. The cache is dropped when a download
+rewrites the slot and when the slots are cleared, so it can never serve
+bytes from the game that was just replaced.
 
 ### Four game slots and the boot menu
 

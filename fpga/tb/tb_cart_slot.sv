@@ -105,6 +105,7 @@ reg  [7:0] mem_be [0:255];
 integer wr_beats = 0;
 reg     seen_wr = 0;
 reg [28:0] first_wr = 0;
+integer rd_beats = 0;   // accepted READs: proves a cache hit never asks DDR
 always @(posedge clk) begin
 	if (ddr_we && !ddr_busy) begin
 		mem[ddr_addr[7:0]]    <= ddr_din;
@@ -119,6 +120,7 @@ always @(posedge clk) begin
 	if (ddr_rd && !ddr_busy) begin
 		ddr_dout <= mem[ddr_addr[7:0]];
 		ddr_dout_ready <= 1;
+		rd_beats = rd_beats + 1;
 	end
 end
 
@@ -257,6 +259,7 @@ task check_hdr;
 	end
 endtask
 
+integer rd_seen = 0;
 integer i;
 initial begin
 	for (i = 0; i < 256; i = i + 1) begin
@@ -302,6 +305,14 @@ initial begin
 	win_read(26'd4);
 	check("window byte 4 -> 0x1002", got === 16'h1002);
 
+	// --- M1 cache: a line is 8 bytes, so byte 6 shares line 0 with byte 4
+	//     and must be answered without a second DDR read.
+	rd_seen = rd_beats;
+	win_read(26'd6);
+	check("cached line returns the right halfword", got === 16'h1003);
+	check("second read in the same line costs no DDR access",
+	      rd_beats === rd_seen);
+
 	// --- window read: byte 8 -> line1 halfword0 = 0x1004
 	repeat (4) @(posedge clk);
 	win_read(26'd8);
@@ -312,29 +323,33 @@ initial begin
 	repeat (4) @(posedge clk);
 	ddr_busy = 1;
 	@(posedge clk);
-	win_addr <= 26'd0;
+	win_addr <= 26'd16;          // line 2: not in the cache, so DDR is used
 	win_req  <= 1;
 	@(posedge clk);
 	win_req  <= 0;
+	rd_seen = rd_beats;
 	repeat (8) @(posedge clk);
 	ddr_busy = 0;
 	wait (win_valid);
-	check("pending request survives DDR busy", win_data === 16'h1000);
+	check("pending request survives DDR busy", win_data === 16'h0008);
+	check("the pending path really did go to DDR", rd_beats === rd_seen + 1);
 	@(posedge clk);
 
 	// --- post-grant BUSY: RD is granted with BUSY low, then BUSY
 	//     covers the accept cycle — RD must be held, not dropped.
 	repeat (4) @(posedge clk);
 	@(posedge clk);
-	win_addr <= 26'd4;
+	win_addr <= 26'd24;          // line 3: a cold line, so RD is really used
 	win_req  <= 1;
 	@(posedge clk);        // FSM grants here (ddr_rd goes high)
 	win_req  <= 0;
+	rd_seen = rd_beats;
 	ddr_busy <= 1;         // accept cycle is busy: must be held
 	repeat (3) @(posedge clk);
 	@(posedge clk); ddr_busy <= 0;
 	wait (win_valid);
-	check("RD held across post-grant BUSY", win_data === 16'h1002);
+	check("RD held across post-grant BUSY", win_data === 16'h0000);
+	check("the post-grant path really did go to DDR", rd_beats === rd_seen + 1);
 	@(posedge clk);
 
 	// --- save master stays idle until M4

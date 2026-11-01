@@ -11,17 +11,17 @@ from a datasheet.
 
 | resource | used | device | headroom |
 |---|---|---|---|
-| ALMs needed (mapper) | 58,384 | 41,910 | **−16,474 (139%)** |
+| ALMs needed (mapper) | 58,389 | 41,910 | **−16,479 (139%)** |
 | ALMs used (fitter) | 58,065 | 41,910 | **−16,155 (139%)** |
-| combinational nodes (ALUTs) | 83,245 | 83,820 | 575 (99.3%) |
-| registers | 53,704 | 83,820 | 30,116 (64%) |
+| combinational nodes (ALUTs) | 83,329 | 83,820 | 491 (99.4%) |
+| registers | 53,794 | 83,820 | 30,026 (64%) |
 | DSP blocks | 96 | 112 | 16 (86%) |
 | M10K bits | 1,873,331 | 5,662,720 | 3,789,389 (33%) |
 | I/O pins | 145 | 314 | 169 (46%) |
 
 41,910 ALMs each give two combinational nodes and two registers, so the LUT and
 register limits are the same 83,820. The node count is now *under* that limit —
-83,245, 575 spare — so the mapper's `170011` check passes and the fitter reaches
+83,329, 491 spare — so the mapper's `170011` check passes and the fitter reaches
 placement. What it runs out of there is LABs: 5,883 required against 4,191, 140%.
 A LAB holds ten ALMs, so 5,883 LABs is the same statement as 58,830 ALMs, and
 the gap is 16,474 ALMs at the mapper's count — 28% of the design.
@@ -66,6 +66,10 @@ optimisation assignments, measures what they were costing:
 | DSP blocks | 96 | 96 | — |
 | block memory bits | 1,873,204 | 1,873,331 | +127 |
 
+Those figures are the measurement that setting produced, not the design
+today: the cart read cache since added +84 ALUTs, +90 registers and +5 ALMs.
+
+
 The qsf now asks for area — `OPTIMIZATION_MODE "BALANCED"`,
 `OPTIMIZATION_TECHNIQUE AREA`, `ALM_REGISTER_PACKING_EFFORT HIGH`,
 `SYNTH_TIMING_DRIVEN_SYNTHESIS OFF` — with no RTL change, and
@@ -97,9 +101,13 @@ committed area settings, the macro passed on the command line:
 
 | build | ALMs | ALUTs | registers | DSP | vs A6 |
 |---|---|---|---|---|---|
-| full (the committed default) | 58,384 | 83,245 | 53,704 | 96 | 139% |
+| full (the committed default) | 58,389 | 83,329 | 53,794 | 96 | 139% |
 | `NDS_NO_3D` | 54,220 | 78,095 | 46,448 | 74 | 129% |
 | `NDS_NO_3D` + `NDS_NO_CHEAT` + `NDS_NO_SPU` | **48,427** | **70,198** | **38,751** | **66** | **116%** |
+
+Those two reduced rows were measured before the M1 cart read cache, which the
+default build puts at +84 ALUTs, +90 registers and +5 ALMs, so they move by
+that much and no more.
 
 So the 3D pipeline is worth **4,164 ALMs, 5,150 ALUTs, 7,256 registers and 22
 DSP blocks**, and the cheat engine plus the SPU together are worth **5,793 ALMs,
@@ -454,7 +462,7 @@ What does fit, with margin:
 Item 7 is out (see above: the shared renderer needs 128% of the line period), so
 the *only* projected build that fit — the 2D core with the merge — is not
 buildable. The same build with two renderers is the 88,400 row: no fit, and the
-measured design is **83,245 ALUTs / 58,384 ALMs** today (the table at the top),
+measured design is **83,329 ALUTs / 58,389 ALMs** today (the table at the top),
 so what the A6 actually
 needs before any of this is about 24,000 ALUTs of things this list does not
 contain.

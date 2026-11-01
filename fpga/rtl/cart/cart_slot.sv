@@ -25,7 +25,9 @@
 // enables so the tail of the image is never lost (byte slots beyond the
 // image stay unwritten — CPU fetches stop at rom_bytes).
 //
-// TODO(M1): prefetch FIFO on the read side to satisfy cart waitstates.
+// M1 is in: the read side keeps the last line it fetched and answers the
+// other three halfwords of it from that cache, so a cart read costs one
+// DDR round trip per line rather than one per halfword.
 // TODO(M4): save sector path via sd_* into SDRAM, save erase, and the
 //           cart unlock command sequence (0x00000555/0x00000AAA) that
 //           some 256 Mbit+ carts issue before large reads.
@@ -284,9 +286,19 @@ assign ioctl_wait = fifo_full;
 //------------------------------------------------------------------
 // read-bridge state (declared before the drain, which arbitrates on it)
 //------------------------------------------------------------------
-localparam R_IDLE = 2'd0, R_WAIT = 2'd1, R_DONE = 2'd2;
+localparam R_IDLE = 2'd0, R_WAIT = 2'd1, R_DONE = 2'd2, R_HIT = 2'd3;
 reg  [1:0] rstate = R_IDLE;
 reg        pending_req = 0; // win_req pulse arrived while DDR busy
+
+// M1: one-line read cache. A cart read costs a DDR round trip, but a line is
+// four halfwords and code fetches walk them in order, so the line last read is
+// kept and answered directly. A download into the slot rewrites the ROM, and a
+// slot clear forgets which slot the window pointed at, so both invalidate it.
+reg         pf_valid = 0;
+reg  [28:0] pf_line  = 0;
+reg  [63:0] pf_data  = 0;
+wire [28:0] req_line = {boot_slot, win_addr[25:3]};
+wire        pf_hit   = pf_valid && (req_line == pf_line);
 
 //------------------------------------------------------------------
 // Block A — download stream state. Single driver for pack, pack_idx,
@@ -298,6 +310,7 @@ reg [15:0] pack [0:3];
 reg  [1:0] pack_idx = 0;
 reg [28:0] line_no = 0;
 reg        dl_d = 0;
+wire       dl_start = rom_dl && !dl_d;   // first cycle of a ROM download
 reg        tail_flush = 0;
 
 // a full slot stops accepting new lines: the window could not read them
@@ -466,7 +479,7 @@ always @(posedge clk) begin
 	// (even if DDR is busy then — the grant may happen later).
 	// The window is 64 MB wide, so the address is the active slot's base
 	// with the 23 in-slot line bits on top — exactly one slot is reachable.
-	if (rstate == R_IDLE && win_req && !pending_req)
+	if (rstate == R_IDLE && win_req && !pending_req && !pf_hit)
 		ddr_addr_rd <= {boot_slot, win_addr[25:3]};
 end
 
@@ -498,10 +511,11 @@ always @(posedge clk) begin
 	case (rstate)
 	R_IDLE: begin
 		if (win_req) begin
-			a_lat       <= win_addr;
-			pending_req <= 1'b1;
+			a_lat <= win_addr;
+			if (pf_hit)   rstate      <= R_HIT;   // served from the cache
+			else          pending_req <= 1'b1;
 		end
-		if ((pending_req || win_req) && !ddr_busy && !ddr_we
+		if ((pending_req || (win_req && !pf_hit)) && !ddr_busy && !ddr_we
 		    && !draining && !ddr_rd) begin
 			ddr_rd      <= 1'b1;
 			pending_req <= 1'b0;
@@ -524,15 +538,31 @@ always @(posedge clk) begin
 		2'd2: win_data <= rline[47:32];
 		default: win_data <= rline[63:48];
 		endcase
+		// the line just read is this slot's line ddr_addr_rd: keep it
+		pf_valid <= 1'b1;
+		pf_line  <= ddr_addr_rd;
+		pf_data  <= rline;
+		rstate   <= R_IDLE;
+	end
+	R_HIT: begin
+		// cache hit: same one-cycle response, no DDR access at all
+		win_valid <= 1'b1;
+		case (a_lat[2:1])
+		2'd0: win_data <= pf_data[15:0];
+		2'd1: win_data <= pf_data[31:16];
+		2'd2: win_data <= pf_data[47:32];
+		default: win_data <= pf_data[63:48];
+		endcase
 		rstate <= R_IDLE;
 	end
 	default: rstate <= R_IDLE;
 	endcase
-	if (reset) begin
+	if (reset || slot_clear) begin
 		rstate      <= R_IDLE;
 		ddr_rd      <= 1'b0;
 		pending_req <= 1'b0;
 	end
+	if (reset || slot_clear || dl_start) pf_valid <= 1'b0;
 end
 
 // address mux: valid while the matching strobe is asserted (the
