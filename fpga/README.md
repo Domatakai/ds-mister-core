@@ -704,7 +704,7 @@ Fmax.
 ### Warnings
 
 The mapper's log is triaged rather than filtered. A build reports **0 errors,
-0 critical warnings and 67 warnings**, every one of which carries a numeric id
+0 critical warnings and 57 warnings**, every one of which carries a numeric id
 and is accounted for below, so a new code in the log is a signal instead of
 noise.
 
@@ -728,15 +728,20 @@ Six were real and are fixed:
   releases long before either output is used. Measured on a throwaway copy of
   the PLL alone: constant 1 warning, pulse 0. On the full design it costs
   +139 ALMs, +127 ALUTs and +8 registers.
-- **10036, nine of the nineteen** — every module ends with the usual sink
-  (`wire _unused = &{...};`) so that signals kept for debugging stay named. The
-  analyser counts a sink that is written and never read as a fault. Reading it
-  from a branch that cannot be taken removes the warning and synthesises to
+- **10036, all nineteen** — every module ends with the usual sink
+  (`wire _unused = &{...};`) so that signals kept for debugging stay named, and
+  the analyser counts a sink that is written and never read as a fault. Reading
+  it from a branch that cannot be taken removes the warning and synthesises to
   nothing: measured on a throwaway module, 1 warning without the read, 0 with
-  it. Applied to the nine RTL sinks. The ten still reported are nets whose
-  readers sit inside functions -- the SPSR banks in both cores and one display
-  mode net -- which Verific's function-body analysis does not see; those are
-  live registers, not dead code, so the sinks stay and the warnings stay.
+  it. Nine sinks are fixed that way. The other ten are nets whose readers sit
+  inside functions -- the SPSR banks in both cores and the text renderer's
+  display-mode net -- and Verific's function-body analysis does not follow
+  those, so the nets look dead when they are the most live state in the CPU.
+  Before touching them I checked every reader: `spsr_*` is what an exception
+  return restores, so deleting them would have broken the cores. Instead each
+  core now has a sink over its SPSR banks, read the same way, which states the
+  read that already exists and synthesises to nothing. Measured on a throwaway
+  module with the same shape: 5 such warnings without it, 0 with.
 - **10030, six** — the SPU's ADPCM tables are inferred as memories, and with no
   write port Quartus reports each port of each table as undriven. A never-taken
   write gives them one; it cannot execute, so the tables are still read-only and
@@ -753,10 +758,12 @@ What is left is the tool describing its own implementation, plus the framework:
 | `10037` | 1 | the constant condition of the SPU's never-taken write port, which is what makes it never taken |
 | `276020` | 10 | inferred memories whose read-during-write behaviour Quartus already matched with pass-through logic |
 | `276027` | 6 | inferred dual-clock memories, where read-during-write is undefined but never exercised |
-| `10034` | 7 | unused LVDS/clock outputs inside the PLL megafunction |
-| `14320` | 9 | synthesised-away PLL configuration bits and unused palette RAM bits |
-| `10027` | 3 | register-bank indices (both cores) and the SPU step-table index: Quartus 17 prints this for a correctly sized index too, and each site says so in the source |
-| `13xxx` / `15610` / `21074` / `12241` | 14 | the framework's own `sys_top`: SD-card tri-states that never reach a pin, the unused SDRAM chip select and clock enable, and inputs this core does not read |
+| `10034` | 7 | output ports of Intel's generated `altera_pll`/`altera_cyclonev_pll` that the IP itself leaves undriven |
+| `12030` | 1 | a port width in that same generated PLL file, where the IP drives one bit of a two-bit formal |
+| `14320` | 9 | nodes Quartus folded away inside the PLL wrappers and in palette RAM it did not need |
+| `14284` / `14285` | 6 | the same folding reported per node, plus a RAM node it removed |
+| `10027` | 3 | a variable index into a 16-entry array in each core's register file and in the SPU step table: Quartus 17 prints this for a correctly sized variable index too and not for a constant one, so it cannot be removed without making the read constant |
+| `13xxx` / `15610` / `21074` / `12241` | 14 | the framework's own `sys_top`: SD-card tri-states that never reach a pin, the unused SDRAM chip select and clock enable, and the two inputs (SD SPI MISO, ADC SDO) this core does not implement |
 
 None of them changes what the design does, and none is suppressed: the count is
 reported as it is so the next real warning is visible.

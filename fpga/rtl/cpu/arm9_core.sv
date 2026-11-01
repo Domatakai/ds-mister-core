@@ -1849,6 +1849,12 @@ end
 `undef PABT
 `undef EXC_RET
 
+// The SPSR banks are only read inside psr_get(), and Verific's function-body
+// read analysis does not follow those readers, so Quartus calls the banks
+// "assigned a value but never read" (warning 10036). Reading them here states
+// the fact; the branch cannot be taken and synthesises to nothing. Measured on
+// a throwaway module with the same shape: 5 such warnings without this, 0 with.
+wire _unused_spsr = &{1'b0, spsr_abt, spsr_fiq, spsr_irq, spsr_svc, spsr_und};
+always @(*) if (_unused_spsr) begin end
 
 endmodule
-
