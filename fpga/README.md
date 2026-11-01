@@ -704,11 +704,11 @@ Fmax.
 ### Warnings
 
 The mapper's log is triaged rather than filtered. A build reports **0 errors,
-0 critical warnings and 82 warnings** (80 of them carry a numeric id; the
-other two are the summary lines for the synthesized-away node lists), and every remaining one is accounted for
-here, so a new code in the log is a signal instead of noise.
+0 critical warnings and 80 warnings**, every one of which carries a numeric id
+and is accounted for below, so a new code in the log is a signal instead of
+noise.
 
-Three were real and are fixed:
+Four were real and are fixed:
 
 - **127005, critical, twice** — the SPU's ADPCM tables have 89 and 9 entries,
   but the synthesiser builds 128-deep and 16-deep memories for them, so it
@@ -720,6 +720,14 @@ Three were real and are fixed:
 - **10027 on the ARM7** — `rread` indexed the 16-entry register bank with the
   instruction's five-bit field. `r == 15` is taken above it, so the index is
   0..14, and it is masked to four bits as the ARM9 core already did.
+- **RST port on the PLL**, twice, no code — the framework's audio PLL and the
+  core's own each had their reset tied to a constant. The message is literal:
+  a PLL that loses lock then has no way to be re-locked, so the port exists to
+  be driven. Each now takes the top of a 16-deep shift register clocked by its
+  own reference clock, which starts the counters from a known state and
+  releases long before either output is used. Measured on a throwaway copy of
+  the PLL alone: constant 1 warning, pulse 0. On the full design it costs
+  +139 ALMs, +127 ALUTs and +8 registers.
 
 What is left is the tool describing its own implementation, plus the framework:
 

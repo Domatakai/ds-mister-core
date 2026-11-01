@@ -1566,10 +1566,16 @@ assign SDCD_SPDIF = (mcp_en & ~spdif) ? 1'b0 : 1'bZ;
 assign HDMI_MCLK = clk_audio;
 wire clk_audio;
 
+// Driven, not tied off: Quartus warns "RST port on the PLL is not properly
+// connected" for a constant reset. A power-on pulse gives the counters a
+// defined start and releases before clk_audio is used.
+reg [3:0] pll_audio_rst_sr = 4'hf;
+always @(posedge FPGA_CLK3_50) pll_audio_rst_sr <= {pll_audio_rst_sr[2:0], 1'b0};
+
 pll_audio pll_audio
 (
 	.refclk(FPGA_CLK3_50),
-	.rst(0),
+	.rst(pll_audio_rst_sr[3]),
 	.outclk_0(clk_audio)
 );
 

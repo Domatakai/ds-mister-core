@@ -428,9 +428,16 @@ wire slot_clear = clear_action & ~clear_bit_d;
 wire clk_cpu;
 wire pll_locked;
 
+// The PLL's reset is driven, not tied off: Quartus reports "RST port on the
+// PLL is not properly connected" for a constant, and the port exists to give
+// the counters a defined start. Sixteen CLK_50M cycles from configuration,
+// long before the core leaves reset on pll_locked.
+reg [3:0] pll_rst_sr = 4'hf;
+always @(posedge CLK_50M) pll_rst_sr <= {pll_rst_sr[2:0], 1'b0};
+
 pll u_pll (
 	.refclk(CLK_50M),
-	.rst(1'b0),
+	.rst(pll_rst_sr[3]),
 	.outclk_0(clk_cpu),
 	.locked(pll_locked)
 );

@@ -11,17 +11,17 @@ from a datasheet.
 
 | resource | used | device | headroom |
 |---|---|---|---|
-| ALMs needed (mapper) | 58,262 | 41,910 | **−16,352 (139%)** |
+| ALMs needed (mapper) | 58,401 | 41,910 | **−16,491 (139%)** |
 | ALMs used (fitter) | 58,065 | 41,910 | **−16,155 (139%)** |
-| combinational nodes (ALUTs) | 83,272 | 83,820 | 548 (99.3%) |
-| registers | 53,797 | 83,820 | 30,023 (64%) |
+| combinational nodes (ALUTs) | 83,399 | 83,820 | 421 (99.5%) |
+| registers | 53,805 | 83,820 | 30,015 (64%) |
 | DSP blocks | 96 | 112 | 16 (86%) |
 | M10K bits | 1,873,331 | 5,662,720 | 3,789,389 (33%) |
 | I/O pins | 145 | 314 | 169 (46%) |
 
 41,910 ALMs each give two combinational nodes and two registers, so the LUT and
 register limits are the same 83,820. The node count is now *under* that limit —
-83,272, 548 spare — so the mapper's `170011` check passes and the fitter reaches
+83,399, 421 spare — so the mapper's `170011` check passes and the fitter reaches
 placement. What it runs out of there is LABs: 5,883 required against 4,191, 140%.
 A LAB holds ten ALMs, so 5,883 LABs is the same statement as 58,830 ALMs, and
 the gap is 16,474 ALMs at the mapper's count — 28% of the design.
@@ -101,7 +101,7 @@ committed area settings, the macro passed on the command line:
 
 | build | ALMs | ALUTs | registers | DSP | vs A6 |
 |---|---|---|---|---|---|
-| full (the committed default) | 58,262 | 83,272 | 53,797 | 96 | 139% |
+| full (the committed default) | 58,401 | 83,399 | 53,805 | 96 | 139% |
 | `NDS_NO_3D` | 54,220 | 78,095 | 46,448 | 74 | 129% |
 | `NDS_NO_3D` + `NDS_NO_CHEAT` + `NDS_NO_SPU` | **48,427** | **70,198** | **38,751** | **66** | **116%** |
 
@@ -461,7 +461,7 @@ What does fit, with margin:
 Item 7 is out (see above: the shared renderer needs 128% of the line period), so
 the *only* projected build that fit — the 2D core with the merge — is not
 buildable. The same build with two renderers is the 88,400 row: no fit, and the
-measured design is **83,272 ALUTs / 58,262 ALMs** today (the table at the top),
+measured design is **83,399 ALUTs / 58,401 ALMs** today (the table at the top),
 so what the A6 actually
 needs before any of this is about 24,000 ALUTs of things this list does not
 contain.
@@ -603,8 +603,10 @@ that halved the backdrop fill costs one extra M10K per renderer -- four of the
 553 for both. The lane select on the read path is all the logic it adds. The
 `Total RAM Blocks 0 / 553` row in `NDS.fit.summary` is an artefact of the
 aborted placement, not a memory total; the bit count above is the reliable
-figure (33%, ~183 block-equivalents of the 553). The two `Critical Warning
-(127005)` lines are the pre-existing SPU MIF depth notes.
+figure (33%, ~183 block-equivalents of the 553). There are no critical warnings any
+more: the two `Critical Warning (127005)` lines that used to appear here were the
+SPU MIF depth notes, fixed by padding those tables to the depth the synthesiser
+builds.
 
 Item 3 first went in as a *single* write-through shadow and came back out: the
 shadow only answers a completed line, while the composite pass for line y+1
