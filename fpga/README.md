@@ -824,6 +824,15 @@ build. So the framework gives back 29 of the 54 LABs the core was short; the
 rest would have to come out of an OSD, the scanline filter or the shadowmask,
 not out of a switch. `AREA.md` has both measurements.
 
+Three framework switches do the same for the video path, and each bypasses
+its module with the module's own latency so the picture does not shift:
+`MISTER_DISABLE_SHADOWMASK` (5 clocks), `MISTER_DISABLE_SCANLINES` (3) and
+`MISTER_DISABLE_OSD_VGA` (4; the analog menu overlay only, the HDMI overlay
+stays). Stacked on the deepest rung they map to 39,685 ALMs and 56,717
+ALUTs -- 94.7% of the device, 815 ALMs below t6 -- and the map report shows
+the saving coming from exactly those three modules. `AREA.md` has the table
+and the netlist check.
+
 Windows: run `fpga\build.bat` (or `build.bat "<quartus>\bin64"` for a
 non-default install location). It defaults to
 `C:\intelFPGA_lite\17.0\quartus\bin64`, runs the same flow, and prints

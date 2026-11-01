@@ -190,6 +190,46 @@ mostly floorplan and PLL, and the parts that do compress are the ones the
 picture depends on. A bitstream for the A6 remains out of reach at this feature
 set; a larger device or a cut in the core is the decision.
 
+### The framework video rung, measured (2026-11-01)
+
+Three more switches, all in `sys/sys_top.v` and all default-off, put the
+framework's cosmetic and overlay blocks behind bypasses that carry the module's
+own latency -- 5 clocks for the shadowmask, 3 for the scanline filter, 4 for the
+VGA OSD -- so the picture keeps its alignment instead of shifting by a few
+pixels:
+
+| switch | what stops being built | entity cost in the t6 report (ALUTs / regs) |
+|---|---|---|
+| `MISTER_DISABLE_SHADOWMASK` | the mask multiply on the HDMI path | 254 / 248 |
+| `MISTER_DISABLE_SCANLINES` | the scanline filter on the analog path | 39 / 6 |
+| `MISTER_DISABLE_OSD_VGA` | the menu overlay on the analog output | 859 / 540 |
+
+Those entity figures are in context, from the `sys_top` hierarchy of the t6 map
+report. The same table says where the rest of the framework sits: `ascal` 2,826
+ALUTs and 4,451 registers, the HDMI OSD 849 and 540, `audio_out` 1,599,
+`pll_hdmi_adj` 732, `pll_cfg_hdmi` 284, `vga_out` plus `vga_scaler_out` 520.
+Which is why the numbers below are 815 ALMs and not the ~1,000 the earlier
+projection guessed: the two OSDs and the scaler are the only framework blocks
+that are large, and two of the three cuts here are small blocks the picture
+barely notices.
+
+All three switches on top of t6:
+
+| build | ALMs | ALUTs | regs | warnings | of device |
+|---|---|---|---|---|---|
+| t6 | 40,500 | 58,146 | 29,287 | 124 | 96.6% |
+| t9, t6 plus the three bypasses | 39,685 | 56,717 | 28,422 | 126 | 94.7% |
+
+The netlist says the 815 ALMs came from exactly those three modules and nothing
+else: in the t9 report `shadowmask:HDMI_shadowmask` falls from 77 references to
+0, `scanlines:VGA_scanlines` from 21 to 0 and `osd:vga_osd` from 179 to 0, while
+`osd:hdmi_osd` stays at 159 and `ascal` keeps every one of its logic blocks, with
+only its mention count in the report moving (800 to 863) as the hierarchy around
+it shifts. The warning count is 126 against t6's 124, and not because anything
+was suppressed: `Warning (10036)` appears three times for `io_osd_vga`,
+`shadowmask_data` and `shadowmask_wr` (assigned, never read, now that their
+consumers are gone), and one `Warning (276027)` inferred-RAM notice drops out.
+
 One trap, because it cost two runs here: several macros in a single
 `--verilog_macro` value, or in one `set_global_assignment -name VERILOG_MACRO`
 line, apply only the **first** one and silently drop the rest. The build then

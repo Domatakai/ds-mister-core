@@ -1157,6 +1157,25 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 	reg [15:0] shadowmask_data;
 	reg        shadowmask_wr = 0;
 
+`ifdef MISTER_DISABLE_SHADOWMASK
+	// Area experiment: bypass the mask multiply with the module's own 5-clock
+	// latency, so the OSD below keeps its alignment.
+	reg [23:0] sm_d1, sm_d2, sm_d3, sm_d4, sm_d5;
+	reg sm_hs1, sm_hs2, sm_hs3, sm_hs4, sm_hs5;
+	reg sm_vs1, sm_vs2, sm_vs3, sm_vs4, sm_vs5;
+	reg sm_de1, sm_de2, sm_de3, sm_de4, sm_de5;
+	always @(posedge clk_hdmi) begin
+		sm_d1 <= dis_output ? 24'd0 : hdmi_data;
+		sm_d2 <= sm_d1; sm_d3 <= sm_d2; sm_d4 <= sm_d3; sm_d5 <= sm_d4;
+		sm_hs1 <= hdmi_hs; sm_hs2 <= sm_hs1; sm_hs3 <= sm_hs2; sm_hs4 <= sm_hs3; sm_hs5 <= sm_hs4;
+		sm_vs1 <= hdmi_vs; sm_vs2 <= sm_vs1; sm_vs3 <= sm_vs2; sm_vs4 <= sm_vs3; sm_vs5 <= sm_vs4;
+		sm_de1 <= hdmi_de; sm_de2 <= sm_de1; sm_de3 <= sm_de2; sm_de4 <= sm_de3; sm_de5 <= sm_de4;
+	end
+	assign hdmi_data_mask = sm_d5;
+	assign hdmi_hs_mask   = sm_hs5;
+	assign hdmi_vs_mask   = sm_vs5;
+	assign hdmi_de_mask   = sm_de5;
+`else
 	shadowmask HDMI_shadowmask
 	(
 		.clk(clk_hdmi),
@@ -1177,6 +1196,7 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 		.vs_out(hdmi_vs_mask),
 		.de_out(hdmi_de_mask)
 	);
+`endif
 
 	wire [23:0] hdmi_data_osd;
 	wire        hdmi_de_osd, hdmi_vs_osd, hdmi_hs_osd;
@@ -1381,6 +1401,24 @@ assign HDMI_TX_D  = hdmi_out_d;
 
 wire [23:0] vga_data_sl;
 wire        vga_de_sl, vga_ce_sl, vga_vs_sl, vga_hs_sl;
+`ifdef MISTER_DISABLE_SCANLINES
+	// Area experiment: no scanline filter, same 3-clock latency as the module.
+	reg [23:0] sl_d1, sl_d2, sl_d3;
+	reg sl_hs1, sl_hs2, sl_hs3, sl_vs1, sl_vs2, sl_vs3, sl_de1, sl_de2, sl_de3, sl_ce1, sl_ce2, sl_ce3;
+	always @(posedge clk_vid) begin
+		sl_d1 <= de_emu ? {r_out, g_out, b_out} : 24'd0;
+		sl_d2 <= sl_d1; sl_d3 <= sl_d2;
+		sl_hs1 <= hs_fix; sl_hs2 <= sl_hs1; sl_hs3 <= sl_hs2;
+		sl_vs1 <= vs_fix; sl_vs2 <= sl_vs1; sl_vs3 <= sl_vs2;
+		sl_de1 <= de_emu; sl_de2 <= sl_de1; sl_de3 <= sl_de2;
+		sl_ce1 <= ce_pix; sl_ce2 <= sl_ce1; sl_ce3 <= sl_ce2;
+	end
+	assign vga_data_sl = sl_d3;
+	assign vga_hs_sl   = sl_hs3;
+	assign vga_vs_sl   = sl_vs3;
+	assign vga_de_sl   = sl_de3;
+	assign vga_ce_sl   = sl_ce3;
+`else
 scanlines #(0) VGA_scanlines
 (
 	.clk(clk_vid),
@@ -1398,9 +1436,29 @@ scanlines #(0) VGA_scanlines
 	.de_out(vga_de_sl),
 	.ce_out(vga_ce_sl)
 );
+`endif
 
 wire [23:0] vga_data_osd;
 wire        vga_vs_osd, vga_hs_osd, vga_de_osd;
+`ifdef MISTER_DISABLE_OSD_VGA
+	// Area experiment: no menu overlay on the analog output, 4-clock latency
+	// matched to the module. The HDMI overlay is untouched.
+	reg [23:0] vo_d1, vo_d2, vo_d3, vo_d4;
+	reg vo_hs1, vo_hs2, vo_hs3, vo_hs4;
+	reg vo_vs1, vo_vs2, vo_vs3, vo_vs4;
+	reg vo_de1, vo_de2, vo_de3, vo_de4;
+	always @(posedge clk_vid) begin
+		vo_d1 <= vga_data_sl; vo_d2 <= vo_d1; vo_d3 <= vo_d2; vo_d4 <= vo_d3;
+		vo_hs1 <= vga_hs_sl; vo_hs2 <= vo_hs1; vo_hs3 <= vo_hs2; vo_hs4 <= vo_hs3;
+		vo_vs1 <= vga_vs_sl; vo_vs2 <= vo_vs1; vo_vs3 <= vo_vs2; vo_vs4 <= vo_vs3;
+		vo_de1 <= vga_de_sl; vo_de2 <= vo_de1; vo_de3 <= vo_de2; vo_de4 <= vo_de3;
+	end
+	assign vga_data_osd = vo_d4;
+	assign vga_hs_osd   = vo_hs4;
+	assign vga_vs_osd   = vo_vs4;
+	assign vga_de_osd   = vo_de4;
+	assign osd_status   = 1'b0;
+`else
 osd vga_osd
 (
 	.clk_sys(clk_sys),
@@ -1421,6 +1479,7 @@ osd vga_osd
 	.vs_out(vga_vs_osd),
 	.de_out(vga_de_osd)
 );
+`endif
 
 wire vga_cs_osd;
 csync csync_vga(clk_vid, vga_hs_osd, vga_vs_osd, vga_cs_osd);
