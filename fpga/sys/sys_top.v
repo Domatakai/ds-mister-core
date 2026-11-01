@@ -97,7 +97,6 @@ module sys_top
 
 	////////// I/O ALT /////////
 	output        SD_SPI_CS,
-	input         SD_SPI_MISO,
 	output        SD_SPI_CLK,
 	output        SD_SPI_MOSI,
 
@@ -107,7 +106,6 @@ module sys_top
 
 	////////// ADC //////////////
 	output        ADC_SCK,
-	input         ADC_SDO,
 	output        ADC_SDI,
 	output        ADC_CONVST,
 
@@ -126,18 +124,21 @@ module sys_top
 
 //////////////////////  Secondary SD  ///////////////////////////////////
 wire SD_CS, SD_CLK, SD_MOSI, SD_MISO, SD_CD;
+wire adc_sdo_tie = 1'b0;   // holds ADC_BUS bit 2, the pin no logic depended on
 
 `ifndef MISTER_DUAL_SDRAM
 	wire   sd_cd       = SDCD_SPDIF & ~SW[2]; // SW[2]=ON workaround for faulty boards without SD card detect pin.
 	assign SD_CD       = mcp_en ? mcp_sdcd : sd_cd;
-	assign SD_MISO     = SD_CD | (mcp_en ? SD_SPI_MISO : (VGA_EN | SDIO_DAT[0]));
+	// The DS core implements no secondary SD, so the SPI MISO input pin is gone
+	// from this top level (it only ever fed this expression).
+	assign SD_MISO     = SD_CD | (mcp_en ? 1'b0 : (VGA_EN | SDIO_DAT[0]));
 	assign SD_SPI_CS   = mcp_en ?  (mcp_sdcd  ? 1'bZ : SD_CS) : (sog & ~cs1 & ~VGA_EN) ? 1'b1 : 1'bZ;
 	assign SD_SPI_CLK  = (~mcp_en | mcp_sdcd) ? 1'bZ : SD_CLK;
 	assign SD_SPI_MOSI = (~mcp_en | mcp_sdcd) ? 1'bZ : SD_MOSI;
 	assign {SDIO_CLK,SDIO_CMD,SDIO_DAT} = av_dis ? 6'bZZZZZZ : (mcp_en | sd_cd) ? {vga_g,vga_r,vga_b} : {SD_CLK,SD_MOSI,SD_CS,3'bZZZ};
 `else
 	assign SD_CD       = mcp_sdcd;
-	assign SD_MISO     = mcp_sdcd | SD_SPI_MISO;
+	assign SD_MISO     = mcp_sdcd;
 	assign SD_SPI_CS   = mcp_sdcd ? 1'bZ : SD_CS;
 	assign SD_SPI_CLK  = mcp_sdcd ? 1'bZ : SD_CLK;
 	assign SD_SPI_MOSI = mcp_sdcd ? 1'bZ : SD_MOSI;
@@ -1839,7 +1840,10 @@ emu emu
 	.AUDIO_S(audio_s),
 	.AUDIO_MIX(audio_mix),
 
-	.ADC_BUS({ADC_SCK,ADC_SDO,ADC_SDI,ADC_CONVST}),
+	// ADC_SDO was an input pin no logic depended on; the bus keeps its width,
+	// with a tie net holding the bit that pin used to drive (an inout port has
+	// to be connected to a net, not to a constant).
+	.ADC_BUS({ADC_SCK,adc_sdo_tie,ADC_SDI,ADC_CONVST}),
 
 	.DDRAM_CLK(ram_clk),
 	.DDRAM_ADDR(ram_address),

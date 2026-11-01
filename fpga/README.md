@@ -704,11 +704,11 @@ Fmax.
 ### Warnings
 
 The mapper's log is triaged rather than filtered. A build reports **0 errors,
-0 critical warnings and 56 warnings**, every one of which carries a numeric id
+0 critical warnings and 53 warnings**, every one of which carries a numeric id
 and is accounted for below, so a new code in the log is a signal instead of
 noise.
 
-Six were real and are fixed:
+Seven were real and are fixed:
 
 - **127005, critical, twice** — the SPU's ADPCM tables have 89 and 9 entries,
   but the synthesiser builds 128-deep and 16-deep memories for them, so it
@@ -750,6 +750,15 @@ Six were real and are fixed:
   condition), 0 with this one. Block memory is unchanged (1,873,331 bits), so the
   tables are still in M10K, and the warning fixes together come out 76 ALMs and
   103 ALUTs smaller than before them.
+- **15610 twice, and 21074** — `SD_SPI_MISO` and `ADC_SDO` were top-level inputs
+  that nothing in the core reads: it implements no secondary SD card and no ADC,
+  and the framework only routed them into `SD_MISO` and the ADC bus. Both pins
+  are gone from `sys_top` and from the pin assignments, which is the only way to
+  clear "no output depends on this input" without implementing the hardware. The
+  ADC bus keeps its four bits with a tie net on the vacated one, because an inout
+  port has to be connected to a net rather than a constant. Nothing that was read
+  before is read now, and the design measures exactly the same as before it (see
+  `AREA.md`).
 
 What is left is the tool describing its own implementation, plus the framework:
 
@@ -762,7 +771,7 @@ What is left is the tool describing its own implementation, plus the framework:
 | `14320` | 9 | nodes Quartus folded away inside the PLL wrappers and in palette RAM it did not need |
 | `14284` / `14285` | 6 | the same folding reported per node, plus a RAM node it removed |
 | `10027` | 3 | a variable index into a 16-entry array in each core's register file and in the SPU step table: Quartus 17 prints this for a correctly sized variable index too and not for a constant one, so it cannot be removed without making the read constant |
-| `13xxx` / `15610` / `21074` / `12241` | 14 | the framework's own `sys_top`: SD-card tri-states that never reach a pin, the unused SDRAM chip select and clock enable, and the two inputs (SD SPI MISO, ADC SDO) this core does not implement |
+| `13xxx` / `13410` / `12241` | 11 | the framework's `sys_top` and the board: the secondary-SD open-drain buffers this core tri-states and never reaches a pin, the SDRAM chip select and clock enable that `sdram_ctrl` holds at 0 and 1 (selected, enabled) and Quartus therefore calls stuck, and the summary of those connectivity notes |
 
 The read-during-write notes were audited memory by memory rather than accepted.
 `rxq_mem` and `vfifo` cannot collide: both gate their push on `!full`, so the
