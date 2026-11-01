@@ -154,6 +154,42 @@ not a trimmed one. The remaining 54 LABs (~540 ALMs of LAB capacity) would have
 to come out of the framework -- one OSD, the scanline filter, the shadowmask,
 the MIDI link -- rather than out of the core.
 
+### The framework rung, measured (2026-11-01)
+
+So the last 54 LABs were sought in the framework, using switches the framework
+already carries in `sys/sys_top.v` rather than editing RTL: `MISTER_DISABLE_YC`
+removes the YC/S-Video output path and `MISTER_DISABLE_ALSA` removes ALSA
+audio. Neither is defined in the default build, so the default numbers in this
+file are untouched. Stacked on the deepest core rung:
+
+| rung | switches | ALMs | ALUTs | regs | DSP | of device |
+|---|---|---|---|---|---|---|
+| core deepest | five core switches | 40,905 | 58,975 | 30,248 | 65 | 97.6% |
+| t5 | + `MISTER_DISABLE_YC` | 40,780 | 58,580 | 29,976 | 63 | 97.3% |
+| t6 | + `MISTER_DISABLE_ALSA` | 40,500 | 58,146 | 29,287 | 63 | 96.6% |
+
+Both cuts are real in the netlist and not just in the settings: `yc_out`
+references in the map report fall from 154 to 2, `alsa` from 18 to 4, and the
+register count drops 268 then 689. The extra `Warning (14320)` lines are the
+synthesized-away nodes of the disabled paths, which is also why these rungs
+report 124 warnings instead of the default 53 -- nothing was filtered to get
+there.
+
+Fitted for real, t6 still does not go on the device:
+
+```
+Error (170012): Fitter requires 4216 LABs to implement the design, but the
+                device contains only 4191 LABs
+```
+
+**4,216 against 4,191: 25 over, down from 54.** So the two framework switches
+are worth 405 ALMs and 29 LABs -- 29 of the 54 the core was short, and the
+remaining 25 would have to come from removing an OSD, the scanline filter or
+the shadowmask outright. The framework is not spare capacity: it is already
+mostly floorplan and PLL, and the parts that do compress are the ones the
+picture depends on. A bitstream for the A6 remains out of reach at this feature
+set; a larger device or a cut in the core is the decision.
+
 One trap, because it cost two runs here: several macros in a single
 `--verilog_macro` value, or in one `set_global_assignment -name VERILOG_MACRO`
 line, apply only the **first** one and silently drop the rest. The build then

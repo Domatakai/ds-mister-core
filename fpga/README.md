@@ -814,6 +814,16 @@ BIOS calls at all. Even that deepest rung does not fit — fitted for real it
 needs **4,245 LABs against 4,191, 54 over** (`170012`) — so the switches price
 the cuts, they do not deliver a build. `AREA.md` has the ladder and the fit.
 
+Two framework switches can be stacked on the same deep rung, and they are the
+framework's own: `MISTER_DISABLE_YC` (no YC/S-Video output) and
+`MISTER_DISABLE_ALSA` (no ALSA audio), both already in `sys/sys_top.v`, so no
+RTL changes. They map to 40,780 and 40,500 ALMs (97.3% and 96.6% of the
+device), and the second one was fitted for real: **4,216 LABs against 4,191,
+25 over** (`170012`), 29 LABs closer than the core alone and still not a
+build. So the framework gives back 29 of the 54 LABs the core was short; the
+rest would have to come out of an OSD, the scanline filter or the shadowmask,
+not out of a switch. `AREA.md` has both measurements.
+
 Windows: run `fpga\build.bat` (or `build.bat "<quartus>\bin64"` for a
 non-default install location). It defaults to
 `C:\intelFPGA_lite\17.0\quartus\bin64`, runs the same flow, and prints
