@@ -142,6 +142,16 @@ localparam FMT_PCM8  = 2'd0,
 // padding is zero and unreachable, so it changes nothing the SPU can read.
 reg [15:0] adpcm_step [0:127];
 reg  [3:0] adpcm_didx [0:15];
+// A never-taken write gives the inferred memories a defined write port. With
+// none, Quartus prints 10030 ("net ... has no driver or initial value") once
+// for each port of each table: six warnings. The branch cannot execute, so the
+// tables stay read-only and the initial values above are all the SPU reads.
+// Measured on a throwaway module: three such warnings without this, none with.
+always @(posedge clk) if (1'b0) begin
+	adpcm_step[7'd0] <= 16'd0;
+	adpcm_didx[4'd0] <= 4'd0;
+end
+
 
 initial begin
 	integer k;
@@ -986,5 +996,11 @@ always @(*) begin
 end
 
 wire _unused = &{1'b0, mix_mode, srv_uix, snd_bias, 1'b0};
+	// Read the sink so the analyser does not call it "assigned but never read"
+	// (warning 10036). The branch cannot be taken and synthesises to nothing:
+	// measured on a throwaway module, the warning goes from 1 to 0 with this
+	// line and the netlist is unchanged.
+	always @(*) if (_unused) begin end
+
 
 endmodule

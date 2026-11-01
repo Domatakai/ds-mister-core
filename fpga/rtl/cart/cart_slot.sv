@@ -588,6 +588,12 @@ wire  [2:0] save_kind = det_boot[3] ? det_boot[2:0] : save_boot[2:0];
 wire [24:0] save_hint = SAVE_BASE;
 
 wire _unused = &{1'b0, erase_req, save_kind, save_hint, save_done};
+	// Read the sink so the analyser does not call it "assigned but never read"
+	// (warning 10036). The branch cannot be taken and synthesises to nothing:
+	// measured on a throwaway module, the warning goes from 1 to 0 with this
+	// line and the netlist is unchanged.
+	always @(*) if (_unused) begin end
+
 
 // Save master idle until M4 implements SRAM/EEPROM/Flash handshakes.
 assign save_req  = 1'b0;

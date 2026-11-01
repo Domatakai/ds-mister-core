@@ -620,5 +620,11 @@ wire _unused = &{1'b0, C_NOP, C_MTX_LOAD43, C_MTX_MULT44, C_MTX_MULT43,
                  C_PLTT_BASE, C_DIF_AMB, C_SPE_EMI, C_LIGHT_VEC, C_LIGHT_COL,
                  C_SHININESS, C_SWAPBUF, C_BOX_TEST, C_POS_TEST, C_VEC_TEST,
                  C_MTX_STORE, C_MTX_REST, need};
+	// Read the sink so the analyser does not call it "assigned but never read"
+	// (warning 10036). The branch cannot be taken and synthesises to nothing:
+	// measured on a throwaway module, the warning goes from 1 to 0 with this
+	// line and the netlist is unchanged.
+	always @(*) if (_unused) begin end
+
 
 endmodule

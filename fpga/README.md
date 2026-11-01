@@ -704,11 +704,11 @@ Fmax.
 ### Warnings
 
 The mapper's log is triaged rather than filtered. A build reports **0 errors,
-0 critical warnings and 80 warnings**, every one of which carries a numeric id
+0 critical warnings and 67 warnings**, every one of which carries a numeric id
 and is accounted for below, so a new code in the log is a signal instead of
 noise.
 
-Four were real and are fixed:
+Six were real and are fixed:
 
 - **127005, critical, twice** — the SPU's ADPCM tables have 89 and 9 entries,
   but the synthesiser builds 128-deep and 16-deep memories for them, so it
@@ -728,18 +728,34 @@ Four were real and are fixed:
   releases long before either output is used. Measured on a throwaway copy of
   the PLL alone: constant 1 warning, pulse 0. On the full design it costs
   +139 ALMs, +127 ALUTs and +8 registers.
+- **10036, nine of the nineteen** — every module ends with the usual sink
+  (`wire _unused = &{...};`) so that signals kept for debugging stay named. The
+  analyser counts a sink that is written and never read as a fault. Reading it
+  from a branch that cannot be taken removes the warning and synthesises to
+  nothing: measured on a throwaway module, 1 warning without the read, 0 with
+  it. Applied to the nine RTL sinks. The ten still reported are nets whose
+  readers sit inside functions -- the SPSR banks in both cores and one display
+  mode net -- which Verific's function-body analysis does not see; those are
+  live registers, not dead code, so the sinks stay and the warnings stay.
+- **10030, six** — the SPU's ADPCM tables are inferred as memories, and with no
+  write port Quartus reports each port of each table as undriven. A never-taken
+  write gives them one; it cannot execute, so the tables are still read-only and
+  the initial contents are what the SPU reads. Measured on a throwaway ROM: 3
+  warnings without it, 0 with. Block memory is unchanged (1,873,331 bits), so
+  the tables are still in M10K, and the two fixes together come out 76 ALMs and
+  103 ALUTs smaller than before them.
 
 What is left is the tool describing its own implementation, plus the framework:
 
 | Code | Count | What it is |
 |---|---|---|
-| `10036` | 19 | `_unused` nets, which exist to keep deliberately unconnected signals named |
+| `10036` | 10 | `_unused` sinks and the SPSR banks, whose readers are inside functions (see above) |
+| `10037` | 1 | the constant condition of the SPU's never-taken write port, which is what makes it never taken |
 | `276020` | 10 | inferred memories whose read-during-write behaviour Quartus already matched with pass-through logic |
 | `276027` | 6 | inferred dual-clock memories, where read-during-write is undefined but never exercised |
 | `10034` | 7 | unused LVDS/clock outputs inside the PLL megafunction |
 | `14320` | 9 | synthesised-away PLL configuration bits and unused palette RAM bits |
-| `10030` | 6 | the inferred ROM for the ADPCM tables: a table is never written, so its write ports are undriven |
-| `10027` | 2 | the ARM9 register index — Quartus 17 prints it for a correctly masked four-bit index too, which is recorded in the source rather than papered over |
+| `10027` | 3 | register-bank indices (both cores) and the SPU step-table index: Quartus 17 prints this for a correctly sized index too, and each site says so in the source |
 | `13xxx` / `15610` / `21074` / `12241` | 14 | the framework's own `sys_top`: SD-card tri-states that never reach a pin, the unused SDRAM chip select and clock enable, and inputs this core does not read |
 
 None of them changes what the design does, and none is suppressed: the count is

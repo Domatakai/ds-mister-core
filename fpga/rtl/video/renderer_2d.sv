@@ -1319,5 +1319,11 @@ always @(posedge clk) begin
 end
 
 wire _unused = &{1'b0, pixel_ce, s_h, mcol, mrow, sp_wh2[13:7]};
+	// Read the sink so the analyser does not call it "assigned but never read"
+	// (warning 10036). The branch cannot be taken and synthesises to nothing:
+	// measured on a throwaway module, the warning goes from 1 to 0 with this
+	// line and the netlist is unchanged.
+	always @(*) if (_unused) begin end
+
 
 endmodule
