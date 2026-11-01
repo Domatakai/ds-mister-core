@@ -91,6 +91,16 @@ fitted on its own the design still needs **5,883 LABs**, exactly the count it
 needs with them on, and placement preparation stretches from under 18 minutes to
 21:51. Neither setting is in the qsf.
 
+A third lever was measured and rejected. The two engine-facing palette copies
+are 16 bits wide, but an engine reads BGR555 and never looks at bit 15, so the
+fitter was already deleting that bit from both RAMs (`14320` on `ram_block1a15`
+of each). Declaring the copies 15 bits wide says the same thing in the source
+and does clear those two notes plus the `14284` header that carried them,
+taking the log from 53 warnings to 49 -- with registers (53,805) and block
+memory (1,873,331 bits) exactly where they were. It also maps to **83,409
+combinational ALUTs against 83,296**, +113, so the explicit width costs logic
+that the optimiser's version did not. The palette stays 16 bits.
+
 ## What it would take to fit (measured)
 
 The device needs 16,474 ALMs back. Rather than projecting the cuts, the design
