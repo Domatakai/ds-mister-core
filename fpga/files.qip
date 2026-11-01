@@ -24,6 +24,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/cpu/swi_hle.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cpu/swi_share.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cpu/cpu_ce.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cpu/cpu_ce_bridge.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/cpu/oc_lookup.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/bus/main_bus.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/bus/dma_engine.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/bus/ipc.sv

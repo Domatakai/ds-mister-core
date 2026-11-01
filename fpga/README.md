@@ -1061,6 +1061,11 @@ vvp /tmp/tb_ddrb
 iverilog -g2012 -o /tmp/tb_cart tb/tb_cart_slot.sv \
          rtl/cart/cart_slot.sv rtl/cart/save_spi.sv rtl/cart/save_probe.sv
 vvp /tmp/tb_cart
+
+# per-game overclock reference — auto mode follows the loaded game code
+iverilog -g2012 -o /tmp/tb_oc tb/tb_oc_lookup.sv rtl/cpu/oc_lookup.sv
+vvp /tmp/tb_oc
+# tb_oc_lookup: PASS
 # tb_cart_slot: PASS
 
 # 5. main bus — masters, WRAM/IO, SDRAM window, cart bridge, cheat patch,
@@ -1334,7 +1339,8 @@ this core added:
 | **Sound** | master volume, **Sound output Stereo / Mono / Headphones** (the DS Settings wording), SPU sync, I²S latency 1 / 2 / 4 frames, audio filter Off / Warm / Bright / Bass, stereo width Off / Soft / Strong |
 | **Touch & Pad** | stylus cursor Off / D-pad / Left stick, stylus tap L2 / R2 / L3 / R3, **Lid close Ignore / L2+R2 / L3+R3**, microphone Off / Button / Host device, rumble pak, face + shoulder swaps, pad profile |
 | **Firmware** | **ARM7 BIOS HLE / bios7.bin**, **ARM9 BIOS HLE / bios9.bin**, **Firmware HLE / firmware.bin**, **Language English / Japanese / French / German / Italian / Spanish**, **Auto-start Manual / Auto**, region |
-| **System** | core speed 100 / 150 / 200 / Max %, CPU overclock Normal / ARM7 ×2 / ARM7 ×4, frameskip, auto frameskip, rewind buffer. A `Diagnostics` header row follows with FPS, frame graph, bus LEDs, log level and **Disable all cheats** |
+| **System** | core speed 100 / 150 / 200 / Max %, CPU overclock Normal / ARM7 ×2 / ARM7 ×4, **auto overclock On / Off** (per
+game — see below), frameskip, auto frameskip, rewind buffer. A `Diagnostics` header row follows with FPS, frame graph, bus LEDs, log level and **Disable all cheats** |
 | **MIDI** | MT-32-pi link, MIDI volume 0–100% for the return path, internal demo stream, Pi LCD on screen, LCD size 1x / 2x, corner Top left / Top right / Bottom left / Bottom right, synth MT-32 / SoundFont, SoundFont bank 0-7 |
 
 Plus the cheat file load (`F2,.CHT` — parsed by `cheat_engine`, applied as
@@ -1361,6 +1367,30 @@ and a game that reads the settings sees the OSD's choice.
 sound-output settings, driving the same video gain and mix the rows always
 did.
 
+### Game-only rows and the per-game overclock
+
+The menu a running cartridge shows is the cartridge's: rows that only mean
+something while a game is up carry an `h0` prefix, so the OSD hides them until
+`status_menumask` bit 0 (a `.nds` has finished downloading) sets — save type,
+erase save data, CPU overclock, auto overclock and *Disable all cheats*.
+**Boot menu** and **Clear game slots** carry `h1` (bit 1 = at least one slot
+holds a game), because they are about staged games rather than the running one.
+Nothing is removed from the menu, only hidden while it cannot apply.
+
+**Auto overclock** (status bit 93, written On-first so a fresh core has it on)
+makes the overclock a property of the game instead of a setting to remember.
+`rtl/cpu/oc_lookup.sv` reads the four-character game code out of the loaded
+cart's header (bytes 0x0C..0x0F; `cart_slot` exports it as `slot_code`, taken
+from the slot the window is reading) and selects that title's enable pattern
+for `cpu_ce`. The lookup is combinational, so it is already right after a boot,
+after a core reset, and after the boot menu switches slots — there is no latch
+that a reset could clear, and the mode always belongs to the game on screen.
+
+The table inside `oc_lookup` is a tuning reference, not a measurement: a listed
+code is a deliberate decision about that title, every unlisted code runs
+Normal, and with no cartridge loaded the code reads zero, which is Normal too.
+Each entry is one 32-bit compare, so adding a title is one line and no memory.
+
 ### Profiles
 
 The config string is now at version `v,1`: bit 29 moved from *Firmware* to
@@ -1371,7 +1401,9 @@ bits 59:58 are the CPU overclock row, which from this build on really does
 something: it selects the enable pattern `cpu_ce` gives the two cores
 (Normal is the DS's 2:1, ARM7 ×2 runs the ARM7 at the ARM9's rate, ARM7 ×4
 is that 2:1 the other way round). The row was in the menu — and in the
-website's spec — before the cores had a clock to gate.
+website's spec — before the cores had a clock to gate. Bit 93 is the auto row:
+On by default, it hands the pattern choice to the loaded game's reference, and
+Off gives the manual row full control again.
 
 The website's OSD Lab mirrors these rows one-for-one (`src/lib/osd-tree.ts`);
 the video preview reacts to layout, rotation, backlight and scanlines.

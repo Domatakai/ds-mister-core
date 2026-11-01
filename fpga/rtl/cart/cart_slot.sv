@@ -94,7 +94,8 @@ module cart_slot (
 	input            save_done,
 
 	output reg        cart_loaded = 0,
-	output reg [31:0] rom_bytes = 0  // detected ROM size in bytes (up to 512 MB)
+	output reg [31:0] rom_bytes = 0, // detected ROM size in bytes (up to 512 MB)
+	output     [31:0] slot_code     // header 0x0C..0x0F of the boot slot
 );
 
 localparam SAVE_BASE = 25'h280000;
@@ -144,6 +145,12 @@ assign slot_caps = {caps[3], caps[2], caps[1], caps[0]};   // byte i = slot i
 assign slot9_entry = entry9[boot_slot];
 assign slot7_entry = entry7[boot_slot];
 assign slot_save = saves;                                  // bits 4i..4i+3 = slot i
+
+// the game code of the slot the window reads: "AMCE" reads as 32'h414D4345,
+// i.e. header bytes 0x0C..0x0F in the order the cartridge stores them. It is
+// the key the per-game overclock reference is looked up by.
+assign slot_code = {hdr[{boot_slot, 4'd12}], hdr[{boot_slot, 4'd13}],
+                    hdr[{boot_slot, 4'd14}], hdr[{boot_slot, 4'd15}]};
 
 //------------------------------------------------------------------
 // Save chip and probe

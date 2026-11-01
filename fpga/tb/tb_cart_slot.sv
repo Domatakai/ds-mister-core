@@ -52,6 +52,7 @@ wire [24:0] save_addr;
 wire [15:0] save_din;
 wire cart_loaded;
 wire [31:0] rom_bytes;
+wire [31:0] slot_code;
 
 // game slots
 reg  [1:0] boot_slot = 2'd0;
@@ -87,7 +88,7 @@ cart_slot dut (
 	.erase_save(erase_save), .save_type(save_type),
 	.save_req(save_req), .save_wr(save_wr),
 	.save_addr(save_addr), .save_din(save_din), .save_done(1'b0),
-	.cart_loaded(cart_loaded), .rom_bytes(rom_bytes),
+	.cart_loaded(cart_loaded), .rom_bytes(rom_bytes), .slot_code(slot_code),
 	.boot_slot(boot_slot), .load_slot(load_slot), .slot_valid(slot_valid),
 	.slot_clear(slot_clear),
 	.hdr_slot(hdr_slot), .hdr_char(hdr_char), .hdr_data(hdr_data),
@@ -388,6 +389,8 @@ initial begin
 	check("slot 0 title + game code are read back", title_err == 0);
 	check("slot 0 keeps its declared size", slot_caps[7:0] === 8'd8);
 	check("slot 0 records its save type", slot_save[3:0] === 4'd3);
+	// the game code reaches the per-game overclock lookup as a 32-bit key
+	check("slot 0 game code reads as AMCE", slot_code === 32'h414D4345);
 	wait_det(2'd0, 3'd3);
 	check("the probe classifies slot 0's chip as FLASH 512K",
 	      slot_save_det[3:0] === 4'd3);

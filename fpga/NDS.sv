@@ -75,6 +75,9 @@
 //                            the spec row for the DS's second card slot;
 //                            only slot 1 loads today)
 //   [90]    firmware         (HLE / firmware.bin. Reserved)
+//   [93]    auto overclock   (On/Off. Written On-first (0), so a fresh core
+//                            takes the per-game reference from the loaded
+//                            cart's game code instead of Normal)
 //   [123]   clear game slots (action: forget every staged game)
 //   [124]   boot menu        (action: open the in-core game picker)
 //============================================================================
@@ -115,7 +118,7 @@ assign BUTTONS   = 0;
 // menu names games from their own headers. Further extensions would be
 // packed three characters each ("NDSBIN"), with no separator.
 //------------------------------------------------------------------
-localparam [18767:0] CONF_STR = {   // 2346 string bytes, the 6-char `BUILD_DATE
+localparam [19119:0] CONF_STR = {   // 2390 string bytes, the 6-char `BUILD_DATE
                                     // (sys/build_id.tcl: %y%m%d) included
                                     // (tools/confstr_len.py checks the width)
 "NDS MiSTer Test;;",
@@ -123,11 +126,11 @@ localparam [18767:0] CONF_STR = {   // 2346 string bytes, the 6-char `BUILD_DATE
 "P1,Slot-1 Card;",
 "P1F1,NDS;",
 "P1-;",
-"P1O[4:2],Save type,Auto,EEPROM 512K,EEPROM 8K,FLASH 512K,FLASH 1M,FRAM,NAND;",
+"h0P1O[4:2],Save type,Auto,EEPROM 512K,EEPROM 8K,FLASH 512K,FLASH 1M,FRAM,NAND;",
 "P1O[89:88],Slot-2,None,GBA cartridge,RAM expansion;",
-"P1T[126],Erase save data;",
-"P1T[124],Boot menu;",
-"P1T[123],Clear game slots;",
+"h0P1T[126],Erase save data;",
+"h1P1T[124],Boot menu;",
+"h1P1T[123],Clear game slots;",
 "-;",
 "P2,Screens;",
 "P2O[7:5],Screen layout,Vertical,Horizontal,Top only,Bottom only;",
@@ -169,7 +172,8 @@ localparam [18767:0] CONF_STR = {   // 2346 string bytes, the 6-char `BUILD_DATE
 "-;",
 "P6,System;",
 "P6O[41:40],Core speed,100%,150%,200%,Max;",
-"P6O[59:58],CPU overclock,Normal,ARM7 x2,ARM7 x4;",
+"h0P6O[59:58],CPU overclock,Normal,ARM7 x2,ARM7 x4;",
+"h0P6O[93],Auto overclock,On,Off;",
 "P6O[43:42],Frameskip,Off,1,2,3;",
 "P6O[44],Auto frameskip,Off,On;",
 "P6O[46:45],Rewind buffer,Off,5 s,15 s,30 s;",
@@ -179,7 +183,7 @@ localparam [18767:0] CONF_STR = {   // 2346 string bytes, the 6-char `BUILD_DATE
 "P6O[48],Frame graph,Off,On;",
 "P6O[49],Bus activity LEDs,Off,On;",
 "P6O[51:50],Log level,Off,Errors,Verbose;",
-"P6T[125],Disable all cheats;",
+"h0P6T[125],Disable all cheats;",
 "-;",
 "P7,MIDI;",
 "P7O[70],MT-32-pi,Off,On;",
@@ -204,6 +208,11 @@ localparam [18767:0] CONF_STR = {   // 2346 string bytes, the 6-char `BUILD_DATE
 // save file access (sd_*), joysticks, PS/2
 //------------------------------------------------------------------
 wire [127:0] status;
+// OSD row visibility: rows that only mean something while a cartridge is
+// up are masked on these (CONF_STR's h0/h1 prefixes), so a loaded core
+// shows the cartridge's menu instead of a list of dead options.
+wire        game_loaded;   // a .nds has finished downloading
+wire        any_slot;      // at least one staged game exists
 wire   [1:0] buttons;
 wire         forced_scandoubler;
 wire  [10:0] ps2_key;
@@ -252,7 +261,7 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1), .VDNUM(1)) hps_io
 	.forced_scandoubler(forced_scandoubler),
 	.buttons(buttons),
 	.status(status),
-	.status_menumask(16'd0), // no conditional menu entries yet (H0/d0)
+	.status_menumask({14'd0, any_slot, game_loaded}), // h0 = game loaded, h1 = a slot exists
 	.ps2_key(ps2_key),
 	.joystick_0(joystick_0),
 	.joystick_1(joystick_1),
@@ -344,6 +353,7 @@ wire  [1:0] tap_sel       = status[55:54];
 wire        face_swap     = status[56];
 wire        shoulder_swap = status[57];
 wire  [1:0] oc_mode       = status[59:58];
+wire        auto_oc       = ~status[93];  // row is written On,Off: 0 = On
 wire  [2:0] vfilter       = status[62:60]; // Video filter
 wire  [2:0] palette_sel   = status[65:63]; // Colour palette
 wire  [1:0] afilter       = status[67:66]; // Audio filter
@@ -833,6 +843,10 @@ sdram_ctrl sdram_ctrl (
 //------------------------------------------------------------------
 wire        cart_loaded;
 wire [31:0] rom_bytes;
+wire [31:0] slot_code;
+
+assign game_loaded = cart_loaded;
+assign any_slot    = |slot_valid;
 
 // The DDR3 side of the cart runs on the framework's own reference clock
 // (`clk_ddr`), because the DDRAM IP's PLL and PHY phase are generated for
@@ -874,6 +888,7 @@ cart_slot cart_slot (
 	.save_type(save_type),
 	.cart_loaded(cart_loaded),
 	.rom_bytes(rom_bytes),
+	.slot_code(slot_code),
 
 	// four staged games: the window reads the chosen slot, downloads fill
 	// the lowest empty one, and the titles come from the ROM headers
@@ -1277,9 +1292,20 @@ cheat_engine cheat_engine (
 // engine) so that their timing follows the CPU's rate; the RTC's crystal and
 // the 48 kHz audio deliberately stay on absolute time.
 //------------------------------------------------------------------
+// The mode the CPUs actually get: the manual row, or the per-game reference
+// that the loaded cart's game code selects (rtl/cpu/oc_lookup.sv).
+wire [1:0] oc_eff;
+
+oc_lookup oc_lookup (
+	.manual(oc_mode),
+	.auto_on(auto_oc),
+	.code(slot_code),
+	.mode(oc_eff)
+);
+
 cpu_ce cpu_ce (
 	.clk(clk_sys),
-	.mode(oc_mode),
+	.mode(oc_eff),
 	.ce9(ce9),
 	.ce7(ce7)
 );
