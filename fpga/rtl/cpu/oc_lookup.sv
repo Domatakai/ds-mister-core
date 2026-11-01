@@ -33,10 +33,7 @@ localparam [1:0] OC_NORMAL  = 2'd0,   // the DS's own 2:1 ARM9:ARM7 ratio
 // The reference. "AMCE" is the code the cart bench loads, so the bench
 // exercises a real entry rather than a made-up one; add a line per title.
 function automatic [1:0] ref_mode (input [31:0] c);
-	case (c)
-	32'h414D4345: ref_mode = OC_ARM7_X2;   // "AMCE"
-	default:      ref_mode = OC_NORMAL;
-	endcase
+	ref_mode = (c == 32'h414D4345) ? OC_ARM7_X2 : OC_NORMAL;   // "AMCE"
 endfunction
 
 assign mode = auto_on ? ref_mode(code) : manual;

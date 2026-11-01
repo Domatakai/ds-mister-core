@@ -213,7 +213,10 @@ endfunction
 function [31:0] rread (input [4:0] r);
 	begin
 		if (r == 5'd15) rread = pc + (insn_thumb ? 32'd2 : 32'd4);
-		else            rread = regs[r];
+		// r == 15 is taken above, so the index is 0..14: mask it to the four
+		// bits the 16-entry array needs instead of handing the synthesiser a
+		// five-bit index that can address 32 slots (warning 10027)
+		else            rread = regs[r[3:0]];
 	end
 endfunction
 

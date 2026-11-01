@@ -135,10 +135,16 @@ localparam FMT_PCM8  = 2'd0,
 //------------------------------------------------------------------
 // ADPCM tables
 //------------------------------------------------------------------
-reg [15:0] adpcm_step [0:88];
-reg  [3:0] adpcm_didx [0:8];
+// Constant tables. They are read only at 0..88 and 0..8, but they are declared
+// and padded to the 128/16 entries the synthesiser builds for them: a table
+// shorter than the memory it lands in makes Quartus pair a 128-deep RAM with a
+// 89-entry initialisation file and raise critical warning 127005 about it. The
+// padding is zero and unreachable, so it changes nothing the SPU can read.
+reg [15:0] adpcm_step [0:127];
+reg  [3:0] adpcm_didx [0:15];
 
 initial begin
+	integer k;
 	adpcm_step[ 0] = 16'h0007; adpcm_step[ 1] = 16'h0008;
 	adpcm_step[ 2] = 16'h0009; adpcm_step[ 3] = 16'h000A;
 	adpcm_step[ 4] = 16'h000B; adpcm_step[ 5] = 16'h000C;
@@ -190,6 +196,9 @@ initial begin
 	adpcm_didx[4] = 4'd2; adpcm_didx[5] = 4'd4;
 	adpcm_didx[6] = 4'd6; adpcm_didx[7] = 4'd8;
 	adpcm_didx[8] = 4'd0;
+	// unreachable tail: keeps the table the same depth as the memory it infers
+	for (k = 89; k < 128; k = k + 1) adpcm_step[k] = 16'd0;
+	for (k = 9;  k < 16;  k = k + 1) adpcm_didx[k] = 4'd0;
 end
 
 //------------------------------------------------------------------

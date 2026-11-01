@@ -701,6 +701,42 @@ are the difference between passing the mapper's `170011` node check and
 tripping it, so they are worth keeping unless you deliberately trade area for
 Fmax.
 
+### Warnings
+
+The mapper's log is triaged rather than filtered. A build reports **0 errors,
+0 critical warnings and 82 warnings** (80 of them carry a numeric id; the
+other two are the summary lines for the synthesized-away node lists), and every remaining one is accounted for
+here, so a new code in the log is a signal instead of noise.
+
+Three were real and are fixed:
+
+- **127005, critical, twice** — the SPU's ADPCM tables have 89 and 9 entries,
+  but the synthesiser builds 128-deep and 16-deep memories for them, so it
+  paired each array with an initialisation file whose depth disagreed. The
+  tables are now declared and zero-padded to the depth that is actually built;
+  the padding is unreachable and the SPU bench reads the same values.
+- **10762** — the per-game overclock lookup was a 32-bit `case`, too wide for
+  the tool to check for completeness. It is a single compare now.
+- **10027 on the ARM7** — `rread` indexed the 16-entry register bank with the
+  instruction's five-bit field. `r == 15` is taken above it, so the index is
+  0..14, and it is masked to four bits as the ARM9 core already did.
+
+What is left is the tool describing its own implementation, plus the framework:
+
+| Code | Count | What it is |
+|---|---|---|
+| `10036` | 19 | `_unused` nets, which exist to keep deliberately unconnected signals named |
+| `276020` | 10 | inferred memories whose read-during-write behaviour Quartus already matched with pass-through logic |
+| `276027` | 6 | inferred dual-clock memories, where read-during-write is undefined but never exercised |
+| `10034` | 7 | unused LVDS/clock outputs inside the PLL megafunction |
+| `14320` | 9 | synthesised-away PLL configuration bits and unused palette RAM bits |
+| `10030` | 6 | the inferred ROM for the ADPCM tables: a table is never written, so its write ports are undriven |
+| `10027` | 2 | the ARM9 register index — Quartus 17 prints it for a correctly masked four-bit index too, which is recorded in the source rather than papered over |
+| `13xxx` / `15610` / `21074` / `12241` | 14 | the framework's own `sys_top`: SD-card tri-states that never reach a pin, the unused SDRAM chip select and clock enable, and inputs this core does not read |
+
+None of them changes what the design does, and none is suppressed: the count is
+reported as it is so the next real warning is visible.
+
 ### Reduced builds
 
 Three subsystems can be compiled out for area experiments, without touching the
