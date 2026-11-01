@@ -704,7 +704,7 @@ Fmax.
 ### Warnings
 
 The mapper's log is triaged rather than filtered. A build reports **0 errors,
-0 critical warnings and 57 warnings**, every one of which carries a numeric id
+0 critical warnings and 56 warnings**, every one of which carries a numeric id
 and is accounted for below, so a new code in the log is a signal instead of
 noise.
 
@@ -743,19 +743,18 @@ Six were real and are fixed:
   read that already exists and synthesises to nothing. Measured on a throwaway
   module with the same shape: 5 such warnings without it, 0 with.
 - **10030, six** — the SPU's ADPCM tables are inferred as memories, and with no
-  write port Quartus reports each port of each table as undriven. A never-taken
-  write gives them one; it cannot execute, so the tables are still read-only and
-  the initial contents are what the SPU reads. Measured on a throwaway ROM: 3
-  warnings without it, 0 with. Block memory is unchanged (1,873,331 bits), so
-  the tables are still in M10K, and the two fixes together come out 76 ALMs and
+  write port Quartus reports each port of each table as undriven. Entry 0 is now
+  rewritten with the value it already holds, which defines the ports without
+  changing a table entry. Measured on a throwaway ROM: 3 warnings with no write
+  port, 1 with a never-taken write (that form also earns a 10037 for the constant
+  condition), 0 with this one. Block memory is unchanged (1,873,331 bits), so the
+  tables are still in M10K, and the warning fixes together come out 76 ALMs and
   103 ALUTs smaller than before them.
 
 What is left is the tool describing its own implementation, plus the framework:
 
 | Code | Count | What it is |
 |---|---|---|
-| `10036` | 10 | `_unused` sinks and the SPSR banks, whose readers are inside functions (see above) |
-| `10037` | 1 | the constant condition of the SPU's never-taken write port, which is what makes it never taken |
 | `276020` | 10 | inferred memories whose read-during-write behaviour Quartus already matched with pass-through logic |
 | `276027` | 6 | inferred dual-clock memories, where read-during-write is undefined but never exercised |
 | `10034` | 7 | output ports of Intel's generated `altera_pll`/`altera_cyclonev_pll` that the IP itself leaves undriven |
@@ -764,6 +763,17 @@ What is left is the tool describing its own implementation, plus the framework:
 | `14284` / `14285` | 6 | the same folding reported per node, plus a RAM node it removed |
 | `10027` | 3 | a variable index into a 16-entry array in each core's register file and in the SPU step table: Quartus 17 prints this for a correctly sized variable index too and not for a constant one, so it cannot be removed without making the read constant |
 | `13xxx` / `15610` / `21074` / `12241` | 14 | the framework's own `sys_top`: SD-card tri-states that never reach a pin, the unused SDRAM chip select and clock enable, and the two inputs (SD SPI MISO, ADC SDO) this core does not implement |
+
+The read-during-write notes were audited memory by memory rather than accepted.
+`rxq_mem` and `vfifo` cannot collide: both gate their push on `!full`, so the
+write pointer cannot equal the read pointer being read. `comp` is rebuilt by its
+state machine before the transform that consumes it. `q_mem` feeds the transmit
+shift register through a combinational read, and `mem` in the backup chip is
+written only during a WRITE command and read only during a READ command; in both
+the edge a write lands on is after the byte has been used, so the old value is
+the correct value. The rest (`ascal`, `mt32pi`, `shadowmask`) are framework
+files. None of them needs a bypass, and adding one would spend timing for no
+functional gain.
 
 None of them changes what the design does, and none is suppressed: the count is
 reported as it is so the next real warning is visible.
