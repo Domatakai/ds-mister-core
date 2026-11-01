@@ -118,6 +118,47 @@ committed area settings, the macro passed on the command line:
 Those two reduced rows predate the cart read cache and the per-game overclock
 lookup; the default row above is the current measurement of all of it.
 
+### The cut ladder, measured (2026-11-01)
+
+Two more switches price the coarse cuts the ranked list could not deliver:
+`NDS_ONE_SCREEN` compiles engine B out (one renderer answers both screens, the
+bottom pixel coming back blank) and `NDS_NO_SWI_HLE` compiles the shared BIOS
+SWI bank out (every BIOS call then vectors to the absent BIOS, so that rung is a
+measurement only, never a product). Each row is one clean `quartus_map` on
+`5CSEBA6U23I7` with the committed area settings and the macros in a scratch
+`.qsf`; the first two rows re-measure the older table above on today's tree.
+
+| build | ALMs | ALUTs | registers | vs A6 (41,910 ALMs) |
+|---|---|---|---|---|
+| full (committed default) | 58,325 | 83,296 | 53,805 | 139% |
+| + `NDS_NO_3D` | 54,170 | 78,143 | 46,549 | 129% |
+| + `NDS_NO_CHEAT` `NDS_NO_SPU` | 48,545 | 70,479 | 38,852 | 116% |
+| + `NDS_ONE_SCREEN` | 42,061 | 60,838 | 31,058 | 100.4% |
+| + `NDS_NO_SWI_HLE` | **40,905** | **58,975** | **30,248** | **97.6%** |
+
+The second 2D engine is the largest single item left once the 3D pipeline is
+gone: 6,484 ALMs and 9,641 ALUTs, an eighth of the design, which is why the
+shared-renderer item was worth chasing. Taking it brings the mapper to 100.4%
+and the last rung to 97.6% -- but the mapper's percentage is not the verdict.
+Fitted for real, that deepest rung still does not go on the device:
+
+```
+Error (170012): Fitter requires 4245 LABs to implement the design, but the
+                device contains only 4191 LABs
+```
+
+**4,245 LABs against 4,191: 54 over, 1.3%.** So no combination of the five
+switches fits, and the configuration that comes closest is already a 2D,
+single-screen, silent core without cheats or BIOS calls -- a different product,
+not a trimmed one. The remaining 54 LABs (~540 ALMs of LAB capacity) would have
+to come out of the framework -- one OSD, the scanline filter, the shadowmask,
+the MIDI link -- rather than out of the core.
+
+One trap, because it cost two runs here: several macros in a single
+`--verilog_macro` value, or in one `set_global_assignment -name VERILOG_MACRO`
+line, apply only the **first** one and silently drop the rest. The build then
+looks untouched and the rung measures nothing. One assignment per macro.
+
 So the 3D pipeline is worth **4,164 ALMs, 5,150 ALUTs, 7,256 registers and 22
 DSP blocks**, and the cheat engine plus the SPU together are worth **5,793 ALMs,
 7,897 ALUTs and 7,697 registers**. Both are less than the standalone-ALUT projections this file

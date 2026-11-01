@@ -789,20 +789,30 @@ reported as it is so the next real warning is visible.
 
 ### Reduced builds
 
-Three subsystems can be compiled out for area experiments, without touching the
+Five subsystems can be compiled out for area experiments, without touching the
 default build:
 
 ```bash
-quartus_map NDS --verilog_macro="NDS_NO_3D=1"     # no 3D pipeline
-quartus_map NDS --verilog_macro="NDS_NO_CHEAT=1"  # no cheat engine
-quartus_map NDS --verilog_macro="NDS_NO_SPU=1"    # no SPU (silent audio)
+quartus_map NDS --verilog_macro="NDS_NO_3D=1"      # no 3D pipeline
+quartus_map NDS --verilog_macro="NDS_NO_CHEAT=1"   # no cheat engine
+quartus_map NDS --verilog_macro="NDS_NO_SPU=1"     # no SPU (silent audio)
+quartus_map NDS --verilog_macro="NDS_ONE_SCREEN=1" # no engine B
+quartus_map NDS --verilog_macro="NDS_NO_SWI_HLE=1" # no BIOS SWI bank
 ```
+
+One macro per option. Several inside a single `--verilog_macro` value, or in one
+`set_global_assignment -name VERILOG_MACRO` line, apply only the first and drop
+the rest without a word, so the rung silently measures the unchanged design.
 
 Pass them through the command line: on a project Quartus has open, a
 `VERILOG_MACRO` written into the `.qsf` can be rewritten out from under you.
-Measured on the A6 with the area settings, `NDS_NO_3D` maps to 54,220 ALMs and
-all three together to 48,427 — still 116% of the device, so these are
-measurement switches, not a fitting configuration. `AREA.md` has the table.
+Measured on the A6 with the area settings, the rungs map to 54,170 ALMs
+(`NDS_NO_3D` alone), 48,545 (3D, cheats and sound out), 42,061 (also one screen)
+and 40,905 (also the BIOS bank) — 129%, 116%, 100.4% and 97.6% of the device.
+The last two switches change what the core *is*: one screen at a time, and no
+BIOS calls at all. Even that deepest rung does not fit — fitted for real it
+needs **4,245 LABs against 4,191, 54 over** (`170012`) — so the switches price
+the cuts, they do not deliver a build. `AREA.md` has the ladder and the fit.
 
 Windows: run `fpga\build.bat` (or `build.bat "<quartus>\bin64"` for a
 non-default install location). It defaults to

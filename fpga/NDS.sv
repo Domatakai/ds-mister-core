@@ -598,6 +598,7 @@ engine_a engine_a (
 	.d3_ready(ea_d3_ready),
 	.d3_bs_valid(ea_d3_bs_valid), .d3_bs_data(ea_d3_bs_data)
 );
+`ifndef NDS_ONE_SCREEN
 engine_b engine_b (
 	.clk(clk_sys),
 	.reset(reset),
@@ -609,6 +610,17 @@ engine_b engine_b (
 	.v_ready(eb_v_ready),
 	.v_bs_valid(eb_v_bs_valid), .v_bs_data(eb_v_bs_data)
 );
+`else
+// Engine B compiled out (NDS_ONE_SCREEN): one renderer serves both screens.
+// The composer still asks for a bottom pixel and gets blank; the palette,
+// OAM and VRAM ports engine B would have driven are tied off.
+assign pix_bot     = 16'h0000;
+assign eb_pal_addr = 10'd0;
+assign eb_oam_addr = 10'd0;
+assign eb_v_req    = 1'b0;
+assign eb_v_addr   = 20'd0;
+assign eb_v_len    = 8'd0;
+`endif
 
 // Spatial filter (exactly 1 CE latency, sync delayed to match) then
 // the colour profile, then RGB888 for the framework.
@@ -1367,6 +1379,7 @@ wire        hle7_b_req, hle7_b_wr, hle7_b_ack;
 wire [31:0] hle7_b_addr, hle7_b_wlane, hle7_b_rdata;
 wire  [3:0] hle7_b_be;
 
+`ifndef NDS_NO_SWI_HLE
 swi_share swi_share (
 	.clk(clk_sys), .reset(reset),
 	.ce9(ce9), .ce7(ce7),
@@ -1388,6 +1401,33 @@ swi_share swi_share (
 	.c7_b_ack(hle7_b_ack), .c7_b_rdata(hle7_b_rdata),
 	.busy(), .owner()
 );
+`else
+// BIOS SWI bank compiled out (NDS_NO_SWI_HLE): no HLE at all, so every BIOS
+// call vectors to the (absent) BIOS and hangs. A measurement switch only --
+// it prices the bank, it is not a usable configuration.
+assign hle9_done    = 1'b0;
+assign hle9_handled = 1'b0;
+assign hle9_res0    = 32'd0;
+assign hle9_res1    = 32'd0;
+assign hle9_res3    = 32'd0;
+assign hle9_b_req   = 1'b0;
+assign hle9_b_wr    = 1'b0;
+assign hle9_b_be    = 4'd0;
+assign hle9_b_addr  = 32'd0;
+assign hle9_b_wlane = 32'd0;
+assign hle9_b_rdata = 32'd0;
+assign hle7_done    = 1'b0;
+assign hle7_handled = 1'b0;
+assign hle7_res0    = 32'd0;
+assign hle7_res1    = 32'd0;
+assign hle7_res3    = 32'd0;
+assign hle7_b_req   = 1'b0;
+assign hle7_b_wr    = 1'b0;
+assign hle7_b_be    = 4'd0;
+assign hle7_b_addr  = 32'd0;
+assign hle7_b_wlane = 32'd0;
+assign hle7_b_rdata = 32'd0;
+`endif
 
 wire cart_present = slot_valid[active_game_slot];
 wire arm7_reset   = reset | ~cart_present;
