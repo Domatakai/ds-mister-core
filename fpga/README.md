@@ -845,7 +845,9 @@ timing yet. `AREA.md` has the numbers.
 A DSP-based micro-fix for the worst ARM9 path was measured and reverted: it
 moved the multiply into DSP blocks but cost 23 of the 31 free LABs, raised
 interconnect and left the worst slack slightly worse. The remaining gap is
-occupancy, not one path.
+occupancy, not one path. The fitter settings that make the build possible are
+committed in `NDS.qsf`, and a build from a clean copy of the repository
+reproduces the same LAB count, slacks and bitstream.
 
 Windows: run `fpga\build.bat` (or `build.bat "<quartus>\bin64"` for a
 non-default install location). It defaults to
