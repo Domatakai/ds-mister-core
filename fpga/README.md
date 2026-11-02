@@ -833,9 +833,11 @@ ALUTs -- 94.7% of the device, 815 ALMs below t6 -- and the map report shows
 the saving coming from exactly those three modules. `AREA.md` has the table
 and the netlist check.
 
-The fit does not route it yet: placement clears the area gate at 4,173 of
-4,191 LABs, but the router stops on congestion at 99.0% horizontal
-interconnect. `AREA.md` has the failure mode and the next lever.
+The fit needs the fitter's help: at default settings it places (4,173 of 4,191
+LABs) but stops on congestion, and with aggressive routability plus a different
+seed it routes at 4,177 LABs and assembles a bitstream -- which then misses
+setup by 19.4 ns on the 67 MHz emu clock and by less elsewhere. It fits; it
+does not close timing yet. `AREA.md` has the numbers.
 
 Windows: run `fpga\build.bat` (or `build.bat "<quartus>\bin64"` for a
 non-default install location). It defaults to

@@ -230,18 +230,38 @@ was suppressed: `Warning (10036)` appears three times for `io_osd_vga`,
 `shadowmask_data` and `shadowmask_wr` (assigned, never read, now that their
 consumers are gone), and one `Warning (276027)` inferred-RAM notice drops out.
 
-The fitter does not route this rung yet. Placement succeeds and clears the area
-gate for the first time in the ladder -- 4,173 of 4,191 LABs -- but the router
-then gives up on congestion: peak interconnect 93.1% overall and 99.0% on the
-horizontal channels, `Warning (16684)`, `Warning (16618)` with the routing phase
-terminated, `Critical Warning (188026)`. Three hours and thirteen minutes in,
-there is no bitstream.
+At default settings the fitter places but does not route: peak interconnect 93.1%
+overall and 99.0% on the horizontal channels, `Warning (16684)` then
+`Warning (16618)` with the routing phase terminated and `Critical Warning (188026)`
+after 3h13m, and no bitstream. Eighteen free LABs were enough to place and not
+enough to route.
 
-So the remaining deficit is placement, not logic. Eighteen free LABs are enough
-to place and not enough to route, and a further cut that bought ALMs while the
-horizontal channels stayed full would not buy a route either. The next lever is
-the fitter's own remedy -- aggressive routability plus a different seed -- before
-another cut.
+The fitter's own remedy fixes it. With `FITTER_AGGRESSIVE_ROUTABILITY_OPTIMIZATION
+Always` and `SEED 2`, placement still clears the gate at 4,173 LABs, routing then
+completes in 01:20:34 and the fit succeeds in 01:20:34 at **4,177 of 4,191 LABs** with
+peak interconnect 88.8% overall / 87.6% horizontal / 93.1% vertical --
+`Quartus Prime Fitter was successful. 0 errors, 20 warnings`.
+The assembler produces a 3,813,556-byte `NDS.rbf` with 0 errors and 0 warnings: the
+first bitstream this ladder has produced.
+
+It does not close timing, and that is the honest state of this rung. Setup is
+short in five domains, worst the `emu` clock (67.03 MHz) at **-19.413 ns** with
+-96.4 us of TNS; `FPGA_CLK1_50` is -14.203, `FPGA_CLK2_50` -11.573, `h2f_user0_clk`
+(100 MHz) -8.310 and the 148.54 MHz HDMI clock -7.973, all short as well. Hold is
+reported at -53.667 ns on the 24.58 MHz audio clock, which is too large to be a
+real hold violation at that period: that number means unrelated clocks are being
+analysed together, and it needs its own investigation before it is trusted in
+either direction. Recovery is -1.700 on `emu`; removal and minimum pulse width
+are clean.
+
+No earlier rung produced a timing report, so none of this is a known regression
+-- it is simply the first measurement of the design's timing at all, and it says
+the next problem is closing timing on a 99.7%-full device, not finding more LABs.
+
+The guards are also inert where it counts. Mapped with no macro defined, the
+design produces 83,296 ALUTs, 58,325 ALMs, 53,805 registers, 96 DSP blocks and
+53 warnings -- identical to the baseline recorded before these switches existed,
+so the three guards change nothing about the shipped build.
 
 One trap, because it cost two runs here: several macros in a single
 `--verilog_macro` value, or in one `set_global_assignment -name VERILOG_MACRO`
