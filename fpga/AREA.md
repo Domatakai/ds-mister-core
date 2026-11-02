@@ -238,7 +238,7 @@ enough to route.
 
 The fitter's own remedy fixes it. With `FITTER_AGGRESSIVE_ROUTABILITY_OPTIMIZATION
 Always` and `SEED 2`, placement still clears the gate at 4,173 LABs, routing then
-completes in 01:20:34 and the fit succeeds in 01:20:34 at **4,177 of 4,191 LABs** with
+completes in 01:20:34 and the fit succeeds in 01:50:47 at **4,177 of 4,191 LABs** with
 peak interconnect 88.8% overall / 87.6% horizontal / 93.1% vertical --
 `Quartus Prime Fitter was successful. 0 errors, 20 warnings`.
 The assembler produces a 3,813,556-byte `NDS.rbf` with 0 errors and 0 warnings: the
