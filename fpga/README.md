@@ -833,6 +833,10 @@ ALUTs -- 94.7% of the device, 815 ALMs below t6 -- and the map report shows
 the saving coming from exactly those three modules. `AREA.md` has the table
 and the netlist check.
 
+The fit does not route it yet: placement clears the area gate at 4,173 of
+4,191 LABs, but the router stops on congestion at 99.0% horizontal
+interconnect. `AREA.md` has the failure mode and the next lever.
+
 Windows: run `fpga\build.bat` (or `build.bat "<quartus>\bin64"` for a
 non-default install location). It defaults to
 `C:\intelFPGA_lite\17.0\quartus\bin64`, runs the same flow, and prints

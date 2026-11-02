@@ -230,6 +230,19 @@ was suppressed: `Warning (10036)` appears three times for `io_osd_vga`,
 `shadowmask_data` and `shadowmask_wr` (assigned, never read, now that their
 consumers are gone), and one `Warning (276027)` inferred-RAM notice drops out.
 
+The fitter does not route this rung yet. Placement succeeds and clears the area
+gate for the first time in the ladder -- 4,173 of 4,191 LABs -- but the router
+then gives up on congestion: peak interconnect 93.1% overall and 99.0% on the
+horizontal channels, `Warning (16684)`, `Warning (16618)` with the routing phase
+terminated, `Critical Warning (188026)`. Three hours and thirteen minutes in,
+there is no bitstream.
+
+So the remaining deficit is placement, not logic. Eighteen free LABs are enough
+to place and not enough to route, and a further cut that bought ALMs while the
+horizontal channels stayed full would not buy a route either. The next lever is
+the fitter's own remedy -- aggressive routability plus a different seed -- before
+another cut.
+
 One trap, because it cost two runs here: several macros in a single
 `--verilog_macro` value, or in one `set_global_assignment -name VERILOG_MACRO`
 line, apply only the **first** one and silently drop the rest. The build then
