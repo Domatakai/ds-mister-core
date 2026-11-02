@@ -323,6 +323,26 @@ shorten them. The remaining gap is an occupancy problem: it needs more logic
 gone, which from here means real features, or a slower core clock -- not another
 micro-optimisation of a single path.
 
+### Verified from the repository state (2026-11-01)
+
+The fitter settings that make this build possible used to live only in a scratch
+copy of the project. They are now in `NDS.qsf` -- `SEED 2` and
+`FITTER_AGGRESSIVE_ROUTABILITY_OPTIMIZATION Always`, with the reason written
+beside them -- and a build made from a **fresh copy of the repository**, with no
+hand edits and only the ten macros added, reproduces the earlier result in every
+figure:
+
+| metric | fresh tree from the repo | earlier t11 build |
+|---|---|---|
+| ALMs / ALUTs / registers / DSP | 39,685 / 56,717 / 28,426 / 63 | same |
+| LABs | 4,160 / 4,191 | same |
+| peak interconnect | 84.2% / 83.1% / 91.3% | same |
+| setup worst / hold worst | -8.339 ns / +0.203 ns | same |
+| `NDS.rbf` | 3,749,124 bytes | same |
+
+The two `.rbf` files are **bit-identical** (sha256 `fa4ee336f277009a...`), so the
+written figures and the bitstream both come out of the committed tree exactly.
+
 One trap, because it cost two runs here: several macros in a single
 `--verilog_macro` value, or in one `set_global_assignment -name VERILOG_MACRO`
 line, apply only the **first** one and silently drop the rest. The build then
