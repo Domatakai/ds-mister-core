@@ -87,12 +87,11 @@ def error_lines(text):
 
 
 class _Parser(argparse.ArgumentParser):
-    """Usage errors are their own exit code: 2 already means "no verdict yet"."""
+    """Usage errors get their own exit code: 2 already means "no verdict yet"."""
 
     def error(self, message):
         self.print_usage(sys.stderr)
-        sys.stderr.write("%s: error: %s
-" % (self.prog, message))
+        print("%s: error: %s" % (self.prog, message), file=sys.stderr)
         raise SystemExit(3)
 
 
