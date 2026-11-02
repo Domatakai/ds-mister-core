@@ -309,7 +309,7 @@ result register `t64`. Measured, it is a loss:
 | build | ALMs | DSP | LABs | interconnect | setup worst | setup TNS | rbf |
 |---|---|---|---|---|---|---|---|
 | t11 | 39,685 | 63 | 4,160 | 84.2/83.1/91.3 | -8.339 | -45,936.820 | 3,749,124 |
-| t12, `t64` on DSP | 39884 | 67 | 4,183 / 4,191 | 87.7%/85.8%/93.8% | -8.618 | -39,865.075 | 3,780,460 |
+| t12, `t64` on DSP | 39,884 | 67 | 4,183 | 87.7/85.8/93.8 | -8.618 | -39,865.075 | 3,780,460 |
 
 The attribute did what it advertises: `arm9_core` goes from 11 to 15 DSP blocks
 and the multiply leaves the failing set -- the worst t12 path is no longer the
