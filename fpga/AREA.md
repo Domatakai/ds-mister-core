@@ -299,6 +299,30 @@ So the remaining deficit is inside the 67.03 MHz domain, which no constraint can
 fix: it is design work in the core, and the -53.667 ns hold figure that looked
 impossible was the same constraint mistake seen from the other side.
 
+### Why micro-optimising one path does not close it (2026-11-01)
+
+The worst t11 path is the ARM9's 64-bit multiply-accumulate, built in LUTs
+(`Mult3` -> `Add54`, 32.6 ns of logic against a 14.92 ns cycle). The device has
+49 free DSP blocks, so the obvious repair is `(* multstyle = "dsp" *)` on the
+result register `t64`. Measured, it is a loss:
+
+| build | ALMs | DSP | LABs | interconnect | setup worst | setup TNS | rbf |
+|---|---|---|---|---|---|---|---|
+| t11 | 39,685 | 63 | 4,160 | 84.2/83.1/91.3 | -8.339 | -45,936.820 | 3,749,124 |
+| t12, `t64` on DSP | 39884 | 67 | 4,183 / 4,191 | 87.7%/85.8%/93.8% | -8.618 | -39,865.075 | 3,780,460 |
+
+The attribute did what it advertises: `arm9_core` goes from 11 to 15 DSP blocks
+and the multiply leaves the failing set -- the worst t12 path is no longer the
+multiplier but `insn[10]` into the register-read mux. But the extra ALMs cost 23
+of the 31 free LABs, interconnect rises to 87.7%, and the worst slack is
+marginally worse. The change is reverted; t11 remains the build to quote.
+
+That is the useful measurement. Those paths spend 1-2 ns per hop in
+interconnect, and at 99.3% LAB occupancy (99.8% in t12) the router has no room to
+shorten them. The remaining gap is an occupancy problem: it needs more logic
+gone, which from here means real features, or a slower core clock -- not another
+micro-optimisation of a single path.
+
 One trap, because it cost two runs here: several macros in a single
 `--verilog_macro` value, or in one `set_global_assignment -name VERILOG_MACRO`
 line, apply only the **first** one and silently drop the rest. The build then

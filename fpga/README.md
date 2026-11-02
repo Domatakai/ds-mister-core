@@ -842,6 +842,11 @@ missed `emu|u_pll`) cuts setup to 8.3 ns in that domain, makes hold clean
 everywhere and shortens the fit to 45 minutes. It fits; it does not close
 timing yet. `AREA.md` has the numbers.
 
+A DSP-based micro-fix for the worst ARM9 path was measured and reverted: it
+moved the multiply into DSP blocks but cost 23 of the 31 free LABs, raised
+interconnect and left the worst slack slightly worse. The remaining gap is
+occupancy, not one path.
+
 Windows: run `fpga\build.bat` (or `build.bat "<quartus>\bin64"` for a
 non-default install location). It defaults to
 `C:\intelFPGA_lite\17.0\quartus\bin64`, runs the same flow, and prints
