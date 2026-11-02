@@ -244,7 +244,9 @@ peak interconnect 88.8% overall / 87.6% horizontal / 93.1% vertical --
 The assembler produces a 3,813,556-byte `NDS.rbf` with 0 errors and 0 warnings: the
 first bitstream this ladder has produced.
 
-It does not close timing, and that is the honest state of this rung. Setup is
+It does not close timing at these constraints, and that is the honest state of
+that build; the section below measures what fixing the clock groups does to
+those numbers. Setup is
 short in five domains, worst the `emu` clock (67.03 MHz) at **-19.413 ns** with
 -96.4 us of TNS; `FPGA_CLK1_50` is -14.203, `FPGA_CLK2_50` -11.573, `h2f_user0_clk`
 (100 MHz) -8.310 and the 148.54 MHz HDMI clock -7.973, all short as well. Hold is
@@ -262,6 +264,40 @@ The guards are also inert where it counts. Mapped with no macro defined, the
 design produces 83,296 ALUTs, 58,325 ALMs, 53,805 registers, 96 DSP blocks and
 53 warnings -- identical to the baseline recorded before these switches existed,
 so the three guards change nothing about the shipped build.
+
+### Decoupling the core's clock, measured (2026-11-01)
+
+The framework SDC already decouples each PLL's `divclk` from the 50/100 MHz
+clocks with `set_clock_groups -exclusive`, but its glob expected an instance
+named `pll`; this core's is `emu|u_pll`, so its 67.03 MHz clock was left out and
+TimeQuest timed about 120k HPS-bridge paths as synchronous -- 101,956
+emu-to-`FPGA_CLK1_50` paths alone, while the other PLLs sat on "false path" rows.
+`hps_io` runs on `clk_sys` and the bridge it talks to runs on `FPGA_CLK2_50`, so
+the crossing is asynchronous by construction, which is why the framework cuts it
+on its own side. Widening the glob to `*|*pll|pll_inst|` makes the existing intent
+cover this core. Nothing else changed: same macros, same seed 2, same aggressive
+routability.
+
+| build | setup worst | setup TNS | hold worst | LABs | interconnect | fit |
+|---|---|---|---|---|---|---|
+| before | -19.413 (emu) | -96,426.996 | -53.667 (audio) | 4,177 | 88.8/87.6/93.1 | 01:50:47 |
+| after | -8.339 (emu) | -45,936.820 | +0.203 (hdmi) | 4,160 | 84.2/83.1/91.3 | 00:45:25 |
+
+Routing falls from 01:20:34 to 00:09:41 because the router no longer tries to
+make unrelated clocks meet, the assembler still reports 0 errors and 0 warnings
+and writes a 3,749,124-byte `NDS.rbf`, and the fitter's warning count drops from
+20 to 17.
+
+Every domain passes except setup, and the failing set has shrunk to the core
+itself: `pll_hdmi` is -0.570 ns with -2.048 of TNS and the emu domain -8.339 with
+-45,936.820, while `h2f_user0_clk` is +3.066, `FPGA_CLK1_50` +6.497,
+`FPGA_CLK2_50` +8.804, `pll_audio` +14.112 and `FPGA_CLK3_50` +18.876. Hold is
+positive in every domain (worst +0.203), recovery +3.229, removal +0.901 and
+minimum pulse width +1.065.
+
+So the remaining deficit is inside the 67.03 MHz domain, which no constraint can
+fix: it is design work in the core, and the -53.667 ns hold figure that looked
+impossible was the same constraint mistake seen from the other side.
 
 One trap, because it cost two runs here: several macros in a single
 `--verilog_macro` value, or in one `set_global_assignment -name VERILOG_MACRO`

@@ -836,8 +836,11 @@ and the netlist check.
 The fit needs the fitter's help: at default settings it places (4,173 of 4,191
 LABs) but stops on congestion, and with aggressive routability plus a different
 seed it routes at 4,177 LABs and assembles a bitstream -- which then misses
-setup by 19.4 ns on the 67 MHz emu clock and by less elsewhere. It fits; it
-does not close timing yet. `AREA.md` has the numbers.
+setup by 19.4 ns on the 67 MHz emu clock and by less elsewhere. Decoupling
+that clock from the framework's (the framework SDC always meant to; its glob
+missed `emu|u_pll`) cuts setup to 8.3 ns in that domain, makes hold clean
+everywhere and shortens the fit to 45 minutes. It fits; it does not close
+timing yet. `AREA.md` has the numbers.
 
 Windows: run `fpga\build.bat` (or `build.bat "<quartus>\bin64"` for a
 non-default install location). It defaults to
