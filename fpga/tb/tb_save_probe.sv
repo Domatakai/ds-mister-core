@@ -285,9 +285,18 @@ initial begin
 	check("probe: FRAM 32K -> type 5", pok === 1'b1 && ptype === 3'd5);
 	check("probe: 32 KB capacity found by mirroring", seen_cap === 2'd2);
 
+	// with the FLASH data path real, the probe's signature write and restore now
+	// actually land in memory, so a saved image must survive it unchanged
+	u_chip.mem[16'h0000] = 8'h9C;
+	u_chip.mem[16'h0001] = 8'h3D;
+	u_chip.mem[16'h0100] = 8'h5A;
 	probe_cfg(T_FL512);
 	check("probe: FLASH 512K -> type 3", pok === 1'b1 && ptype === 3'd3);
 	check("probe: FLASH capacity from the JEDEC id", seen_id[15:8] === 8'h13);
+	check("probe: FLASH signature bytes are restored",
+	      u_chip.mem[16'h0000] === 8'h9C && u_chip.mem[16'h0001] === 8'h3D);
+	check("probe: FLASH data past signature untouched",
+	      u_chip.mem[16'h0100] === 8'h5A);
 
 	probe_cfg(T_FL1M);
 	check("probe: FLASH 1M -> type 4", pok === 1'b1 && ptype === 3'd4);
