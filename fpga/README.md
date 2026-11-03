@@ -26,9 +26,9 @@ is written down rather than left to be discovered:
 - **M4, sound, saves and the cartridge** — the sixteen SPU channels, the
   AUXSPI probe with the emulated chip behind it (EEPROM and FRAM read *and*
   write), the MT-32-pi MIDI link and the system I/O a firmware boot needs are
-  in. Missing: the SPU's two capture units (`0x4000508`), the two FLASH parts' *upper* address space (they carry data below 64 KB
-  — see `tb_flash_save` — and read `FFh` above it), `.sav` persistence
-  and erase, and the `0x0555`/`0x0AAA` cart unlock sequence.
+  in. Missing: the SPU's two capture units (`0x4000508`), the two FLASH parts'
+  *upper* address space (they carry data below 64 KB — see `tb_flash_save` —
+  and read `FFh` above it), `.sav` persistence and erase, and the `0x0555`/`0x0AAA` cart unlock sequence.
 - **M5, sensors** — the microphone is the R3 button and nothing else: the
   host-device mic, the rumble pak and local DS-to-DS wireless are absent.
 - **M6, the front end** — the cheat engine and the DS-native menu are in; save
