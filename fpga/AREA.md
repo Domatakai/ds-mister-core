@@ -385,7 +385,7 @@ Core (`emu`, 124,519) and framework (17,360):
 | cart_slot | 3,605 | save_spi 296, save_probe 183 | — |
 | raster_engine | 3,021 | | 8 |
 | dma / hps_io / rest | ~4,700 | 32 blocks under 400 each | — |
-| *framework* ascal | 8,344 | 4,864 in scaler leaves (16 lpm_mult) | — |
+| *framework* ascal | 2,826 | in context, t6 report (8,344 was a standalone estimate) | — |
 | *framework* audio_out + alsa | 2,855 | | — |
 | *framework* osd ×2, yc, vga, pll, shadowmask, misc | ~6,160 | | — |
 
@@ -608,9 +608,9 @@ free BG fetch leaves ~375 clocks of BG phase, so two engines still need ~1,700
 clocks of the 1,650-clock line.
 
 **8. Single-pass scaler in the framework — ~4,000 ALUTs** (estimate).
-`ascal` is 8,344 with 4,864 in scaler leaves. Nearest/integer scaling instead of
-the polyphase path is a visible quality loss on HDMI. *Accuracy: softens or
-blocks the upscale.*
+`ascal` is 2,826 in context, from the t6 report; the 8,344 standalone
+estimate is stale. Nearest/integer scaling instead of the polyphase path is
+a visible quality loss on HDMI. *Accuracy: softens or blocks the upscale.*
 
 **9. CPU datapath sharing — ~2,000 ALUTs** (estimate, high risk).
 18,012 + 10,192 ALUTs of decode, shifter and ALU. Sharing the barrel shifter and
@@ -651,7 +651,7 @@ it, which is why the error now names the LAB count instead.
 | 5. serialise the SPU mixer | **in** | 4,188 → 4,098 ALUTs, `tb_spu` bit-identical |
 | 6. per-row composer remap | **measured: nothing to gain** | the module is 73 ALUTs standalone |
 | 7. one 2D renderer for both engines | **rejected on measurement** | worth ~8,550 ALUTs (~6,030 ALMs), but the two lines need 1,794 clocks in a 1,650-clock period (109%) — the picture, not the area, is what fails |
-| 8. single-pass framework scaler | **not done** | `ascal` is **2,883** ALUTs in context (the 8,344 in the old estimate is stale), so the ceiling is ~2,800 and it costs upscale quality |
+| 8. single-pass framework scaler | **not done** | `ascal` is **2,826** ALUTs in context (the 8,344 standalone estimate is stale), so the ceiling is ~2,800 and it costs upscale quality |
 | 9. CPU datapath sharing | **not done** | arm9 18,732 + arm7 10,448 ALUTs; only the shifter/adder can be shared, ~2,000 at high risk to two green benches |
 | 10. cart FIFO into block RAM | **in** | 2,452 ALUTs and 6,150 registers |
 
