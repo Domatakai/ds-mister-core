@@ -388,6 +388,28 @@ initial begin
 	repeat (2) @(posedge clk);
 	m9_read (32'h0400_0136, r1);
 	check("EXTKEYIN is ARM7-only", r1 === 32'h0000_0000);
+	// ---- hinge IRQ 22 (GBATEK DS Keypad): edge triggered, ARM7 side
+	m7_write(32'h0400_0212, 32'h0000_0040, 4'hF);   // IE7 bit 22
+	m7_write(32'h0400_0208, 32'h0000_0001, 4'hF);   // IME7
+	m7_write(32'h0400_0216, 32'h0000_0040, 4'hF);   // drop a pending bit 22
+	// let the acknowledgement retire before the edge: a write-1-to-clear that
+	// lands after a new edge is *meant* to clear it, so the settle is part of
+	// the test being realistic, not a workaround for the interrupt
+	repeat (8) @(posedge clk);
+	hinge = 1'b1;                                   // lid closes
+	repeat (3) @(posedge clk);
+	m7_read (32'h0400_0216, r1);
+	check("hinge IRQ 22 fires when the lid closes", r1 === 32'h0000_0040);
+	m7_write(32'h0400_0216, 32'h0000_0040, 4'hF);   // acknowledge it
+	repeat (4) @(posedge clk);
+	m7_read (32'h0400_0216, r1);
+	check("hinge IRQ 22 is an edge, not a level", r1 === 32'h0000_0000);
+	hinge = 1'b0;                                   // lid opens
+	repeat (3) @(posedge clk);
+	m7_read (32'h0400_0216, r1);
+	check("hinge IRQ 22 fires when the lid opens", r1 === 32'h0000_0040);
+	m7_write(32'h0400_0216, 32'h0000_0040, 4'hF);   // acknowledge it
+	repeat (2) @(posedge clk);
 
 	// ---- IO: DISPCNT write/readback
 	m9_write(32'h0400_0000, 32'h0000_1011, 4'hF);

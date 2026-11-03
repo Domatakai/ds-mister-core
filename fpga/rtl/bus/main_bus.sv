@@ -296,8 +296,8 @@ wire [15:0] keyinput = {4'hF, ~ds_keys}; // GBATEK: 0 = Pressed
 // EXTKEYIN (NDS7 only, GBATEK *DS Keypad*): bit0 X, bit1 Y, bit2 set,
 // bit3 DEBUG (1 = none), bit4-5 set, bit6 pen-down (0 = pressed, the TSC's
 // /PENIRQ), bit7 hinge (1 = closed), bits 8-15 zero. X/Y are mirrored from
-// KEYINPUT, which carries the same two buttons. The hinge IRQ 22 is not
-// generated yet.
+// KEYINPUT, which carries the same two buttons. Hinge transitions raise IRQ 22
+// (see irq_src7 below), which is the game's cue to sleep the shell.
 wire [15:0] extkeyin = {8'h00, hinge_closed, ~touch_down, 4'b1111,
                         ds_keys[11], ds_keys[10]};
 wire [15:0] w_lane_lo = wdata[15:0];
@@ -417,7 +417,20 @@ always @(posedge clk) ref_div <= ~ref_div;
 // DMA completions are IF.8..11; keypad (IF.12) and cartridge (IF.13) follow
 // with their own blocks.
 wire [31:0] irq_src9 = {20'd0, dma_irq, 8'd0} & 32'h0000_0F00;
-wire [31:0] irq_src7 = {20'd0, dma_irq, 8'd0} & 32'h0000_0F00;
+
+// Hinge interrupt 22 (GBATEK *DS Keypad*). The lid is an edge source, not
+// a level: a shell left shut must raise one interrupt, not one every cycle,
+// so the hinge is held for a clock and the source takes the difference. IF
+// is sticky and write-1-to-clear per CPU, so one cycle is enough to latch it.
+reg  hinge_d = 1'b0;
+always @(posedge clk) begin
+	if (reset) hinge_d <= 1'b0;
+	else       hinge_d <= hinge_closed;
+end
+wire hinge_edge = hinge_closed ^ hinge_d;
+
+wire [31:0] irq_src7 = ({20'd0, dma_irq, 8'd0} & 32'h0000_0F00) |
+                       (hinge_edge ? 32'h0040_0000 : 32'd0);
 
 sys_io u_sys_io (
 	.clk(clk), .reset(reset), .tick(ce7), .tick33(ref_tick),
