@@ -1487,8 +1487,9 @@ alternative) shuts the shell: `input_mapper` reports the hinge closed, which
 is what GBATEK's `EXTKEYIN` bit 7 (`4000136h`, ARM7 only) is for, and
 `screen_composer` blacks the composed frame because both backlights go out on
 a real DS. The chord deliberately avoids Select and Start, which already
-drive the boot menu. The hinge *interrupt* (IRQ 22, NDS7) is not generated
-yet.
+drive the boot menu. The hinge *interrupt* (IRQ 22, NDS7) is raised from the hinge edge, so a
+game that waits on it sees the shell shut; `tb_main_bus` proves it fires on
+close, fires on open, and stays quiet while the lid is held still.
 - **Language** — the language the DS firmware reports to a game, i.e. the
 language its text comes up in. `fw_default` is the synthesised user-settings
 block served over SPI, so the row substitutes the language halfword at
