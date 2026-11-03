@@ -26,8 +26,8 @@ is written down rather than left to be discovered:
 - **M4, sound, saves and the cartridge** — the sixteen SPU channels, the
   AUXSPI probe with the emulated chip behind it (EEPROM and FRAM read *and*
   write), the MT-32-pi MIDI link and the system I/O a firmware boot needs are
-  in. Missing: the SPU's two capture units (`0x4000508`), the two FLASH parts'
-  data path (they identify correctly, reads answer `FFh`), `.sav` persistence
+  in. Missing: the SPU's two capture units (`0x4000508`), the two FLASH parts' *upper* address space (they carry data below 64 KB
+  — see `tb_flash_save` — and read `FFh` above it), `.sav` persistence
   and erase, and the `0x0555`/`0x0AAA` cart unlock sequence.
 - **M5, sensors** — the microphone is the R3 button and nothing else: the
   host-device mic, the rumble pak and local DS-to-DS wireless are absent.
@@ -1558,7 +1558,8 @@ diagnostics overlay only — NTSC-U, NTSC-J and PAL carts all boot.
 | M1 | Skeleton, boot, HLE BIOS, main RAM, input + DDR3 cart paths | **complete** | — |
 | M2 | 2D engines A/B, VRAM banking, DMA | **complete** | — |
 | M3 | GXFIFO → serialised multiplier → triangle setup → flat rasteriser → VRAM write-back → 3D layer composited by engine A; both 2D engines' fetches in bursts and the OAM scan pipelined so a line fits its period | **working** | W-buffer depth, fog, edge marking, toon shading, alpha test, QUADS/QUAD_STRIP, span fill |
-| M4 | Sixteen SPU channels (PCM8/PCM16/ADPCM, loops, pan, master volume, 48 kHz mix); AUXSPI save probe over an emulated EEPROM/FRAM/FLASH chip; MT-32-pi MIDI and its return mix; timers, IPC, maths, per-CPU IRQ banks, HALT, RTC and the three-device SPI bus | **working** | SPU capture units, FLASH data path, `.sav` persistence and erase, cart unlock sequence |
+| M4 | Sixteen SPU channels (PCM8/PCM16/ADPCM, loops, pan, master volume, 48 kHz mix); AUXSPI save probe over an emulated EEPROM/FRAM/FLASH chip; MT-32-pi MIDI and its return mix; timers, IPC, maths, per-CPU IRQ banks, HALT, RTC and the three-device SPI bus | **working** | SPU capture units, `.sav` persistence and erase, cart unlock
+  sequence, FLASH above its 64 KB backed window |
 | M5 | Microphone via the R3 button and the SPI touchscreen; the lid chord on `EXTKEYIN` | **partial** | Host-device microphone, rumble pak, DS-to-DS wireless |
 | M6 | Cheat engine (Action Replay, 8 entries per clock) and the DS-native menu, profiles and the video/audio filter rows | **partial** | Save states, rewind, replay |
 
