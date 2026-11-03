@@ -18,3 +18,5 @@ fpga/serv_req_info.txt
 
 # Imported-conversation dumps written by the runtime
 .cloud-attachments/
+__pycache__/
+*.pyc
