@@ -86,6 +86,9 @@ module cart_slot (
 	input             erase_save,
 	input       [2:0] save_type,
 
+	// Save file (see save_file): a .sav download fills the chip's memory.
+	input      [31:0] ioctl_file_ext,
+
 	// SDRAM master for save data (via mem_arbiter, M4 drives requests)
 	output           save_req,
 	output           save_wr,
@@ -186,12 +189,28 @@ wire        need_probe = valid[pslot] && (!det_w[3] || psd_w[2:0] != seed_i);
 // every later probe (the script only starts from its idle state)
 wire chip_reset = reset || slot_clear;
 
+wire        sav_ld_we, sav_wrote;
+wire [15:0] sav_ld_addr;
+wire  [7:0] sav_ld_byte;
+
 save_spi u_chip (
 	.clk(clk), .reset(chip_reset),
 	.cfg(chip_cfg),
 	.cs_n(chip_cs), .din(chip_din), .slot(chip_slot),
 	.dout(chip_dout), .resp(chip_resp),
-	.status_o(), .present()
+	.status_o(), .present(),
+	.ld_we(sav_ld_we), .ld_addr(sav_ld_addr), .ld_byte(sav_ld_byte),
+	.wrote(sav_wrote)
+);
+
+// the file side of the save chip: a .sav load writes the memory, and a save
+// reads it back out under the index the HPS gave us at load time
+save_file u_save_file (
+	.clk(clk), .reset(reset),
+	.ioctl_download(ioctl_download), .ioctl_addr(ioctl_addr),
+	.ioctl_dout(ioctl_dout), .ioctl_wr(ioctl_wr),
+	.ioctl_file_ext(ioctl_file_ext),
+	.ld_we(sav_ld_we), .ld_addr(sav_ld_addr), .ld_byte(sav_ld_byte)
 );
 
 save_probe u_probe (

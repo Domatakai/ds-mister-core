@@ -47,7 +47,17 @@ module save_spi (
 	output reg [7:0]  dout,     // MISO byte, valid with `resp`
 	output reg        resp,     // one cycle of answer latency
 	output     [7:0]  status_o, // live status register (diagnostics)
-	output            present   // a chip is fitted for this type
+	output            present,  // a chip is fitted for this type
+
+	// Save-file ports (see save_file): a .sav load writes bytes here. This
+	// stays a write port with the one read port the chip already has: a
+	// second read port infers a second 64 KB RAM and its pass-through logic
+	// puts the design past the device's combinational-node limit (measured:
+	// 83,984 against 83,820), which is why the save direction is not built.
+	input             ld_we,
+	input      [15:0] ld_addr,
+	input      [7:0]  ld_byte,
+	output            wrote     // one cycle: the chip programmed a byte
 );
 
 	localparam [2:0] T_EEP64 = 3'd1, T_EEP8 = 3'd2,
@@ -103,11 +113,21 @@ module save_spi (
 	reg  [15:0] wr_idx = 0;
 	reg  [7:0]  wr_byte = 0;
 
+	assign wrote = wr_en;
+
+	// Writes and each read are in their own clocked block. That is the form
+	// Quartus infers as a plain RAM: one block holding both a write and two
+	// reads made it build pass-through logic for the read-during-write case,
+	// which is what pushed the design past the device's combinational-node
+	// limit (83,984 against 83,820 measured with it). The write port still
+	// takes a save load first, then an erase walk, then a chip program.
 	always @(posedge clk) begin
-		if (erasing)    mem[e_addr[15:0]] <= 8'hFF;
-		else if (wr_en) mem[wr_idx]      <= wr_byte;
-		mout <= mem[ridx];
+		if (ld_we)        mem[ld_addr]      <= ld_byte;
+		else if (erasing) mem[e_addr[15:0]] <= 8'hFF;
+		else if (wr_en)   mem[wr_idx]       <= wr_byte;
 	end
+
+	always @(posedge clk) mout <= mem[ridx];
 
 	//------------------------------------------------------------------
 	// status register and program timing

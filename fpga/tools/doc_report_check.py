@@ -125,13 +125,17 @@ def parse_map(path):
 
 # label, document pattern, {group: evidence key}, evidence source
 CLAIMS = [
-    ("setup slack", r"\| after \| (-?\d+\.\d{3}) \(emu\)", {1: "setup"}, "sta"),
-    ("setup TNS", r"\| after \| -?\d+\.\d{3} \(emu\) \| (-?[\d,]+\.\d{3})",
+    # The "current" row is the build the tree ships today. The `after` row is
+    # kept as history (t11, before the save file), so these claims point at the
+    # label rather than at the word "after".
+    ("setup slack", r"\| current \| (-?\d+\.\d{3}) \(emu\)", {1: "setup"}, "sta"),
+    ("setup TNS", r"\| current \| -?\d+\.\d{3} \(emu\) \| (-?[\d,]+\.\d{3})",
      {1: "tns@setup:emu|u_pll"}, "sta"),
-    ("hold slack", r"\| (\+?\d+\.\d{3}) \(hdmi\) \|", {1: "hold"}, "sta"),
-    ("LABs used", r"\| after \| -?\d+\.\d{3} \(emu\) \| -?[\d,]+\.\d{3} \| "
+    ("hold slack", r"\| current \| -?\d+\.\d{3} \(emu\) \| -?[\d,]+\.\d{3} \| "
+                    r"(\+?\d+\.\d{3}) \(hdmi\) \|", {1: "hold"}, "sta"),
+    ("LABs used", r"\| current \| -?\d+\.\d{3} \(emu\) \| -?[\d,]+\.\d{3} \| "
                   r"\+?\d+\.\d{3} \(hdmi\) \| (\d{1,2},\d{3}) \|", {1: "labs"}, "fitrpt"),
-    ("fit time", r"\| after \| -?\d+\.\d{3} \(emu\) \| -?[\d,]+\.\d{3} \| "
+    ("fit time", r"\| current \| -?\d+\.\d{3} \(emu\) \| -?[\d,]+\.\d{3} \| "
                  r"\+?\d+\.\d{3} \(hdmi\) \| \d{1,2},\d{3} \| \d+\.\d/\d+\.\d/\d+\.\d \| "
                  r"(\d\d:\d\d:\d\d) \|", {1: "fit_total"}, "fit"),
     ("routing time", r"Routing falls from \d\d:\d\d:\d\d to (\d\d:\d\d:\d\d)",

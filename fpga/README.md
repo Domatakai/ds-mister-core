@@ -476,9 +476,18 @@ does:
   answer the SPI backup commands with open bus (FFh) — the column reports
   what the bus said. The probe writes a two-byte signature, reads it back
   through the candidate address mirrors to size the part, and restores the
-  original bytes, so an existing save image is left as it was found. The
-  save path itself is still M4: the types are detected and shown, not yet
-  used by a save controller.
+  original bytes, so an existing save image is left as it was found.
+- **A save image loads into the cart's chip.** `rtl/cart/save_file.sv` takes
+  the `.sav` the HPS downloads — recognised by the file's own extension
+  through `ioctl_file_ext`, not by a guessed index — and writes both bytes of
+  every word into the chip's memory. The chip backs 64 KB of a FLASH part, so
+  a longer `.sav` loads its first 64 KB and the rest is dropped, which is the
+  chip's own documented truncation. Writing the save back out is **not**
+  built: it needs a second read port on that memory, which infers a second
+  64 KB array and puts the design 164 combinational nodes past the device's
+  limit (83,984 against 83,820). Sharing the one port instead leaves the
+  array uninferred. `AREA.md` records all four attempts and their numbers; the
+  write direction is the open item, not a working feature.
 - **A download fills the lowest empty slot**, or overwrites in rotation
   once all four are full, and the new game boots straight away as before.
 - **The slot list survives a core reset** (it is in the cart, not in the
@@ -856,10 +865,11 @@ where `NDS.rbf` landed and how to copy it to the SD card.
 
 First full compile (analysis + fit + ASM + timing) takes roughly
 10–20 min on a modern multicore machine (`NUM_PARALLEL_PROCESSORS ALL`
-is set). The design is still over the A6, so today the flow stops at the
-fitter with `170012` (5,883 LABs required, 4,191 available), never reaches the
-assembler and reports no timing; `AREA.md` has the measured budget and the
-ranked list of what would have to go. Once it fits, success criteria are:
+is set). A build with the ten macros above fits: **4,168 of 4,191 LABs**, a
+3,749,072-byte `NDS.rbf`, 17 fitter warnings, and setup short only on the
+67.03 MHz `emu` domain (-9.155 ns). Without those macros the same tree needs
+5,759 LABs and stops at the fitter with `170012`; that is the default flow, not
+a regression. Success criteria are:
 
 - `output_files/NDS.rbf` exists (GENERATE_RBF_FILE is on),
 - TimeQuest reports no failing paths on the 67.0274 MHz `clk_sys` domain
@@ -1190,7 +1200,8 @@ vvp /tmp/tb_ddrb
 #     plus a slot overwritten by a fifth game and a probe abandoned by
 #     Clear game slots
 iverilog -g2012 -o /tmp/tb_cart tb/tb_cart_slot.sv \
-         rtl/cart/cart_slot.sv rtl/cart/save_spi.sv rtl/cart/save_probe.sv
+         rtl/cart/cart_slot.sv rtl/cart/save_spi.sv rtl/cart/save_probe.sv \
+         rtl/cart/save_file.sv
 vvp /tmp/tb_cart
 
 # per-game overclock reference — auto mode follows the loaded game code
@@ -1404,6 +1415,15 @@ vvp /tmp/tb_spu
 iverilog -g2012 -o /tmp/tb_flash tb/tb_flash_save.sv rtl/cart/save_spi.sv
 vvp /tmp/tb_flash
 # TB FLASH SAVE PASS
+
+# 26c. save file — a .sav download fills the chip's memory byte for byte, a
+#      download with any other extension touches nothing, and a .sav longer
+#      than the chip's 64 KB is dropped rather than folded back onto the
+#      bytes already loaded
+iverilog -g2012 -o /tmp/tb_savefile tb/tb_save_file.sv \
+         rtl/cart/save_file.sv rtl/cart/save_spi.sv
+vvp /tmp/tb_savefile
+# TB SAVE FILE PASS
 
 # 27. whole-top elaboration lint (Verilator 5+) against the REAL
 #     framework in sys/ — core + framework, warning classes disabled

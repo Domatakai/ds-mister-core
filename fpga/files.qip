@@ -40,6 +40,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/cart/cart_slot.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cart/ddr_bus_bridge.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cart/save_spi.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cart/save_probe.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/cart/save_file.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cart/cheat_engine.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/input/input_mapper.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio/audio_filter.sv

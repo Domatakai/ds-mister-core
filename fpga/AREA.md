@@ -281,18 +281,21 @@ routability.
 | build | setup worst | setup TNS | hold worst | LABs | interconnect | fit |
 |---|---|---|---|---|---|---|
 | before | -19.413 (emu) | -96,426.996 | -53.667 (audio) | 4,177 | 88.8/87.6/93.1 | 01:50:47 |
-| after | -8.339 (emu) | -45,936.820 | +0.203 (hdmi) | 4,160 | 84.2/83.1/91.3 | 00:45:25 |
+| after (t11) | -8.339 (emu) | -45,936.820 | +0.203 (hdmi) | 4,160 | 84.2/83.1/91.3 | 00:45:25 |
+| current | -9.155 (emu) | -49,376.196 | +0.248 (hdmi) | 4,168 | 84.9/83.5/89.3 | 00:56:15 |
 
-Routing falls from 01:20:34 to 00:09:41 because the router no longer tries to
+Routing falls from 01:20:34 to 00:06:59 because the router no longer tries to
 make unrelated clocks meet, the assembler still reports 0 errors and 0 warnings
-and writes a 3,749,124-byte `NDS.rbf`, and the fitter's warning count drops from
-20 to 17.
+and writes a 3,749,072-byte `NDS.rbf`, and the fitter's warning count drops from
+20 to 17. The `current` row is that same build with the save file's load path
+added: it costs 8 LABs and 0.816 ns of setup, and still fits, 23 LABs short of
+the device.
 
 Every domain passes except setup, and the failing set has shrunk to the core
-itself: `pll_hdmi` is -0.570 ns with -2.048 of TNS and the emu domain -8.339 with
--45,936.820, while `h2f_user0_clk` is +3.066, `FPGA_CLK1_50` +6.497,
-`FPGA_CLK2_50` +8.804, `pll_audio` +14.112 and `FPGA_CLK3_50` +18.876. Hold is
-positive in every domain (worst +0.203), recovery +3.229, removal +0.901 and
+itself: `pll_hdmi` is -0.336 ns with -1.822 of TNS and the emu domain -9.155 with
+-49,376.196, while `h2f_user0_clk` is +3.941, `FPGA_CLK1_50` +6.699,
+`FPGA_CLK2_50` +11.785, `pll_audio` +13.684 and `FPGA_CLK3_50` +15.061. Hold is
+positive in every domain (worst +0.248), recovery +3.992, removal +1.224 and
 minimum pulse width +1.065.
 
 So the remaining deficit is inside the 67.03 MHz domain, which no constraint can
@@ -643,6 +646,28 @@ A LAB is ten ALMs, so that is 58,770 against 41,910 (140%), matching the
 mapper. The gap is **1,686 LABs**, about **24,000 combinational ALUTs** — not
 the 2,002 nodes the node check used to complain about. Placement cannot close
 it, which is why the error now names the LAB count instead.
+
+### The save file's second read port does not fit (2026-11-02)
+
+Loading a `.sav` needs only a write port on the cart's save memory, and that
+fits. Writing the save back out needs to read it as well, and the second read
+port is what the device cannot pay for. Measured, in this order:
+
+| build | block memory bits | registers | result |
+|---|---|---|---|
+| save chip as committed | 1,873,204 | 53,269 | fits at 4,160 LABs |
+| load + upload read port | 2,397,619 | 54,093 | `170011`: 83,984 combinational nodes against 83,820 — 164 over |
+| read port shared, address muxed | — | — | `276007` / `276003`: the RAM is uninferred, map fails |
+| reads and writes in separate clocked blocks | 2,397,619 | 54,093 | identical: `276020` pass-through on both nodes |
+| `(* no_rw_check *)`, then `ramstyle = "no_rw_check"` | 2,397,619 | 54,093 | attribute ignored; pass-through stays |
+
+The extra 524,415 block-memory bits are the duplicated 64 KB array a second
+read port infers, and the pass-through logic Quartus adds to each copy is what
+puts the design 164 nodes over. Sharing the one port instead makes the mapper
+treat the read address as asynchronous and leave part of the array in
+registers, which fails the map outright. So the build loads saves and does not
+write them back: `rtl/cart/save_file.sv` says so in its own header, and
+`tb_save_file` covers what is built.
 
 ### Where items 5-10 actually stand (measured, not estimated)
 

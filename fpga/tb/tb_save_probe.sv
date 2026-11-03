@@ -52,7 +52,9 @@ save_spi u_chip (
 	.clk(clk), .reset(reset), .cfg(cfg),
 	.cs_n(cs_n), .din(din), .slot(slot),
 	.dout(dout), .resp(resp),
-	.status_o(chip_status), .present(present)
+	.status_o(chip_status), .present(present),
+	.ld_we(1'b0), .ld_addr(16'd0), .ld_byte(8'hFF),
+	.wrote()
 );
 
 save_probe u_probe (

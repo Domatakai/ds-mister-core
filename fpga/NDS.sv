@@ -230,6 +230,7 @@ wire   [0:0] sd_ack;
 wire   [0:0] img_mounted;
 wire  [63:0] img_size;
 wire         ioctl_wait;   // cart slot backpressure -> HPS
+wire  [31:0] ioctl_file_ext; // extension of the file being downloaded
 wire  [15:0] stick0;       // left analog stick (stylus cursor mode)
 
 // no SD block-device saves yet: keep HPS request inputs deasserted
@@ -272,9 +273,10 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1), .VDNUM(1)) hps_io
 	.ioctl_wr(ioctl_wr),
 	.ioctl_index(ioctl_index),
 	.ioctl_wait(ioctl_wait),
-	.ioctl_din(16'd0),            // no save upload
+	.ioctl_din(16'd0),            // save write-back not built: see save_file.sv
 	.ioctl_upload_req(1'b0),
 	.ioctl_upload_index(8'd0),
+	.ioctl_file_ext(ioctl_file_ext),
 
 	.sd_rd(sd_rd),
 	.sd_wr(sd_wr),
@@ -905,6 +907,7 @@ cart_slot cart_slot (
 	.save_done(save_done),
 	.erase_save(erase_save),
 	.save_type(save_type),
+	.ioctl_file_ext(ioctl_file_ext),
 	.cart_loaded(cart_loaded),
 	.rom_bytes(rom_bytes),
 	.slot_code(slot_code),
