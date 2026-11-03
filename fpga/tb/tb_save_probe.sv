@@ -8,7 +8,7 @@
 // level — and checks the GBATEK behaviour it depends on: write-enable latch,
 // page-program WIP (which FRAM never raises), the JEDEC identity of the two
 // FLASH parts, reads past the end folding onto the addresses they mirror, and
-// the fact that a 24-bit FLASH has no data path yet (reads answer FFh).
+// and that a blank 24-bit FLASH reads FFh.
 //
 // Part 2 runs the probe against each modelled part and checks the type it
 // reports: the OSD codes (1 EEPROM 512K, 2 EEPROM 8K, 3 FLASH 512K,
@@ -259,7 +259,7 @@ initial begin
 	rdid(id);
 	check("FLASH 512K: JEDEC id 20 20 13", id === 32'h202013FF);
 	rd_byte(24'h000010, 2'd3, d);
-	check("FLASH 512K: no data path yet, reads FFh", d === 8'hFF);
+	check("FLASH 512K: a blank part reads FFh", d === 8'hFF);
 
 	cfg = T_FL1M;
 	repeat (2) @(posedge clk);

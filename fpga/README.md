@@ -1397,6 +1397,14 @@ iverilog -g2012 -o /tmp/tb_spu tb/tb_spu.sv rtl/audio/spu.sv
 vvp /tmp/tb_spu
 # TB SPU PASS (49 checks)
 
+# 26b. FLASH save data path — blank part, page program, 256-byte page wrap,
+#      erase without WREN ignored, 4 KB sector erase confined to its sector,
+#      chip erase, and the 64 KB backed window (above it reads FFh and drops
+#      programs, rather than aliasing onto low memory)
+iverilog -g2012 -o /tmp/tb_flash tb/tb_flash_save.sv rtl/cart/save_spi.sv
+vvp /tmp/tb_flash
+# TB FLASH SAVE PASS
+
 # 27. whole-top elaboration lint (Verilator 5+) against the REAL
 #     framework in sys/ — core + framework, warning classes disabled
 #     are the framework's own known Verilator complaints (legal SV,

@@ -23,10 +23,13 @@
 // Data lives in a 64 KB block RAM, which holds every EEPROM and FRAM above
 // whole — and that is exactly what the capacity mirror test needs (an
 // address past the chip's end reads back the low address it folds onto).
-// The two FLASH parts are larger than the block RAM, so they answer their
-// identity — manufacturer 20h, memory type 20h, capacity 13h for 4 Mbit and
-// 14h for 8 Mbit, which is where a probe reads their size — while their data
-// path stays M4: reads return FFh, writes are accepted and dropped.
+// The two FLASH parts are larger than that, so they answer their identity —
+// manufacturer 20h, memory type 20h, capacity 13h for 4 Mbit and 14h for
+// 8 Mbit — and back the first 64 KB of their address space in the same RAM:
+// programmed bytes read back, 256-byte page wrap is enforced, and 4 KB, 32 KB,
+// 64 KB sector erase and chip erase write FFh over the range. Above 64 KB the
+// part reads FFh and drops programs, which is a documented truncation rather
+// than silently aliasing onto low memory.
 //
 // Status register (GBATEK): bit 7 SRWD, bits 6..4 000, bits 3..2 WP, bit 1
 // WEL, bit 0 WIP. FRAM never raises WIP; EEPROM and FLASH do, which is the
@@ -70,6 +73,17 @@ module save_spi (
 	                        is_flash         ? 16'd255 : 16'd0;
 	wire [2:0]  naddr = is_flash ? 3'd3 : 3'd2;   // address bytes
 
+	// FLASH window and erase engine. Only the first 64 KB of a FLASH part is
+	// backed by the block RAM; above that the part answers FFh and drops
+	// programs, so a truncated image stays predictable.
+	reg         rd_win   = 1'b1;   // the staged byte came from inside the window
+	reg         win_sel  = 1'b1;   // window flag for the byte being fetched
+	reg         erasing  = 1'b0;
+	reg  [15:0] e_addr   = 16'd0;
+	reg  [15:0] e_last   = 16'd0;
+	reg  [1:0]  erase_kind = 2'd0; // 0 4 KB, 1 32 KB, 2 64 KB, 3 whole window
+	reg         erase_pend = 1'b0;
+
 	//------------------------------------------------------------------
 	// save data: simple dual-port block RAM, read and write every cycle
 	//------------------------------------------------------------------
@@ -90,7 +104,8 @@ module save_spi (
 	reg  [7:0]  wr_byte = 0;
 
 	always @(posedge clk) begin
-		if (wr_en) mem[wr_idx] <= wr_byte;
+		if (erasing)    mem[e_addr[15:0]] <= 8'hFF;
+		else if (wr_en) mem[wr_idx]      <= wr_byte;
 		mout <= mem[ridx];
 	end
 
@@ -114,6 +129,7 @@ module save_spi (
 	reg  [1:0]  idleft = 2'd0;
 	reg         wrpend = 0;     // this transaction has written data
 	reg  [7:0]  rd_byte = 8'hFF;
+
 	reg         cs_d = 1'b1;
 	reg  [1:0]  pf = 2'd0;      // read prefetch pipeline
 	reg  [7:0]  ans_p = 8'hFF;
@@ -124,6 +140,17 @@ module save_spi (
 	wire [23:0] addr_nxt = {addr[15:0], din};
 	wire [15:0] idx_cur  = addr[15:0] & mask16;
 	wire [15:0] idx_nxt  = addr_nxt[15:0] & mask16;
+
+	// erase range: the sector size names its own mask, the chip erase is the
+	// whole backed window
+	wire [15:0] emask = (erase_kind == 2'd0) ? 16'h0FFF :
+	                    (erase_kind == 2'd1) ? 16'h7FFF : 16'hFFFF;
+	wire [15:0] ebase = (erase_kind == 2'd3) ? 16'd0
+	                                         : ({8'd0, addr_nxt[15:0]} & ~emask);
+	wire [15:0] elast = (erase_kind == 2'd3) ? 16'hFFFF
+	                                         : ({8'd0, addr_nxt[15:0]} | emask);
+	wire        erase_go = erase_pend &&
+	                       (erase_kind == 2'd3 || (ph == 2'd1 && aleft == 3'd1));
 
 	// the address after this one: inside one page for EEPROM and FLASH,
 	// straight on for FRAM, which has no pages
@@ -149,7 +176,7 @@ module save_spi (
 			case (cmd)
 			8'h05:   ans = sr;                        // RDSR
 			8'h9F:   ans = id_byte;                   // RDID
-			8'h03:   ans = is_flash ? 8'hFF : rd_byte; // RD
+			8'h03:   ans = (is_flash && !rd_win) ? 8'hFF : rd_byte; // RD
 			default: ans = 8'hFF;
 			endcase
 		end else ans = 8'hFF;
@@ -179,11 +206,15 @@ module save_spi (
 			wrpend <= 1'b0;
 			pf     <= 2'd0;
 			ridx   <= 16'd0;
+			erasing <= 1'b0;
+			erase_pend <= 1'b0;
+			rd_win <= 1'b1;
 			stage  <= 1'b0;
 		end
 
-		// program time: WIP stays up until the count runs out
-		if (wip) begin
+		// program time: WIP stays up until the count runs out. An erase owns WIP
+		// for itself and clears it when its byte walk finishes.
+		if (wip && !erasing) begin
 			if (wcnt != 10'd0) wcnt <= wcnt - 10'd1;
 			else               wip  <= 1'b0;
 		end
@@ -200,7 +231,7 @@ module save_spi (
 		end
 
 		// read prefetch: ridx/mout run one byte ahead of the data phase
-		if (pf[1]) rd_byte <= mout;
+		if (pf[1]) begin rd_byte <= mout; rd_win <= win_sel; end
 		pf <= {pf[0], 1'b0};
 
 		// chip select framing
@@ -238,39 +269,51 @@ module save_spi (
 				8'h01: begin ph <= 2'd2; end                // WRSR
 				8'h03,
 				8'h02: begin ph <= 2'd1; aleft <= naddr; addr <= 24'd0; end
+				8'h20,
+				8'h52,
+				8'hD8: begin
+					ph      <= 2'd1;
+					aleft   <= 3'd3;
+					addr    <= 24'd0;
+					erase_kind <= (din == 8'h20) ? 2'd0 : (din == 8'h52) ? 2'd1 : 2'd2;
+					erase_pend <= wel;      // an erase without WREN does nothing
+				end
+				8'h60,
+				8'hC7: begin             // chip erase: no address, window only
+					erase_kind <= 2'd3;
+					erase_pend <= wel;
+					addr    <= 24'd0;
+					ph      <= 2'd3;
+				end
 				default: ph <= 2'd3;
 				endcase
 			end
 			2'd1: begin      // address byte, most significant first
 				addr <= {addr[15:0], din};
 				if (aleft == 3'd1) begin
-					ph <= 2'd2;
-					if (!is_flash) begin
-						ridx <= idx_nxt;
-						pf   <= 2'd1;
-					end
+					ph      <= 2'd2;
+					ridx    <= idx_nxt;
+					pf      <= 2'd1;
+					win_sel <= (addr_nxt[23:16] == 8'h00);
 				end else begin
 					aleft <= aleft - 3'd1;
 				end
 			end
 			2'd2: begin      // data byte
 				case (cmd)
-				8'h03: begin // RD: answer from rd_byte, walk on
-					addr <= addr + 24'd1;
-					if (!is_flash) begin
-						ridx <= (idx_cur + 16'd1) & mask16;
-						pf   <= 2'd1;
-					end
+				8'h03: begin // RD: answer from rd_byte, walk on (FLASH inside window)
+					addr    <= addr + 24'd1;
+					ridx    <= (idx_cur + 16'd1) & mask16;
+					pf      <= 2'd1;
+					win_sel <= (addr[23:16] == 8'h00);
 				end
 				8'h02: begin // WR: store this byte, then the next
-					if (wel && !is_flash) begin
+					if (wel && (!is_flash || addr[23:16] == 8'h00)) begin
 						wr_en   <= 1'b1;
 						wr_idx  <= idx_cur;
 						wr_byte <= din;
-						wrpend  <= 1'b1;
-					end else if (wel) begin
-						wrpend  <= 1'b1;   // FLASH data path is M4
 					end
+					if (wel) wrpend <= 1'b1;
 					addr <= wr_wrap;
 				end
 				8'h9F: begin // RDID: four bytes, then FFh
@@ -284,6 +327,28 @@ module save_spi (
 			end
 			default: ;
 			endcase
+		end
+
+		// erase start: once its three address bytes are in, or at once for a
+		// chip erase. The byte walk above then clears the range to FFh.
+		if (erase_go) begin
+			erasing    <= 1'b1;
+			erase_pend <= 1'b0;
+			wel        <= 1'b0;
+			wip        <= 1'b1;
+			e_addr     <= ebase;
+			e_last     <= elast;
+			ph         <= 2'd3;
+		end
+
+		// erase progress, and the WIP release when it lands on the last byte
+		if (erasing) begin
+			if (e_addr >= e_last) begin
+				erasing <= 1'b0;
+				wip     <= 1'b0;
+			end else begin
+				e_addr  <= e_addr + 16'd1;
+			end
 		end
 
 		if (reset) begin
