@@ -300,6 +300,17 @@ which is placement luck rather than a saving — with setup at -8.354 ns
 -44,563.505, hold +0.226, peak interconnect 86.8/85.9/91.6 and a
 3,730,440-byte `NDS.rbf`.
 
+Removing the adder from the pak address does not pay. The pak sits at
+0xA00000, one 25-bit add above `{3'd0, a[22:1]}`; since 8 MB is exactly a
+quarter of the chip's 16 MB, a base of 0xC00000 turns the address into the
+concatenation `{1'b0, 2'b11, a[22:1]}` and ends the pak on the chip's last
+halfword, 0xFFFFFF. Fitted, that version placed 4,183 of 4,191 LABs -- two
+more than the adder it removes, the shared low/high mux making no difference
+to the count -- and then failed to route: 02:22:07 of fitting, `Error (16618)`
+congestion and no successful final attempt, at 100% LAB utilisation. At that
+occupancy the adder is smaller than the placement noise, so the adder stays
+and this build is the one above.
+
 Every domain passes except setup, and the failing set has shrunk to the core
 itself: `pll_hdmi` is -0.267 ns with -0.511 of TNS and the emu domain -8.354 with
 -44,563.505, while `h2f_user0_clk` is +3.060, `FPGA_CLK1_50` +7.397,

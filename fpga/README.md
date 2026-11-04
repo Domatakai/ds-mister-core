@@ -430,7 +430,10 @@ space above those regions is free, and the optional Slot-2 RAM expansion
 pak takes 8 MB of it (SDRAM 0xA00000, seen by both CPUs at
 0x09000000..0x097FFFFF), switched by the **Slot-2 RAM expansion** OSD
 row; with the row Off nothing decodes there, which is what a DS with an
-empty slot sees. The cart window read bridge (`win_*`) is wired to
+empty slot sees. `EXMEMCNT.7` does not gate it: on hardware that bit is
+GBA-slot ownership (0 = ARM9, 1 = ARM7, GBATEK), and the core keeps it as
+the plain read/write register it is, so the OSD row alone is the pak's
+presence. The cart window read bridge (`win_*`) is wired to
 `main_bus`
 with a pending latch so a request survives DDR busy periods. A line is
 8 bytes and a fetch burst walks the four halfwords in it, so the read
@@ -664,7 +667,7 @@ fpga/
                                                           [SIM-VERIFIED]
   tb/tb_boot_menu.sv      menu layout, bar, boot pulse, passthrough
                                                           [SIM-VERIFIED]
-  tb/tb_main_bus.sv       fabric: masters, RAM, cart, cheat, IO [SIM-VERIFIED]
+  tb/tb_main_bus.sv       fabric: masters, RAM, cart, slot-2 pak, cheat, IO [SIM-VERIFIED]
   tb/tb_cheat_engine.sv   file parse + types + guard    [SIM-VERIFIED]
   tb/tb_renderer_2d.sv    text BG/OBJ render, hflip, line swap, 3D
                           layer merge and priority, 64-wide 8bpp map
@@ -1509,6 +1512,11 @@ this core added:
 | **System** | core speed 100 / 150 / 200 / Max %, CPU overclock Normal / ARM7 ×2 / ARM7 ×4, **auto overclock On / Off** (per
 game — see below), frameskip, auto frameskip, rewind buffer. A `Diagnostics` header row follows with FPS, frame graph, bus LEDs, log level and **Disable all cheats** |
 | **MIDI** | MT-32-pi link, MIDI volume 0–100% for the return path, internal demo stream, Pi LCD on screen, LCD size 1x / 2x, corner Top left / Top right / Bottom left / Bottom right, synth MT-32 / SoundFont, SoundFont bank 0-7 |
+
+![OSD menu outline](docs/osd-menu.svg)
+
+The outline is the tree `CONF_STR` builds; the **Slot-2 RAM expansion**
+row (top left) and the video output modes are the ones this core added.
 
 Plus the cheat file load (`F2,.CHT` — parsed by `cheat_engine`, applied as
 RAM read patches), soft reset and reset. The full status-bit map is
