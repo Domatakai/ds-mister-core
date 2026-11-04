@@ -1,32 +1,46 @@
 //============================================================================
 // NDS MiSTer Test — video timing generator
 //
-// Produces the scan structure for the composed 256x384 frame (top screen
-// stacked over bottom). The pixel CE is clk_sys / 5: from the DS's own
-// 67.0274 MHz that is 13.40548 MHz, which is the rate the frame totals below
-// are worked out against. (The core clock is the 67.0274 MHz PLL output; the
-// ARM7's 33.513982 MHz and the pixel enable are both enables off it.)
+// Produces the scan structure for the composed frame. The OSD "Video output"
+// row picks one of four modes; the pixel CE, active window and sync widths all
+// move with it, and every mode lands on 59.8261 Hz so the emulation runs at
+// the DS's own frame rate whichever output is in use.
 //
-// The OSD "Refresh rate" option selects one of three modes by changing
-// the frame totals; the active area stays 256x384 in all of them:
+//   vmode  mode                     active    CE   point rate    line rate
+//     0    HDMI 256x384 stacked     256x384   /5   13.40548 MHz  totals below
+//     1    CRT 240p side by side    512x240   /6   11.17123 MHz  15.734 kHz
+//     2    CRT 240p single screen   256x240   /10   6.70274 MHz  15.734 kHz
+//     3    CRT 31 kHz               256x384   /5   13.40548 MHz  31.468 kHz
 //
-//   mode    H_TOTAL  V_TOTAL  rate (13.40548e6 / (H*V))  error vs target
-//   native    330      679    59.8272 Hz (DS 59.8261)     +18 ppm
-//   59.95     344      650    59.9530 Hz                  +49 ppm
-//   60.00     331      675    59.9999 Hz                   -2 ppm
+// In modes 1 and 2 the 192-line picture sits centred in 240 active lines and
+// the composer paints the 24-line bands above and below black. Mode 1 puts the
+// two screens side by side at native width (256 pixels each) so both are on
+// screen at once; mode 2 shows one screen at a time.
 //
-// H_FRONT/H_SYNC and V_FRONT/V_SYNC stay fixed across modes; the tail of
-// each blanking interval absorbs the difference, so sync polarity and
-// width never change and the HDMI scaler re-locks cleanly.
+// HDMI totals come from the OSD "Refresh rate" row:
+//   native  330 x 679 -> 59.8272 Hz (DS native is 59.8261, +18 ppm)
+//   59.95   344 x 650 -> 59.9530 Hz
+//   60.00   331 x 675 -> 59.9999 Hz
+// CRT totals are fixed, because a 15 kHz standard has no equivalent choice:
+//   mode 1  710 x 263 at /6  -> 59.8261 Hz
+//   mode 2  426 x 263 at /10 -> 59.8270 Hz
+//   mode 3  426 x 526 at /5  -> 59.8261 Hz
+//
+// hsync widths are chosen to land in the standard windows at each point rate
+// (about 4.7 us at 6.7 and 11.2 MHz, 3.6 us at 13.4); the tail of each
+// blanking interval absorbs the rest, so sync polarity and width never change
+// within a mode.
 //============================================================================
 module video_timing (
 	input            clk,
 	input            ce,       // optional external enable on the CE divider
-	output           pixel_ce, // derived 13.40548 MHz pixel enable (clk/5)
+	output           pixel_ce, // derived pixel enable (clk/N, N by mode)
 	input            reset,
 
-	input      [8:0] h_total,  // OSD-selected line length
-	input     [9:0]  v_total,  // OSD-selected frame height (incl. blanking)
+	input      [1:0] vmode,    // 0 HDMI, 1 CRT 240p side by side, 2 CRT 240p
+	                           // single, 3 CRT 31 kHz
+	input      [9:0] h_total,  // line length (OSD-selected in mode 0)
+	input      [9:0] v_total,  // frame height incl. blanking (mode 0)
 
 	output reg [8:0] x,
 	output reg [8:0] y,
@@ -36,24 +50,29 @@ module video_timing (
 	output           frame_start
 );
 
-localparam H_ACTIVE = 256;
-localparam H_FRONT  = 8;
-localparam H_SYNC   = 32;
-localparam V_ACTIVE = 384;
-localparam V_FRONT  = 24;
-localparam V_SYNC   = 4;
+wire [9:0] h_act   = (vmode == 2'd1) ? 10'd512 : 10'd256;
+wire [9:0] v_act   = (vmode == 2'd0 || vmode == 2'd3) ? 10'd384 : 10'd240;
+wire [9:0] h_front = (vmode == 2'd1) ? 10'd40 : (vmode == 2'd2) ? 10'd24 :
+                     (vmode == 2'd3) ? 10'd16 : 10'd8;
+wire [9:0] h_sync  = (vmode == 2'd1) ? 10'd52 : (vmode == 2'd2) ? 10'd32 :
+                     (vmode == 2'd3) ? 10'd48 : 10'd32;
+wire [9:0] v_front = (vmode == 2'd0) ? 10'd24 : 10'd4;
+wire [9:0] v_sync  = (vmode == 2'd0) ? 10'd4  : 10'd3;
 
-// 1-in-5 single-cycle enable: 67.0274 / 5 = 13.40548 MHz.
-reg [2:0] ce_div = 0;
-wire pix_ce = ce ? (ce_div == 3'd4) : 1'b0;
+// Single-cycle enable on the last count: 67.0274/5 = 13.40548 MHz,
+// /6 = 11.17123 MHz, /10 = 6.70274 MHz. >= rather than == so an OSD mode
+// change that shortens the divider re-locks instead of stalling.
+wire [3:0] ce_max = (vmode == 2'd1) ? 4'd5 : (vmode == 2'd2) ? 4'd9 : 4'd4;
+reg  [3:0] ce_div = 0;
+wire pix_ce = ce ? (ce_div == ce_max) : 1'b0;
 assign pixel_ce = pix_ce;
 always @(posedge clk) begin
-	if (reset)                                    ce_div <= 0;
-	else if (ce_div == 3'd4)                      ce_div <= 0;
-	else                                          ce_div <= ce_div + 3'd1;
+	if (reset)                 ce_div <= 0;
+	else if (ce_div >= ce_max) ce_div <= 0;
+	else                       ce_div <= ce_div + 4'd1;
 end
 
-reg [8:0] h_cnt = 0;
+reg [9:0] h_cnt = 0;
 reg [9:0] v_cnt = 0;
 
 always @(posedge clk) begin
@@ -72,8 +91,8 @@ always @(posedge clk) begin
 	end
 end
 
-wire h_active = (h_cnt < H_ACTIVE);
-wire v_active = (v_cnt < V_ACTIVE);
+wire h_active = (h_cnt < h_act);
+wire v_active = (v_cnt < v_act);
 
 always @(posedge clk) begin
 	if (reset) begin
@@ -83,11 +102,11 @@ always @(posedge clk) begin
 		hs <= 0;
 		vs <= 0;
 	end else if (pix_ce) begin
-		x  <= h_active ? h_cnt : 9'd0;
+		x  <= h_active ? h_cnt[8:0] : 9'd0;
 		y  <= v_active ? v_cnt[8:0] : 9'd0;
 		de <= h_active & v_active;
-		hs <= (h_cnt >= H_ACTIVE + H_FRONT) && (h_cnt < H_ACTIVE + H_FRONT + H_SYNC);
-		vs <= (v_cnt >= V_ACTIVE + V_FRONT) && (v_cnt < V_ACTIVE + V_FRONT + V_SYNC);
+		hs <= (h_cnt >= h_act + h_front) && (h_cnt < h_act + h_front + h_sync);
+		vs <= (v_cnt >= v_act + v_front) && (v_cnt < v_act + v_front + v_sync);
 	end
 end
 

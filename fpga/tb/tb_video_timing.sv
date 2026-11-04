@@ -5,17 +5,16 @@
 //   iverilog -g2012 -o /tmp/tb_vt tb/tb_video_timing.sv \
 //            rtl/video/video_timing.sv && vvp /tmp/tb_vt
 //
-// Verifies all three OSD refresh modes: active pixel count must be
-// exactly 256x384 in every mode, the frame must be exactly h_total*v_total
-// pixel periods long, and the rate that falls out of it must land within
-// 500 ppm of each target. The clock is the core's real one — the DS's
-// 67.0274 MHz — because the pixel CE is clk/5 now, not the old 50/4.
+// Verifies every output mode: the active pixel count must be exactly the
+// window the mode promises, the frame must be exactly N*h_total*v_total pixel
+// periods long for that mode's CE divider N, and the rate that falls out of it
+// must land within 500 ppm of the target. The clock is the core's real one —
+// the DS's 67.0274 MHz — because every pixel CE is a divider of it.
 //
 // The frame length is *counted in clocks*, not timed with $realtime: Icarus
-// rounds a real delay to its time precision, so a 7.4599275 ns half period
-// comes out a few tens of ppm fast and every printed rate would inherit
-// that error. Counting is exact, and the counted length is what the rate is
-// then worked out from against the nominal clock.
+// rounds a real delay to its time precision, so the 7.4599275 ns half period
+// comes out a few tens of ppm fast and every printed rate would inherit that
+// error. Counting is exact.
 //============================================================================
 `timescale 1ns / 1ps
 
@@ -27,7 +26,8 @@ reg clk = 0;
 always #7.45992 clk = ~clk; // 67.0274 MHz (the PLL's output)
 
 reg reset = 1;
-reg [8:0] h_total = 9'd330;
+reg [1:0] vmode = 0;
+reg [9:0] h_total = 10'd330;
 reg [9:0] v_total = 10'd679;
 
 wire pixel_ce;
@@ -39,6 +39,7 @@ video_timing dut (
 	.ce(1'b1),
 	.pixel_ce(pixel_ce),
 	.reset(reset),
+	.vmode(vmode),
 	.h_total(h_total),
 	.v_total(v_total),
 	.x(x), .y(y),
@@ -46,23 +47,20 @@ video_timing dut (
 	.frame_start(frame_start)
 );
 
-integer de_frame = 0;     // active pixels so far in this frame
-integer de_count = 0;     // ...and the completed frame's total
-integer fclk     = 0;     // clocks so far in this frame
-integer frame_clocks = 0; // ...and the completed frame's length
+integer de_frame = 0;
+integer de_count = 0;
+integer fclk     = 0;
+integer frame_clocks = 0;
 real    rate;
 integer errors = 0;
 
-// One frame is h_total*v_total pixel periods, 5 clocks each. Capturing both
-// counters at frame_start keeps the two measurements in the same window, and
-// doing it all in one edge keeps the split between frames unambiguous.
 always @(posedge clk) begin
 	fclk <= fclk + 1;
 	if (pixel_ce) begin
 		if (de) de_frame <= de_frame + 1;
 		if (frame_start) begin
 			de_count     <= de_frame;
-			frame_clocks <= fclk + 1; // this edge is the frame's first clock
+			frame_clocks <= fclk + 1;
 			de_frame     <= 0;
 			fclk         <= 0;
 		end
@@ -71,27 +69,31 @@ end
 
 task check_mode;
 	input [8*12:1] name;
-	input [8:0] ht;
+	input [1:0] vm;
+	input [9:0] ht;
 	input [9:0] vt;
+	input integer div;
+	input integer active;
 	input real target;
 	begin
+		vmode   = vm;
 		h_total = ht;
 		v_total = vt;
-		// settle one frame, then read the one after it
 		@(posedge frame_start);
 		@(posedge frame_start);
 		@(posedge frame_start);
 		rate = F_CLK / frame_clocks;
 
-		$display("tb_video_timing: %-8s %0dx%0d -> %0.4f Hz, %0d active px, %0d clocks",
-			name, ht, vt, rate, de_count, frame_clocks);
+		$display("tb_video_timing: %-10s mode %0d %0dx%0d /%0d -> %0.4f Hz, %0d active px, %0d clocks",
+			name, vm, ht, vt, div, rate, de_count, frame_clocks);
 
-		if (de_count != 256 * 384) begin
-			$display("tb_video_timing: FAIL %0s — active pixel count", name);
+		if (de_count != active) begin
+			$display("tb_video_timing: FAIL %0s — active pixel count %0d, expected %0d",
+				name, de_count, active);
 			errors = errors + 1;
-		end else if (frame_clocks != 5 * ht * vt) begin
+		end else if (frame_clocks != div * ht * vt) begin
 			$display("tb_video_timing: FAIL %0s — frame is %0d clocks, expected %0d",
-				name, frame_clocks, 5 * ht * vt);
+				name, frame_clocks, div * ht * vt);
 			errors = errors + 1;
 		end else if ((rate - target > 0.05) || (target - rate > 0.05)) begin
 			$display("tb_video_timing: FAIL %0s — rate %0.4f, expected %0.4f",
@@ -105,9 +107,12 @@ initial begin
 	repeat (20) @(posedge clk);
 	reset = 0;
 
-	check_mode("native",  9'd330, 10'd679, 59.8261); // DS-native target
-	check_mode("59.95",   9'd344, 10'd650, 59.9500);
-	check_mode("60.00",   9'd331, 10'd675, 60.0000);
+	check_mode("native",    2'd0, 10'd330, 10'd679,  5, 256*384, 59.8261);
+	check_mode("59.95",     2'd0, 10'd344, 10'd650,  5, 256*384, 59.9500);
+	check_mode("60.00",     2'd0, 10'd331, 10'd675,  5, 256*384, 60.0000);
+	check_mode("crt-side",  2'd1, 10'd710, 10'd263,  6, 512*240, 59.8261);
+	check_mode("crt-single",2'd2, 10'd426, 10'd263, 10, 256*240, 59.8261);
+	check_mode("crt-31k",   2'd3, 10'd426, 10'd526,  5, 256*384, 59.8261);
 
 	if (errors == 0) $display("tb_video_timing: PASS");
 	else             $display("tb_video_timing: FAIL (%0d errors)", errors);
@@ -115,7 +120,7 @@ initial begin
 end
 
 initial begin
-	#200_000_000;
+	#400_000_000;
 	$display("tb_video_timing: FAIL — timeout");
 	$finish;
 end

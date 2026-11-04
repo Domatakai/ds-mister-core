@@ -282,21 +282,24 @@ routability.
 |---|---|---|---|---|---|---|
 | before | -19.413 (emu) | -96,426.996 | -53.667 (audio) | 4,177 | 88.8/87.6/93.1 | 01:50:47 |
 | after (t11) | -8.339 (emu) | -45,936.820 | +0.203 (hdmi) | 4,160 | 84.2/83.1/91.3 | 00:45:25 |
-| current | -8.475 (emu) | -47,906.622 | +0.130 (emu) | 4,159 | 86.5/85.8/90.0 | 00:45:00 |
+| current | -8.686 (emu) | -47,262.057 | +0.211 (h2f_user0_clk) | 4,183 | 86.5/85.2/92.1 | 00:50:11 |
 
-Routing falls from 01:20:34 to 00:06:32 because the router no longer tries to
+Routing falls from 01:20:34 to 00:11:47 because the router no longer tries to
 make unrelated clocks meet, the assembler still reports 0 errors and 0 warnings
-and writes a 3,740,780-byte `NDS.rbf`, and the fitter's warning count drops from
+and writes a 3,795,912-byte `NDS.rbf`, and the fitter's warning count drops from
 20 to 18. The
 `current` row is that build plus two measured changes: the save file's load path,
 which costs 8 LABs and 0.816 ns on its own, and `PLACEMENT_EFFORT_MULTIPLIER 4.0`,
-which gives back 9 LABs and 0.680 ns. It fits at **4,159 of 4,191 LABs**, 32 spare.
+which gives back 9 LABs and 0.680 ns. That build fitted at 4,159 of 4,191 LABs.
+The CRT video modes then cost 24 LABs and 0.211 ns -- four output timings in
+`video_timing` plus the 240p placements in `screen_composer` -- so the tree now
+fits at **4,183 of 4,191 LABs**, 8 spare.
 
 Every domain passes except setup, and the failing set has shrunk to the core
-itself: `pll_hdmi` is -0.279 ns with -1.470 of TNS and the emu domain -8.475 with
--47,906.622, while `h2f_user0_clk` is +3.106, `FPGA_CLK1_50` +6.471,
-`FPGA_CLK2_50` +9.623, `pll_audio` +13.594 and `FPGA_CLK3_50` +18.839. Hold is
-positive in every domain (worst +0.130), recovery +3.124, removal +0.682 and
+itself: `pll_hdmi` is -0.596 ns with -2.777 of TNS and the emu domain -8.686 with
+-47,262.057, while `h2f_user0_clk` is +3.439, `FPGA_CLK1_50` +6.378,
+`FPGA_CLK2_50` +8.306, `pll_audio` +14.992 and `FPGA_CLK3_50` +18.882. Hold is
+positive in every domain (worst +0.211), recovery +3.145, removal +0.929 and
 minimum pulse width +1.065.
 
 So the remaining deficit is inside the 67.03 MHz domain, which no constraint can
@@ -1015,7 +1018,7 @@ ARM7/ARM9 benches still pass unchanged (43 and 109 checks).
 
 ## The capacity settings, measured (2026-11-03)
 
-The shipping build was 4,168 of 4,191 LABs (99%) while the same fit used 39,254
+The shipping build at the time was 4,168 of 4,191 LABs (99%) while the same fit used 39,254
 of 41,910 ALMs (94%), and that gap is the question: ten ALMs to a LAB means
 4,168 LABs *are* 41,680 ALM slots, and 2,426 of them sat empty. Three settings
 were tried against it. Two move nothing, and the third is worth 9 LABs.
@@ -1025,6 +1028,7 @@ were tried against it. Two move nothing, and the third is worth 9 LABs.
 | shipping | 39,254 | 31,129 | 4,168 | 89.3% | -9.155 | 00:56:15 |
 | register + router duplication off | 39,254 | 29,492 | 4,168 | 84.8% | not run | 00:49:29 |
 | `PLACEMENT_EFFORT_MULTIPLIER 4.0` | 39,254 | 31,394 | **4,159** | 90.0% | **-8.475** | 00:45:00 |
+| that setting + the CRT video modes (today's tree) | 40,210 | 31,369 | 4,183 | 92.1% | -8.686 | 00:50:11 |
 
 **Duplication off.** `PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION OFF` removed 1,637
 duplicate registers -- 31,129 to 29,492 -- and changed the ALM count by zero and

@@ -29,6 +29,7 @@ module screen_composer (
 	input      [8:0] x,         // 0..255
 	input      [8:0] y,         // 0..383
 	input            de,
+	input      [1:0] vmode,     // 0 HDMI/31 kHz, 1 240p side by side, 2 240p single
 	input      [2:0] layout,
 	input      [1:0] rotation,
 	input            swap,
@@ -64,6 +65,21 @@ always_comb begin
 	use_top = 1'b1;
 	box_hit = 1'b0;
 
+	if (vmode == 2'd1) begin
+		// CRT 240p, both screens at native width in one 512-pixel line.
+		// x[7:0] wraps at 256, so it is already the in-screen column for
+		// the right-hand screen as well.
+		use_top = (x < 9'd256) ^ swap;
+		sx = x[7:0];
+		sy = y[7:0] - 8'd24;          // 192-line picture centred in 240
+		box_hit = (y >= 9'd24) && (y < 9'd216);
+	end else if (vmode == 2'd2) begin
+		// CRT 240p, one screen at native size, centred the same way.
+		sx = x[7:0];
+		sy = y[7:0] - 8'd24;
+		use_top = (layout != 3'd3) ^ swap;   // Bottom only picks engine B
+		box_hit = (y >= 9'd24) && (y < 9'd216);
+	end else begin
 	case (layout)
 	3'd1: begin // side by side, decimated to 128 wide
 		sy = y[7:0] - 8'd96;              // centred vertically
@@ -92,6 +108,7 @@ always_comb begin
 		box_hit = 1'b1;
 	end
 	endcase
+	end
 end
 
 //------------------------------------------------------------------

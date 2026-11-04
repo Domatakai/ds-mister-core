@@ -20,6 +20,8 @@
 //   [15]    swap screens
 //   [18:16] backlight        (Dim..Brightest: the 5-step panel gain)
 //   [53:52] refresh rate     (Native 59.82 / 59.95 / 60.00)
+//   [95:94] video output     (HDMI 256x384 / 240p side by side /
+//                            240p single / 31 kHz)
 //   [22:19] master volume    (0%..100%)
 //   [24:23] sound output     (Stereo/Mono/Headphones — the DS's wording)
 //   [26:25] I2S latency      (1/2/4 frames)
@@ -71,9 +73,6 @@
 //   [87:85] language         (English/Japanese/French/German/Italian/
 //                            Spanish: the language the synthesised firmware
 //                            user settings report — rtl/bus/spi.sv)
-//   [89:88] slot-2           (None/GBA cartridge/RAM expansion. Reserved:
-//                            the spec row for the DS's second card slot;
-//                            only slot 1 loads today)
 //   [90]    firmware         (HLE / firmware.bin. Reserved)
 //   [93]    auto overclock   (On/Off. Written On-first (0), so a fresh core
 //                            takes the per-game reference from the loaded
@@ -118,7 +117,7 @@ assign BUTTONS   = 0;
 // menu names games from their own headers. Further extensions would be
 // packed three characters each ("NDSBIN"), with no separator.
 //------------------------------------------------------------------
-localparam [19119:0] CONF_STR = {   // 2390 string bytes, the 6-char `BUILD_DATE
+localparam [19399:0] CONF_STR = {   // 2425 string bytes, the 6-char `BUILD_DATE
                                     // (sys/build_id.tcl: %y%m%d) included
                                     // (tools/confstr_len.py checks the width)
 "NDS MiSTer Test;;",
@@ -127,7 +126,6 @@ localparam [19119:0] CONF_STR = {   // 2390 string bytes, the 6-char `BUILD_DATE
 "P1F1,NDS;",
 "P1-;",
 "h0P1O[4:2],Save type,Auto,EEPROM 512K,EEPROM 8K,FLASH 512K,FLASH 1M,FRAM,NAND;",
-"P1O[89:88],Slot-2,None,GBA cartridge,RAM expansion;",
 "h0P1T[126],Erase save data;",
 "h1P1T[124],Boot menu;",
 "h1P1T[123],Clear game slots;",
@@ -136,6 +134,7 @@ localparam [19119:0] CONF_STR = {   // 2390 string bytes, the 6-char `BUILD_DATE
 "P2O[7:5],Screen layout,Vertical,Horizontal,Top only,Bottom only;",
 "P2O[9:8],Rotation,0,90,180,270;",
 "P2O[15],Swap screens,Off,On;",
+"P2O[95:94],Video output,HDMI 256x384,CRT 240p side by side,CRT 240p single,CRT 31 kHz;",
 "P2O[12:10],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 "P2O[18:16],Backlight,Dim,Low,Medium,High,Brightest;",
 "P2O[14:13],Scanlines,Off,Soft,Medium,Hard;",
@@ -325,6 +324,8 @@ wire  [1:0] rotation      = status[9:8];
 wire  [2:0] aspect        = status[12:10];
 wire  [1:0] scanlines     = status[14:13];
 wire        swap_screens  = status[15];
+wire  [1:0] vmode         = status[95:94]; // 0 HDMI 256x384, 1 CRT 240p side by side,
+                                              // 2 CRT 240p single, 3 CRT 31 kHz
 wire  [2:0] brightness    = status[18:16];
 wire  [1:0] refresh       = status[53:52];
 wire  [3:0] volume        = status[22:19];
@@ -334,7 +335,6 @@ wire        spu_sync      = status[27];
 wire        bios_real     = status[28];   // ARM7 BIOS
 wire        bios9_real    = status[29];   // ARM9 BIOS
 wire        auto_start    = status[30];   // the DS's own Auto-start row
-wire  [1:0] slot2         = status[89:88]; // spec row (GBA slot), not wired
 wire  [2:0] lang_sel      = status[87:85];
 wire  [1:0] lid_sel       = status[84:83];
 wire        fw_dump       = status[90];   // firmware.bin, reserved
@@ -478,19 +478,31 @@ end
 wire reset = reset_hold;
 
 //------------------------------------------------------------------
-// Video path: fixed 256x384 stacked frame (top screen above bottom).
-// The pixel CE is now 67.0274/5 = 13.40548 MHz (it was 50/4 = 12.5), so the
-// totals moved with it; the OSD "Refresh rate" option still picks them:
+// Video path. The OSD "Video output" row picks the scan structure:
+//   vmode 0  HDMI 256x384 stacked,   CE 67.0274/5 = 13.40548 MHz
+//   vmode 1  CRT 240p side by side,  512x240, CE /6  = 11.17123 MHz
+//   vmode 2  CRT 240p single,        256x240, CE /10 = 6.70274 MHz
+//   vmode 3  CRT 31 kHz,             256x384, CE /5
+// HDMI totals come from the "Refresh rate" row:
 //   Native  330 x 679 -> 59.8272 Hz  (DS native is 59.8261, +18 ppm)
 //   59.95   344 x 650 -> 59.9530 Hz
 //   60.00   331 x 675 -> 59.9999 Hz
-// Every mode keeps H_ACTIVE/V_ACTIVE and the sync windows fixed, so only the
-// blanking tail changes and the scaler re-locks the way it always did.
+// The CRT modes own fixed totals (710x263, 426x263, 426x526) that land on
+// 59.8256 Hz, so the machine keeps the DS's frame rate in every mode; the
+// arithmetic and the sync windows are in rtl/video/video_timing.sv.
 //------------------------------------------------------------------
-wire  [8:0] h_total = (refresh == 2'd1) ? 9'd344 :
-                      (refresh == 2'd2) ? 9'd331 : 9'd330;
-wire  [9:0] v_total = (refresh == 2'd1) ? 10'd650 :
-                      (refresh == 2'd2) ? 10'd675 : 10'd679;
+// HDMI totals come from the "Refresh rate" row; the CRT modes have fixed
+// totals of their own (the arithmetic is in video_timing.sv's header).
+wire  [9:0] hd_h_total = (refresh == 2'd1) ? 10'd344 :
+                         (refresh == 2'd2) ? 10'd331 : 10'd330;
+wire  [9:0] hd_v_total = (refresh == 2'd1) ? 10'd650 :
+                         (refresh == 2'd2) ? 10'd675 : 10'd679;
+wire  [9:0] h_total = (vmode == 2'd1) ? 10'd710 :
+                      (vmode == 2'd2) ? 10'd426 :
+                      (vmode == 2'd3) ? 10'd426 : hd_h_total;
+wire  [9:0] v_total = (vmode == 2'd1) ? 10'd263 :
+                      (vmode == 2'd2) ? 10'd263 :
+                      (vmode == 2'd3) ? 10'd526 : hd_v_total;
 
 wire  [8:0] pix_x, pix_y;
 wire        pix_de, pix_hs, pix_vs;
@@ -503,6 +515,7 @@ video_timing video_timing (
 	// free-running: holding video_timing in reset would freeze ce_div,
 	// so frame_start could never fire and reset_pending would deadlock
 	.reset(1'b0),
+	.vmode(vmode),
 	.h_total(h_total),
 	.v_total(v_total),
 	.x(pix_x),
@@ -576,6 +589,7 @@ screen_composer screen_composer (
 	.x(pix_x),
 	.y(pix_y),
 	.de(pix_de),
+	.vmode(vmode),
 	.layout(scr_layout),
 	.rotation(rotation),
 	.swap(swap_screens),
@@ -745,10 +759,13 @@ assign VGA_SCALER = 0;
 assign CLK_VIDEO = clk_sys;
 assign CE_PIXEL  = clk_pix_ce;
 
-// Aspect: stacked output is 256x384 (2:3), single-screen 4:3, side 8:3.
-// The OSD override replaces these with ARC values (TODO in M4).
-assign VIDEO_ARX = (scr_layout == 3'd0) ? 13'd2 : (scr_layout == 3'd1) ? 13'd8 : 13'd4;
-assign VIDEO_ARY = (scr_layout == 3'd0) ? 13'd3 : (scr_layout == 3'd1) ? 13'd3 : 13'd3;
+// Aspect: HDMI stacked 256x384 is 2:3, single-screen 4:3, side by side 8:3.
+// The CRT modes fix it: side by side 8:3, single screen 4:3, 31 kHz 2:3.
+assign VIDEO_ARX = (vmode == 2'd1) ? 13'd8 :
+                   (vmode == 2'd2) ? 13'd4 :
+                   (vmode == 2'd3) ? 13'd2 :
+                   (scr_layout == 3'd0) ? 13'd2 : (scr_layout == 3'd1) ? 13'd8 : 13'd4;
+assign VIDEO_ARY = 13'd3;
 
 //------------------------------------------------------------------
 // SDRAM cluster: two masters — the bus RAM window and the cart save
@@ -1685,7 +1702,7 @@ assign LED_USER = bus_leds ? led_cnt[22] : (ioctl_download ? led_cnt[20] : led_c
 
 // Unused-in-skeleton outputs
 wire _unused = &{1'b0, aspect, bios_real, bios9_real, fw_dump, auto_start,
-                 slot2, region, rumble, pad_profile, core_speed, frameskip,
+                 region, rumble, pad_profile, core_speed, frameskip,
                  autoskip, rewind_buf, show_fps, frame_graph, log_level,
                  i2s_latency,
                  spu_sync, ps2_key, img_mounted, img_size, cart_loaded,

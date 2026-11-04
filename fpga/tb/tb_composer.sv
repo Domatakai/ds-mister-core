@@ -20,6 +20,7 @@ always #10 clk = ~clk;
 
 reg  [8:0] x = 0, y = 0;
 reg        de = 1;
+reg  [1:0] vmode = 0;
 reg  [2:0] layout = 0;
 reg  [1:0] rotation = 0;
 reg        swap = 0;
@@ -32,7 +33,7 @@ wire [15:0] pix_top, pix_bot, rgb555;
 
 screen_composer dut (
 	.clk(clk), .ce(1'b1), .x(x), .y(y), .de(de),
-	.layout(layout), .rotation(rotation), .swap(swap),
+	.vmode(vmode), .layout(layout), .rotation(rotation), .swap(swap),
 	.brightness(brightness), .dark(dark),
 	.na_x(na_x), .na_y(na_y), .na_on(na_on), .pix_top(pix_top),
 	.nb_x(nb_x), .nb_y(nb_y), .nb_on(nb_on), .pix_bot(pix_bot),
@@ -109,6 +110,45 @@ initial begin
 	check("lid shut: screens dark", rgb555, 16'h0000);
 	dark = 0; settle;
 	check("lid open again", rgb555, BORDER_B);
+
+	// ---- CRT modes: 240p side by side and 240p single, placement only
+	vmode = 2'd1; layout = 3'd0; rotation = 2'd0; swap = 1'b0; de = 1'b1;
+	x = 9'd10; y = 9'd30; settle;
+	if (!(na_on === 1'b1 && na_x === 8'd10 && na_y === 8'd6 && nb_on === 1'b0)) begin
+		$display("tb_composer: FAIL 240p side-by-side left half (na_on=%b %0d,%0d nb_on=%b)",
+			na_on, na_x, na_y, nb_on);
+		errors = errors + 1;
+	end else $display("tb_composer: ok   240p side-by-side: left half is the top screen, native width");
+
+	x = 9'd300; y = 9'd30; settle;
+	if (!(nb_on === 1'b1 && nb_x === 8'd44 && na_on === 1'b0)) begin
+		$display("tb_composer: FAIL 240p side-by-side right half (na_on=%b nb_on=%b nb_x=%0d)",
+			na_on, nb_on, nb_x);
+		errors = errors + 1;
+	end else $display("tb_composer: ok   240p side-by-side: right half is the bottom screen, native width");
+
+	x = 9'd10; y = 9'd10; settle;
+	if (na_on !== 1'b0 || nb_on !== 1'b0) begin
+		$display("tb_composer: FAIL 240p side-by-side top border is not blank");
+		errors = errors + 1;
+	end else $display("tb_composer: ok   240p side-by-side: the 24-line border is blank");
+
+	vmode = 2'd2;
+	x = 9'd100; y = 9'd24; settle;
+	if (!(na_on === 1'b1 && na_x === 8'd100 && na_y === 8'd0 && nb_on === 1'b0)) begin
+		$display("tb_composer: FAIL 240p single first picture line (na_on=%b %0d,%0d)",
+			na_on, na_x, na_y);
+		errors = errors + 1;
+	end else $display("tb_composer: ok   240p single: top screen starts 24 lines down");
+
+	layout = 3'd3;
+	x = 9'd100; y = 9'd215; settle;
+	if (!(nb_on === 1'b1 && nb_x === 8'd100 && nb_y === 8'd191 && na_on === 1'b0)) begin
+		$display("tb_composer: FAIL 240p single Bottom only (nb_on=%b %0d,%0d)", nb_on, nb_x, nb_y);
+		errors = errors + 1;
+	end else $display("tb_composer: ok   240p single: Bottom only shows the bottom screen");
+
+	vmode = 2'd0; layout = 3'd0;
 
 	if (errors == 0) $display("tb_composer: PASS");
 	else             $display("tb_composer: FAIL (%0d errors)", errors);

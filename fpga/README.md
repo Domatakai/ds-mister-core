@@ -288,7 +288,7 @@ core's scaling chain.
 
 **Still missing against those emulators:** the SPU's sound-capture units
 (the sixteen channels themselves are implemented, see below), wifi,
-Slot-2/GBA mode, and the 3D features melonDS
+and the 3D features melonDS
 and DeSmuME give the rasterizer (textures, lighting, fog, toon shading,
 edge marking). DSi-only extras — the extended RTC command set, DSi-mode
 SPI, the 4 KB DSi flash — are out of scope while the core targets NDS.
@@ -302,7 +302,7 @@ SPI, the 4 KB DSi flash — are out of scope while the core targets NDS.
 | 2D engines A/B, VRAM banking | yes | yes |
 | 3D geometry/raster | yes | flat-shaded, untextured |
 | SPU channels | yes | **yes** (no capture units) |
-| Wifi, Slot-2/GBA, DSi extras | yes | no |
+| Wifi, DSi extras | yes | no |
 
 The fetch is a **read burst**, not a request per pixel, and that is what
 made the layer fit its scanline. `sdram_ctrl` takes `rd_bst` + length +
@@ -538,8 +538,10 @@ fpga/
   rtl/
     pll.qip / pll.v       core PLL wrapper required by the framework
                           (sys/pll_q17.qip references it)
-    video/video_timing.sv     256x384 frame timing; selectable
-                              59.82 / 59.95 / 60.00 Hz      [SIM-VERIFIED]
+    video/video_timing.sv     HDMI 256x384 plus three CRT modes (240p
+                              side by side, 240p single, 31 kHz); the
+                              HDMI refresh is 59.82/59.95/60.00 Hz
+                                                            [SIM-VERIFIED]
     video/screen_composer.sv  dual-screen placement, rotation,
                               swap, brightness            [SIM-VERIFIED]
     video/video_filter.sv     spatial filter: soft/smooth/sharp
@@ -865,9 +867,9 @@ where `NDS.rbf` landed and how to copy it to the SD card.
 
 First full compile (analysis + fit + ASM + timing) takes roughly
 10–20 min on a modern multicore machine (`NUM_PARALLEL_PROCESSORS ALL`
-is set). A build with the ten macros above fits: **4,159 of 4,191 LABs**, a
-3,740,780-byte `NDS.rbf`, 18 fitter warnings, and setup short only on the
-67.03 MHz `emu` domain (-8.475 ns). Without those macros the same tree needs
+is set). A build with the ten macros above fits: **4,183 of 4,191 LABs**, a
+3,795,912-byte `NDS.rbf`, 18 fitter warnings, and setup short only on the
+67.03 MHz `emu` domain (-8.686 ns). Without those macros the same tree needs
 5,759 LABs and stops at the fitter with `170012`; that is the default flow, not
 a regression. Success criteria are:
 
@@ -1493,8 +1495,8 @@ this core added:
 
 | Group | Rows |
 |---|---|
-| **Slot-1 Card** | load `.nds` into the next free slot (F1), save type, **Slot-2** (None / GBA cartridge / RAM expansion — the spec row for the second card slot, not wired yet), erase, **Boot menu** (also on the pad's Select), **Clear game slots** |
-| **Screens** | screen layout **Vertical / Horizontal / Top only / Bottom only** (the DS's own arrangement is the default), rotation 0-270, swap screens, aspect, **Backlight Dim / Low / Medium / High / Brightest** (the panel gain the DS's backlight steps map to), scanlines, refresh rate Native 59.82 / 59.95 / 60.00, video filter Off / Soft / Smooth / Sharp, **LCD colour** Original / DS LCD / Vivid / Warm / Cool / Grayscale |
+| **Slot-1 Card** | load `.nds` into the next free slot (F1), save type, erase, **Boot menu** (also on the pad's Select), **Clear game slots** |
+| **Screens** | screen layout **Vertical / Horizontal / Top only / Bottom only** (the DS's own arrangement is the default), rotation 0-270, swap screens, aspect, **Backlight Dim / Low / Medium / High / Brightest** (the panel gain the DS's backlight steps map to), scanlines, refresh rate Native 59.82 / 59.95 / 60.00, video output HDMI 256x384 / CRT 240p side by side / CRT 240p single / CRT 31 kHz, video filter Off / Soft / Smooth / Sharp, **LCD colour** Original / DS LCD / Vivid / Warm / Cool / Grayscale |
 | **Sound** | master volume, **Sound output Stereo / Mono / Headphones** (the DS Settings wording), SPU sync, I²S latency 1 / 2 / 4 frames, audio filter Off / Warm / Bright / Bass, stereo width Off / Soft / Strong |
 | **Touch & Pad** | stylus cursor Off / D-pad / Left stick, stylus tap L2 / R2 / L3 / R3, **Lid close Ignore / L2+R2 / L3+R3**, microphone Off / Button / Host device, rumble pak, face + shoulder swaps, pad profile |
 | **Firmware** | **ARM7 BIOS HLE / bios7.bin**, **ARM9 BIOS HLE / bios9.bin**, **Firmware HLE / firmware.bin**, **Language English / Japanese / French / German / Italian / Spanish**, **Auto-start Manual / Auto**, region |
@@ -1505,6 +1507,46 @@ game — see below), frameskip, auto frameskip, rewind buffer. A `Diagnostics` h
 Plus the cheat file load (`F2,.CHT` — parsed by `cheat_engine`, applied as
 RAM read patches), soft reset and reset. The full status-bit map is
 documented at the top of `NDS.sv`.
+
+### Video output
+
+The **Video output** row chooses what the video path generates: the HDMI
+picture the core has always drawn, and three for a CRT.
+
+| Mode | Active | Pixel CE | Line | Frame |
+|---|---|---|---|---|
+| HDMI 256x384 | 256x384 | /5, 13.405 MHz | 330 x 679 | 59.8272 Hz |
+| CRT 240p side by side | 512x240 | /6, 11.171 MHz | 710, 15.734 kHz | 59.8256 Hz |
+| CRT 240p single | 256x240 | /10, 6.703 MHz | 426, 15.734 kHz | 59.8256 Hz |
+| CRT 31 kHz | 256x384 | /5, 13.405 MHz | 426, 31.468 kHz | 59.8256 Hz |
+
+Those are the numbers `tb_video_timing` measures, not estimates: for each
+row it counts the active pixels, the clocks in a frame and the rate that
+falls out of them (1,120,380 clocks at 67.0274 MHz is 59.8256 Hz) and
+fails on a 0.05 Hz difference.
+
+Every mode runs at the DS's own 59.826 Hz, so the machine keeps its speed
+and not just its picture shape. HDMI gets there by choosing frame totals —
+the refresh row's 330x679, 344x650 or 331x675. The CRT modes fix their own
+totals instead (710x263, 426x263, 426x526), because a 15 kHz standard has
+no equivalent choice, which is why the refresh row only applies to HDMI.
+
+**CRT 240p side by side** is the one that keeps both screens: 512 active
+pixels in a 710-clock line at 11.171 MHz, each screen at its native 256
+pixels wide, with both fetched inside the same line. Nothing is scaled, so
+the picture is exactly the two 256x192 screens next to each other.
+**CRT 240p single** halves the point rate instead (6.703 MHz) and shows one
+screen, chosen by the layout row as before.
+
+The 240p modes put the 192-line picture in the middle of 240 active lines:
+24 black lines above, 24 below. 240p cannot show 384 lines at 15.734 kHz
+without either breaking the scan rate or scaling the picture, so the core
+does neither. Sync widths are 4.7 us in the 240p modes and 3.6 us at
+31 kHz, the standard windows at those point rates; the rest of each
+blanking interval is line and frame tail.
+
+Aspect (the ARC values sent to the framework) follows the mode: 8:3 side
+by side, 4:3 single screen, 2:3 for the stacked HDMI and 31 kHz pictures.
 
 ### The DS rows that do something
 
