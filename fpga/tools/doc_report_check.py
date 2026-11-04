@@ -132,11 +132,11 @@ CLAIMS = [
     ("setup TNS", r"\| current \| -?\d+\.\d{3} \(emu\) \| (-?[\d,]+\.\d{3})",
      {1: "tns@setup:emu|u_pll"}, "sta"),
     ("hold slack", r"\| current \| -?\d+\.\d{3} \(emu\) \| -?[\d,]+\.\d{3} \| "
-                    r"(\+?\d+\.\d{3}) \(hdmi\) \|", {1: "hold"}, "sta"),
+                    r"(\+?\d+\.\d{3}) \(\w+\) \|", {1: "hold"}, "sta"),
     ("LABs used", r"\| current \| -?\d+\.\d{3} \(emu\) \| -?[\d,]+\.\d{3} \| "
-                  r"\+?\d+\.\d{3} \(hdmi\) \| (\d{1,2},\d{3}) \|", {1: "labs"}, "fitrpt"),
+                  r"\+?\d+\.\d{3} \(\w+\) \| (\d{1,2},\d{3}) \|", {1: "labs"}, "fitrpt"),
     ("fit time", r"\| current \| -?\d+\.\d{3} \(emu\) \| -?[\d,]+\.\d{3} \| "
-                 r"\+?\d+\.\d{3} \(hdmi\) \| \d{1,2},\d{3} \| \d+\.\d/\d+\.\d/\d+\.\d \| "
+                 r"\+?\d+\.\d{3} \(\w+\) \| \d{1,2},\d{3} \| \d+\.\d/\d+\.\d/\d+\.\d \| "
                  r"(\d\d:\d\d:\d\d) \|", {1: "fit_total"}, "fit"),
     ("routing time", r"Routing falls from \d\d:\d\d:\d\d to (\d\d:\d\d:\d\d)",
      {1: "fit_routing"}, "fit"),

@@ -282,20 +282,21 @@ routability.
 |---|---|---|---|---|---|---|
 | before | -19.413 (emu) | -96,426.996 | -53.667 (audio) | 4,177 | 88.8/87.6/93.1 | 01:50:47 |
 | after (t11) | -8.339 (emu) | -45,936.820 | +0.203 (hdmi) | 4,160 | 84.2/83.1/91.3 | 00:45:25 |
-| current | -9.155 (emu) | -49,376.196 | +0.248 (hdmi) | 4,168 | 84.9/83.5/89.3 | 00:56:15 |
+| current | -8.475 (emu) | -47,906.622 | +0.130 (emu) | 4,159 | 86.5/85.8/90.0 | 00:44:53 |
 
-Routing falls from 01:20:34 to 00:06:59 because the router no longer tries to
+Routing falls from 01:20:34 to 00:06:37 because the router no longer tries to
 make unrelated clocks meet, the assembler still reports 0 errors and 0 warnings
-and writes a 3,749,072-byte `NDS.rbf`, and the fitter's warning count drops from
-20 to 17. The `current` row is that same build with the save file's load path
-added: it costs 8 LABs and 0.816 ns of setup, and still fits, 23 LABs short of
-the device.
+and writes a 3,740,780-byte `NDS.rbf`, and the fitter's warning count drops from
+20 to 18. The
+`current` row is that build plus two measured changes: the save file's load path,
+which costs 8 LABs and 0.816 ns on its own, and `PLACEMENT_EFFORT_MULTIPLIER 4.0`,
+which gives back 9 LABs and 0.680 ns. It fits at **4,159 of 4,191 LABs**, 32 spare.
 
 Every domain passes except setup, and the failing set has shrunk to the core
-itself: `pll_hdmi` is -0.336 ns with -1.822 of TNS and the emu domain -9.155 with
--49,376.196, while `h2f_user0_clk` is +3.941, `FPGA_CLK1_50` +6.699,
-`FPGA_CLK2_50` +11.785, `pll_audio` +13.684 and `FPGA_CLK3_50` +15.061. Hold is
-positive in every domain (worst +0.248), recovery +3.992, removal +1.224 and
+itself: `pll_hdmi` is -0.279 ns with -1.470 of TNS and the emu domain -8.475 with
+-47,906.622, while `h2f_user0_clk` is +3.106, `FPGA_CLK1_50` +6.471,
+`FPGA_CLK2_50` +9.623, `pll_audio` +13.594 and `FPGA_CLK3_50` +18.839. Hold is
+positive in every domain (worst +0.130), recovery +3.124, removal +0.682 and
 minimum pulse width +1.065.
 
 So the remaining deficit is inside the 67.03 MHz domain, which no constraint can
@@ -1012,38 +1013,44 @@ per-core version relied on the core dropping `go` in the `done` cycle, which
 is true but fragile. Both are covered by `tb_swi_share` (44 checks), and the
 ARM7/ARM9 benches still pass unchanged (43 and 109 checks).
 
-## The capacity settings, measured and rejected (2026-11-03)
+## The capacity settings, measured (2026-11-03)
 
-The shipping build is 4,168 of 4,191 LABs (99%) while the same fit uses 39,254
+The shipping build was 4,168 of 4,191 LABs (99%) while the same fit used 39,254
 of 41,910 ALMs (94%), and that gap is the question: ten ALMs to a LAB means
-4,168 LABs *are* 41,680 ALM slots, and 2,426 of them sit empty. Two settings
-were expected to reclaim them. Both were built on the ten-macro tree, and
-neither moves a single LAB.
+4,168 LABs *are* 41,680 ALM slots, and 2,426 of them sat empty. Three settings
+were tried against it. Two move nothing, and the third is worth 9 LABs.
 
-| build | ALMs | registers | LABs | peak interconnect | fit |
-|---|---|---|---|---|---|
-| shipping | 39,254 | 31,129 | 4,168 | 89.3% | 00:56:15 |
-| register + router duplication off | 39,254 | **29,492** | 4,168 | 84.8% | 00:49:29 |
+| build | ALMs | registers | LABs | peak interconnect | setup worst | fit |
+|---|---|---|---|---|---|---|
+| shipping | 39,254 | 31,129 | 4,168 | 89.3% | -9.155 | 00:56:15 |
+| register + router duplication off | 39,254 | 29,492 | 4,168 | 84.8% | not run | 00:49:29 |
+| `PLACEMENT_EFFORT_MULTIPLIER 4.0` | 39,254 | 31,394 | **4,159** | 90.0% | **-8.475** | 00:44:53 |
 
-Duplicate registers are what the first switch removes, and it removed 1,637 of
-them: 31,129 to 29,492. The ALM count did not move by one, and neither did the
-LAB count. The fitter's own breakdown says why -- `[c] ALMs used for registers`
-is 3,452 of the 40,132 placed, so the duplicates were sharing ALMs the logic had
-already paid for. Registers were never the wall (29,492 of 83,820 is 35%); the
-LAB is. Both switches are reverted in `NDS.qsf`.
+**Duplication off.** `PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION OFF` removed 1,637
+duplicate registers -- 31,129 to 29,492 -- and changed the ALM count by zero and
+the LAB count by zero. The fitter's own breakdown says why: `[c] ALMs used for
+registers` is 3,452 of the 40,132 placed, so the duplicates were sharing ALMs the
+logic had already paid for. Registers were never the wall (29,492 of 83,820 is
+35%); the LAB is. Both switches, this one and
+`ROUTER_LCELL_INSERTION_AND_LOGIC_DUPLICATION`, are reverted. They are
+fitter-stage, so the map before them is byte-identical either way and only a fit
+can price them -- which is why that row cost 49 minutes rather than 12.
 
-The switches themselves (`PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION` and
-`ROUTER_LCELL_INSERTION_AND_LOGIC_DUPLICATION`) are fitter-stage, so the map
-that precedes them is byte-identical either way -- only the fit can price them,
-which is why this row cost a 49-minute fit rather than a 12-minute map.
-
-`OPTIMIZATION_MODE` is still `BALANCED` in `NDS.qsf` while
+**`OPTIMIZATION_MODE`.** It is still `BALANCED` in `NDS.qsf` while
 `OPTIMIZATION_TECHNIQUE` is `AREA`, so it looked like a lever that had never been
 pulled. Mapped with `AGGRESSIVE AREA` it produces **39,896 ALMs, 57,080 ALUTs and
 28,538 registers -- every digit identical to the balanced map**, with the same 46
 warnings: the technique assignment wins and the mode has nothing left to decide.
 
-What remains is packing, and the fitter prices its own shortfall:
+**Placement effort.** `PLACEMENT_EFFORT_MULTIPLIER 4.0` is the one that pays:
+**4,159 LABs, 32 spare**, and setup 0.680 ns better at -8.475. It also costs 265
+registers, raises the interconnect peak from 89.3% to 90.0%, and gives up 0.118 ns
+of hold -- still +0.130, positive in every domain -- and it shortens the fit from
+00:56:15 to 00:44:53, the placer spending its time once instead of the router
+paying for a placement it did not like. The setting is in `NDS.qsf` and is part of
+the shipping build.
+
+The rest of the gap is packing, and the fitter prices its own shortfall:
 
 ```
 [A] ALMs used in final placement                    40,132 / 41,910 (96%)
@@ -1053,13 +1060,13 @@ What remains is packing, and the fitter prices its own shortfall:
       LAB input limits                                   742
 ```
 
-That 1,716 is a hint, not a switch: Quartus 17.0 has no dense-packing
-assignment, and the options near it (`FITTER_EFFORT`, `PLACEMENT_EFFORT_MULTIPLIER`,
-`ALM_REGISTER_PACKING_EFFORT`) are set to `Standard Fit`, `1.0` and `HIGH`, the
-last one already at its maximum. The 838 is structural: 742 ALMs are lost to how
-many distinct inputs a LAB can take, which follows the shape of the logic rather
-than the effort the placer spends.
+Nine LABs is 90 ALMs, about 5% of what that hint holds, so effort recovers a real
+but small slice of it. There is no dense-packing assignment in 17.0 to ask for the
+rest (`FITTER_EFFORT` is `Standard Fit` and `ALM_REGISTER_PACKING_EFFORT` is
+already `HIGH`). The 838 is structural: 742 ALMs are lost to how many distinct
+inputs a LAB can take, which follows the shape of the logic rather than the effort
+the placer spends.
 
-So the LAB count follows the LUT volume -- 25,803 of the 40,132 placed ALMs hold
-LUT logic alone -- and neither of the two settings that looked like capacity
-reclaims it.
+So the LAB count still follows the LUT volume -- 25,803 of the 40,132 placed ALMs
+hold LUT logic alone -- and a setting can recover the packing slack around it, not
+the logic itself.

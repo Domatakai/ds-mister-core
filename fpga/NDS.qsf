@@ -53,6 +53,12 @@ set_global_assignment -name SEED 2
 # core's clock"): default settings abandon it on congestion.
 set_global_assignment -name FITTER_AGGRESSIVE_ROUTABILITY_OPTIMIZATION Always
 
+# Four times the placement effort does not just place better: it packs the
+# build into 4,159 LABs instead of 4,168 and improves setup by 0.68 ns, at
+# the cost of 0.7% more peak interconnect and 0.118 ns of hold (AREA.md,
+# "The capacity settings, measured").
+set_global_assignment -name PLACEMENT_EFFORT_MULTIPLIER 4.0
+
 # Quartus 17.0's Verific front end aborts on the ARM9's register arrays with
 #   Internal Error: Sub-system: VRFX ... veriname_elab.cpp, Line: 836
 #   read to RAM wasn't mapped to a specific read port
