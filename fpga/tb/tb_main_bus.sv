@@ -22,6 +22,7 @@ always #10 clk = ~clk; // 50 MHz
 reg reset = 1;
 
 reg [11:0] ds_keys = 12'hFFF;
+reg         ram_exp = 1'b0;      // OSD row: Slot-2 RAM expansion pak
 reg        hinge = 1'b0;
 reg  [2:0] lang = 3'd0;
 
@@ -109,7 +110,7 @@ main_bus dut (
 	.clk(clk), .reset(reset),
 	// timers are not under test here; the ARM7's enable held high makes them
 	// advance on every clock, which is the pre-retiming behaviour
-	.ce7(1'b1),
+	.ce7(1'b1), .ram_exp(ram_exp),
 	.ds_keys(ds_keys), .lang(lang), .hinge_closed(hinge),
 	.touch_x(9'd0), .touch_y(8'd0), .touch_down(1'b0), .mic_in(1'b0),
 	.m9_addr(m9_addr), .m9_wdata(m9_wdata), .m9_be(m9_be),
@@ -191,7 +192,10 @@ mem_arbiter arbiter (
 //------------------------------------------------------------------
 // behavioural SDRAM: one-cycle accept, byte-masked writes
 //------------------------------------------------------------------
-reg [15:0] ram [0:1023];
+// The index carries SDRAM bits 23:22, so the expansion pak region
+// (0xA00000) and main RAM (0x200000) cannot alias inside this small model.
+wire [11:0] m_idx = {arb_addr[23], arb_addr[22], arb_addr[9:0]};
+reg [15:0] ram [0:4095];
 reg [15:0] sd_dout = 0;
 reg sd_rd_done = 0, sd_wr_done = 0;
 always @(posedge clk) begin : sdram_model
@@ -199,13 +203,13 @@ always @(posedge clk) begin : sdram_model
 	sd_rd_done <= 0;
 	sd_wr_done <= 0;
 	if (arb_req && !arb_wr) begin
-		sd_dout   <= ram[arb_addr[9:0]];
+		sd_dout   <= ram[m_idx];
 		sd_rd_done <= 1;
 	end else if (arb_req && arb_wr) begin
-		t = ram[arb_addr[9:0]];
+		t = ram[m_idx];
 		if (arb_be[0]) t[7:0]  = arb_wdata[7:0];
 		if (arb_be[1]) t[15:8] = arb_wdata[15:8];
-		ram[arb_addr[9:0]] <= t;
+		ram[m_idx] <= t;
 		sd_wr_done <= 1;
 	end
 end
@@ -338,7 +342,7 @@ integer i;
 
 initial begin
 	for (i = 0; i < 256; i = i + 1) rom[i] = 16'h5000 + i[15:0];
-	for (i = 0; i < 1024; i = i + 1) ram[i] = 16'h0000;
+	for (i = 0; i < 4096; i = i + 1) ram[i] = 16'h0000;
 
 	repeat (5) @(posedge clk);
 	reset = 0;
@@ -448,6 +452,44 @@ initial begin
 	check("cheat patch on read (both halves)", r1 === 32'h0000_0042);
 	m9_read (32'h0200_0004, r1);
 	check("neighbour address unpatched", r1 === 32'h7777_8888);
+
+	// ---- Slot-2 RAM expansion pak: 8 MB at 0x09000000..0x097FFFFF ----
+	// with the OSD row off the window does not decode at all, which is what
+	// a DS with an empty slot sees, and writes go nowhere
+	m9_read (32'h0900_0000, r1);
+	check("RAM expansion window empty when off", r1 === 32'h0000_0000);
+	m9_write(32'h0900_0000, 32'hFFFF_FFFF, 4'hF);
+	m9_read (32'h0900_0000, r1);
+	check("writes dropped while the row is off", r1 === 32'h0000_0000);
+
+	ram_exp = 1'b1;
+	repeat (2) @(posedge clk);
+	m9_write(32'h0900_0000, 32'hC0DE_1234, 4'hF);
+	m9_read (32'h0900_0000, r1);
+	check("RAM expansion 32-bit rw", r1 === 32'hC0DE_1234);
+
+	m9_write(32'h0900_0004, 32'hAABB_CCDD, 4'hF);
+	m9_write(32'h0900_0004, 32'h0000_00EE, 4'b0001);
+	m9_read (32'h0900_0004, r1);
+	check("RAM expansion byte enable", r1 === 32'hAABB_CCEE);
+
+	// the far end of the 8 MB window, and main RAM untouched by it
+	m9_write(32'h097F_FFFC, 32'h5A5A_0F0F, 4'hF);
+	m9_read (32'h097F_FFFC, r1);
+	check("last word of the 8 MB window", r1 === 32'h5A5A_0F0F);
+	m9_read (32'h0200_0004, r1);
+	check("expansion leaves main RAM alone", r1 === 32'h7777_8888);
+	m9_read (32'h097F_FFFC, r1);
+	check("main RAM does not reach the expansion", r1 === 32'h5A5A_0F0F);
+
+	// both CPUs see the same pak, as on hardware
+	m7_read (32'h0900_0000, r2);
+	check("ARM7 reads the expansion too", r2 === 32'hC0DE_1234);
+
+	ram_exp = 1'b0;
+	repeat (2) @(posedge clk);
+	m9_read (32'h0900_0000, r1);
+	check("the OSD row gates the window again", r1 === 32'h0000_0000);
 
 	// ---- cart window: 32-bit assembly of two halfwords
 	m9_read (32'h0800_0004, r1);

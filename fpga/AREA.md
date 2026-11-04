@@ -282,24 +282,29 @@ routability.
 |---|---|---|---|---|---|---|
 | before | -19.413 (emu) | -96,426.996 | -53.667 (audio) | 4,177 | 88.8/87.6/93.1 | 01:50:47 |
 | after (t11) | -8.339 (emu) | -45,936.820 | +0.203 (hdmi) | 4,160 | 84.2/83.1/91.3 | 00:45:25 |
-| current | -8.514 (emu) | -41,694.455 | +0.250 (h2f_user0_clk) | 4,186 | 83.6/83.1/87.5 | 00:50:04 |
+| current | -8.354 (emu) | -44,563.505 | +0.226 (h2f_user0_clk) | 4,181 | 86.8/85.9/91.6 | 00:50:53 |
 
-Routing falls from 01:20:34 to 00:09:01 because the router no longer tries to
+Routing falls from 01:20:34 to 00:10:34 because the router no longer tries to
 make unrelated clocks meet, the assembler still reports 0 errors and 0 warnings
-and writes a 3,780,152-byte `NDS.rbf`, and the fitter's warning count drops from
-20 to 18. The
+and writes a 3,730,440-byte `NDS.rbf`, and the fitter's warning count drops from
+20 to 19. The
 `current` row is that build plus two measured changes: the save file's load path,
 which costs 8 LABs and 0.816 ns on its own, and `PLACEMENT_EFFORT_MULTIPLIER 4.0`,
 which gives back 9 LABs and 0.680 ns. That build fitted at 4,159 of 4,191 LABs.
 The CRT video modes then cost 27 LABs and 0.039 ns -- four output timings in
 `video_timing` plus the 240p placements in `screen_composer` -- so the tree now
-fits at **4,186 of 4,191 LABs**, 5 spare.
+fits at **4,186 of 4,191 LABs**, 5 spare. The Slot-2 RAM expansion pak
+builds at **4,181 of 4,191 LABs**, 10 spare — five fewer than the CRT tree,
+which is placement luck rather than a saving — with setup at -8.354 ns
+(0.160 ns better), TNS
+-44,563.505, hold +0.226, peak interconnect 86.8/85.9/91.6 and a
+3,730,440-byte `NDS.rbf`.
 
 Every domain passes except setup, and the failing set has shrunk to the core
-itself: `pll_hdmi` is -0.124 ns with -1.263 of TNS and the emu domain -8.514 with
--41,694.455, while `h2f_user0_clk` is +2.464, `FPGA_CLK1_50` +6.636,
-`FPGA_CLK2_50` +10.393, `pll_audio` +15.003 and `FPGA_CLK3_50` +18.795. Hold is
-positive in every domain (worst +0.250), recovery +3.075, removal +1.078 and
+itself: `pll_hdmi` is -0.267 ns with -0.511 of TNS and the emu domain -8.354 with
+-44,563.505, while `h2f_user0_clk` is +3.060, `FPGA_CLK1_50` +7.397,
+`FPGA_CLK2_50` +11.733, `pll_audio` +15.128 and `FPGA_CLK3_50` +18.805. Hold is
+positive in every domain (worst +0.226), recovery +2.777, removal +0.759 and
 minimum pulse width +1.065.
 
 So the remaining deficit is inside the 67.03 MHz domain, which no constraint can
@@ -1028,7 +1033,7 @@ were tried against it. Two move nothing, and the third is worth 9 LABs.
 | shipping | 39,254 | 31,129 | 4,168 | 89.3% | -9.155 | 00:56:15 |
 | register + router duplication off | 39,254 | 29,492 | 4,168 | 84.8% | not run | 00:49:29 |
 | `PLACEMENT_EFFORT_MULTIPLIER 4.0` | 39,254 | 31,394 | **4,159** | 90.0% | **-8.475** | 00:45:00 |
-| that setting + the CRT video modes (today's tree) | 39,804 | 31,244 | 4,186 | 87.5% | -8.514 | 00:50:04 |
+| that setting + the CRT video modes + the RAM expansion pak (today's tree) | 39,729 | 31,179 | 4,181 | 91.6% | -8.354 | 00:50:53 |
 
 **Duplication off.** `PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION OFF` removed 1,637
 duplicate registers -- 31,129 to 29,492 -- and changed the ALM count by zero and

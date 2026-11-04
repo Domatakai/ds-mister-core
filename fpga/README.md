@@ -425,7 +425,13 @@ dropped. Header byte 0x80 (device capacity) is captured into
 `rom_bytes`. SDRAM holds main RAM, WRAM overflow, VRAM bank storage
 and cart save data; `mem_arbiter` shares it between the bus RAM window
 (CPU traffic), the cart save path (fixed priority, saves are
-latency-sensitive bursts) and the VRAM path behind `vram_arbiter`. The cart window read bridge (`win_*`) is wired to `main_bus`
+latency-sensitive bursts) and the VRAM path behind `vram_arbiter`. The
+space above those regions is free, and the optional Slot-2 RAM expansion
+pak takes 8 MB of it (SDRAM 0xA00000, seen by both CPUs at
+0x09000000..0x097FFFFF), switched by the **Slot-2 RAM expansion** OSD
+row; with the row Off nothing decodes there, which is what a DS with an
+empty slot sees. The cart window read bridge (`win_*`) is wired to
+`main_bus`
 with a pending latch so a request survives DDR busy periods. A line is
 8 bytes and a fetch burst walks the four halfwords in it, so the read
 side keeps the line it last fetched (`pf_line`/`pf_data`) and answers
@@ -867,9 +873,9 @@ where `NDS.rbf` landed and how to copy it to the SD card.
 
 First full compile (analysis + fit + ASM + timing) takes roughly
 10–20 min on a modern multicore machine (`NUM_PARALLEL_PROCESSORS ALL`
-is set). A build with the ten macros above fits: **4,186 of 4,191 LABs**, a
-3,780,152-byte `NDS.rbf`, 18 fitter warnings, and setup short only on the
-67.03 MHz `emu` domain (-8.514 ns). Without those macros the same tree needs
+is set). A build with the ten macros above fits: **4,181 of 4,191 LABs**, a
+3,730,440-byte `NDS.rbf`, 19 fitter warnings, and setup short only on the
+67.03 MHz `emu` domain (-8.354 ns). Without those macros the same tree needs
 5,759 LABs and stops at the fitter with `170012`; that is the default flow, not
 a regression. Success criteria are:
 
@@ -1495,7 +1501,7 @@ this core added:
 
 | Group | Rows |
 |---|---|
-| **Slot-1 Card** | load `.nds` into the next free slot (F1), save type, erase, **Boot menu** (also on the pad's Select), **Clear game slots** |
+| **Slot-1 Card** | load `.nds` into the next free slot (F1), **Slot-2 RAM expansion Off / 8 MB** (8 MB of main-bus RAM at 0x09000000, for the games that ask for the pak), save type, erase, **Boot menu** (also on the pad's Select), **Clear game slots** |
 | **Screens** | screen layout **Vertical / Horizontal / Top only / Bottom only** (the DS's own arrangement is the default), rotation 0-270, swap screens, aspect, **Backlight Dim / Low / Medium / High / Brightest** (the panel gain the DS's backlight steps map to), scanlines, refresh rate Native 59.82 / 59.95 / 60.00, video output HDMI 256x384 / CRT 240p side by side / CRT 240p single / CRT 31 kHz, video filter Off / Soft / Smooth / Sharp, **LCD colour** Original / DS LCD / Vivid / Warm / Cool / Grayscale |
 | **Sound** | master volume, **Sound output Stereo / Mono / Headphones** (the DS Settings wording), SPU sync, I²S latency 1 / 2 / 4 frames, audio filter Off / Warm / Bright / Bass, stereo width Off / Soft / Strong |
 | **Touch & Pad** | stylus cursor Off / D-pad / Left stick, stylus tap L2 / R2 / L3 / R3, **Lid close Ignore / L2+R2 / L3+R3**, microphone Off / Button / Host device, rumble pak, face + shoulder swaps, pad profile |

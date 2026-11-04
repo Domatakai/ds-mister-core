@@ -59,10 +59,10 @@ export const OSD_ROOT: OsdSubmenu = {
           ],
         },
         {
-          id: "cart.slot2",
+          id: "cart.ramexp",
           kind: "choice",
-          label: "Slot-2",
-          options: ["None", "GBA cartridge", "RAM expansion"],
+          label: "Slot-2 RAM expansion",
+          options: ["Off", "8 MB"],
         },
         { id: "cart.erase", kind: "action", label: "Erase save data" },
         { id: "cart.bootmenu", kind: "action", label: "Boot menu" },
@@ -83,6 +83,12 @@ export const OSD_ROOT: OsdSubmenu = {
         },
         { id: "video.rotation", kind: "choice", label: "Rotation", options: ["0°", "90°", "180°", "270°"] },
         { id: "video.swap", kind: "toggle", label: "Swap screens" },
+        {
+          id: "video.output",
+          kind: "choice",
+          label: "Video output",
+          options: ["HDMI 256x384", "CRT 240p side by side", "CRT 240p single", "CRT 31 kHz"],
+        },
         {
           id: "video.aspect",
           kind: "choice",

@@ -17,6 +17,7 @@
 //   0x06000000..0x06FFFFF7  VRAM                       -> vram_arbiter (M2)
 //   0x07000000..0x070007FF  OAM 2 KB                   -> BRAM
 //   0x08000000..0x0FFFFFFF  Cart window                -> cart_slot (DDR3)
+//   0x09000000..0x097FFFFF  Slot-2 RAM expansion 8 MB  -> SDRAM (OSD row)
 //   0xFFFF0000..0xFFFF3FFF  ARM9 BIOS mirror           -> HLE
 //
 // IO registers (GBATEK has the full list; M1 grows it):
@@ -57,6 +58,7 @@ module main_bus (
 	input            reset,
 	input            ce7,          // ARM7 clock enable (cpu_ce): the timers
 	                               // count it, not clk_sys
+	input            ram_exp,      // Slot-2 RAM expansion pak, from the OSD
 
 	// input state from input_mapper
 	input     [11:0] ds_keys,
@@ -312,6 +314,12 @@ wire [9:0]  pal_idx    = a[10:1];
 // 32-bit word spans halves {k, k+1} (never overlapping its neighbour).
 wire [24:0] ram_word_lo = {3'd0, 1'b1, a[21:1]};
 wire [24:0] ram_word_hi = ram_word_lo + 25'd1;
+// The pak's 8 MB goes in SDRAM at 0xA00000 + a[22:1]: main RAM owns
+// 0x200000, palette/OAM 0x400000 and the VRAM banks 0x600000..0x9FFFFF
+// (vram_arbiter's VRAM_SDRAM_BASE), while the cart ROM is in DDR3, so
+// 0xA00000..0xDFFFFF is free (the chip's 16M halfwords end at 0xFFFFFF).
+wire [24:0] exp_word_lo = 25'hA00000 + {3'd0, a[22:1]};
+wire [24:0] exp_word_hi = exp_word_lo + 25'd1;
 
 // VRAM window port (byte address within the 1MB window; offset register
 // allows the second beat of a 32-bit access at +2)
@@ -371,6 +379,10 @@ wire is_pal    = (a[31:24] == 8'h05);
 wire is_vram   = (a[31:24] == 8'h06);
 wire is_oam    = (a[31:24] == 8'h07);
 wire is_cart   = (a[31:24] == 8'h08);
+// Slot-2 RAM expansion pak: the 8 MB the DS maps at 0x09000000..0x097FFFFF
+// when one is in the slot. With the OSD row off nothing decodes here, which
+// is exactly what a DS with an empty slot does.
+wire is_exp    = ram_exp && (a[31:23] == 9'd18);
 wire is_private = is_bios | is_shared | is_a7wram | is_io | is_pal | is_oam;
 
 //------------------------------------------------------------------
@@ -552,6 +564,7 @@ wire [31:0] resp_word = is_vram    ? {hi_half, lo_half} :
                         is_private ? priv_data :
                         is_ram     ? {cheat_hit && cheat_patch_hi_en ? cheat_patch_hi : hi_half,
                                       cheat_hit ? cheat_patch : lo_half} :
+                        is_exp     ? {hi_half, lo_half} :
                         is_cart    ? {hi_half, lo_half} : 32'h0;
 
 //------------------------------------------------------------------
@@ -620,7 +633,7 @@ always @(posedge clk) begin
 		is_read  <= m_rd;
 		need_b   <= (m_wr ? (be[3:2] != 2'b00 && be[1:0] != 2'b00)
 		                   : (be[3:2] != 2'b00)) &&
-		             (is_ram || is_cart || is_shared || is_a7wram ||
+		             (is_ram || is_exp || is_cart || is_shared || is_a7wram ||
 		              is_pal || is_oam || is_io || is_vram);
 		lo_half  <= 16'h0000;
 		hi_half  <= 16'h0000;
@@ -632,10 +645,10 @@ always @(posedge clk) begin
 			vram_off  <= a[19:0];
 			vram_hi_beat <= beat_hi;   // odd halfword: lanes in [31:16]
 			state     <= S_WAIT_A;
-		end else if (is_ram && (m_rd || m_wr)) begin
+		end else if ((is_ram || is_exp) && (m_rd || m_wr)) begin
 			ram_req   <= 1;
 			ram_wr    <= m_wr;
-			ram_addr  <= ram_word_lo;
+			ram_addr  <= is_exp ? exp_word_lo : ram_word_lo;
 			ram_wdata <= beat_hi ? w_lane_hi : w_lane_lo;
 			ram_be    <= beat_hi ? be[3:2]   : be[1:0];
 			state     <= S_WAIT_A;
@@ -711,9 +724,9 @@ always @(posedge clk) begin
 	S_WAIT_A: begin
 		// held requests: the SDRAM arbiter may be busy with the engines
 		// or the save path; keep asserting until the transfer completes
-		if (is_ram  && !ram_done)   ram_req  <= 1;
+		if ((is_ram || is_exp) && !ram_done)   ram_req  <= 1;
 		if (is_vram && !vram_valid) vram_req <= 1;
-		if (is_ram && ram_done) begin
+		if ((is_ram || is_exp) && ram_done) begin
 			lo_half <= ram_rdata;
 			if (m_wr && !is_read) begin
 				// write sequence: first half done
@@ -722,7 +735,7 @@ always @(posedge clk) begin
 			end else if (need_b) begin
 				ram_req   <= 1;
 				ram_wr    <= 0;
-				ram_addr  <= ram_word_hi;
+				ram_addr  <= is_exp ? exp_word_hi : ram_word_hi;
 				ram_be    <= 2'b11;
 				state     <= S_WAIT_B;
 			end else state <= S_RESP;
@@ -761,7 +774,7 @@ always @(posedge clk) begin
 		end else begin
 			ram_req   <= 1;
 			ram_wr    <= 1;
-			ram_addr  <= ram_word_hi;
+			ram_addr  <= is_exp ? exp_word_hi : ram_word_hi;
 			ram_wdata <= w_lane_hi;
 			ram_be    <= be[3:2];
 			state     <= S_WAIT_B;
@@ -769,9 +782,9 @@ always @(posedge clk) begin
 	end
 
 	S_WAIT_B: begin
-		if (is_ram  && !ram_done)   ram_req  <= 1;
+		if ((is_ram || is_exp) && !ram_done)   ram_req  <= 1;
 		if (is_vram && !vram_valid) vram_req <= 1;
-		if (is_ram && ram_done) begin
+		if ((is_ram || is_exp) && ram_done) begin
 			hi_half <= ram_rdata;
 			state   <= S_RESP;
 		end else if (is_vram && vram_valid) begin

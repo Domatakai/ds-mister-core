@@ -117,13 +117,14 @@ assign BUTTONS   = 0;
 // menu names games from their own headers. Further extensions would be
 // packed three characters each ("NDSBIN"), with no separator.
 //------------------------------------------------------------------
-localparam [19399:0] CONF_STR = {   // 2425 string bytes, the 6-char `BUILD_DATE
+localparam [19703:0] CONF_STR = {   // 2463 string bytes, the 6-char `BUILD_DATE
                                     // (sys/build_id.tcl: %y%m%d) included
                                     // (tools/confstr_len.py checks the width)
 "NDS MiSTer Test;;",
 "-;",
 "P1,Slot-1 Card;",
 "P1F1,NDS;",
+"P1O[88],Slot-2 RAM expansion,Off,8 MB;",
 "P1-;",
 "h0P1O[4:2],Save type,Auto,EEPROM 512K,EEPROM 8K,FLASH 512K,FLASH 1M,FRAM,NAND;",
 "h0P1T[126],Erase save data;",
@@ -319,6 +320,8 @@ wire        reset_core    = RESET | status[0] | buttons[1];
 wire        soft_reset    = status[127];
 wire        erase_save    = status[126];
 wire  [2:0] save_type     = status[4:2];
+wire        ram_exp       = status[88];   // Slot-2 RAM expansion pak: 8 MB
+                                          // at 0x09000000 when on
 wire  [2:0] scr_layout    = status[7:5];
 wire  [1:0] rotation      = status[9:8];
 wire  [2:0] aspect        = status[12:10];
@@ -1053,6 +1056,7 @@ main_bus main_bus (
 	.clk(clk_sys),
 	.reset(reset),
 	.ce7(ce7),
+	.ram_exp(ram_exp),
 	.ds_keys(ds_keys),
 	.lang(lang_sel),
 	.hinge_closed(hinge_j),

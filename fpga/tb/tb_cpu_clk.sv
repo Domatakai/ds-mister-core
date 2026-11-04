@@ -192,7 +192,7 @@ wire [15:0] arb_rdata;
 
 main_bus dut (
 	.clk(clk), .reset(bus_reset),
-	.ce7(ce7),
+	.ce7(ce7), .ram_exp(1'b0),
 	.ds_keys(12'hFFF), .lang(3'd0), .hinge_closed(1'b0),
 	.touch_x(9'd0), .touch_y(8'd0), .touch_down(1'b0), .mic_in(1'b0),
 	.m9_addr(m9_addr), .m9_wdata(m9_wdata), .m9_be(m9_be),
