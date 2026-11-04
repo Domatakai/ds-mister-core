@@ -282,9 +282,9 @@ routability.
 |---|---|---|---|---|---|---|
 | before | -19.413 (emu) | -96,426.996 | -53.667 (audio) | 4,177 | 88.8/87.6/93.1 | 01:50:47 |
 | after (t11) | -8.339 (emu) | -45,936.820 | +0.203 (hdmi) | 4,160 | 84.2/83.1/91.3 | 00:45:25 |
-| current | -8.475 (emu) | -47,906.622 | +0.130 (emu) | 4,159 | 86.5/85.8/90.0 | 00:44:53 |
+| current | -8.475 (emu) | -47,906.622 | +0.130 (emu) | 4,159 | 86.5/85.8/90.0 | 00:45:00 |
 
-Routing falls from 01:20:34 to 00:06:37 because the router no longer tries to
+Routing falls from 01:20:34 to 00:06:32 because the router no longer tries to
 make unrelated clocks meet, the assembler still reports 0 errors and 0 warnings
 and writes a 3,740,780-byte `NDS.rbf`, and the fitter's warning count drops from
 20 to 18. The
@@ -1024,7 +1024,7 @@ were tried against it. Two move nothing, and the third is worth 9 LABs.
 |---|---|---|---|---|---|---|
 | shipping | 39,254 | 31,129 | 4,168 | 89.3% | -9.155 | 00:56:15 |
 | register + router duplication off | 39,254 | 29,492 | 4,168 | 84.8% | not run | 00:49:29 |
-| `PLACEMENT_EFFORT_MULTIPLIER 4.0` | 39,254 | 31,394 | **4,159** | 90.0% | **-8.475** | 00:44:53 |
+| `PLACEMENT_EFFORT_MULTIPLIER 4.0` | 39,254 | 31,394 | **4,159** | 90.0% | **-8.475** | 00:45:00 |
 
 **Duplication off.** `PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION OFF` removed 1,637
 duplicate registers -- 31,129 to 29,492 -- and changed the ALM count by zero and
@@ -1049,6 +1049,12 @@ of hold -- still +0.130, positive in every domain -- and it shortens the fit fro
 00:56:15 to 00:44:53, the placer spending its time once instead of the router
 paying for a placement it did not like. The setting is in `NDS.qsf` and is part of
 the shipping build.
+
+Rebuilt from the committed tree, with nothing but the ten macros added and no hand
+edits, the build reproduces every figure above and writes a **bit-identical
+`NDS.rbf`** (sha256 `f227095515d0b4df...`). Only the wall-clock minutes move
+between runs -- 45:00 here, 6:32 of it routing -- so the figures quoted in this
+file are from that clean run.
 
 The rest of the gap is packing, and the fitter prices its own shortfall:
 
