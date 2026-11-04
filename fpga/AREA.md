@@ -282,24 +282,24 @@ routability.
 |---|---|---|---|---|---|---|
 | before | -19.413 (emu) | -96,426.996 | -53.667 (audio) | 4,177 | 88.8/87.6/93.1 | 01:50:47 |
 | after (t11) | -8.339 (emu) | -45,936.820 | +0.203 (hdmi) | 4,160 | 84.2/83.1/91.3 | 00:45:25 |
-| current | -8.686 (emu) | -47,262.057 | +0.211 (h2f_user0_clk) | 4,183 | 86.5/85.2/92.1 | 00:50:11 |
+| current | -8.514 (emu) | -41,694.455 | +0.250 (h2f_user0_clk) | 4,186 | 83.6/83.1/87.5 | 00:50:04 |
 
-Routing falls from 01:20:34 to 00:11:47 because the router no longer tries to
+Routing falls from 01:20:34 to 00:09:01 because the router no longer tries to
 make unrelated clocks meet, the assembler still reports 0 errors and 0 warnings
-and writes a 3,795,912-byte `NDS.rbf`, and the fitter's warning count drops from
+and writes a 3,780,152-byte `NDS.rbf`, and the fitter's warning count drops from
 20 to 18. The
 `current` row is that build plus two measured changes: the save file's load path,
 which costs 8 LABs and 0.816 ns on its own, and `PLACEMENT_EFFORT_MULTIPLIER 4.0`,
 which gives back 9 LABs and 0.680 ns. That build fitted at 4,159 of 4,191 LABs.
-The CRT video modes then cost 24 LABs and 0.211 ns -- four output timings in
+The CRT video modes then cost 27 LABs and 0.039 ns -- four output timings in
 `video_timing` plus the 240p placements in `screen_composer` -- so the tree now
-fits at **4,183 of 4,191 LABs**, 8 spare.
+fits at **4,186 of 4,191 LABs**, 5 spare.
 
 Every domain passes except setup, and the failing set has shrunk to the core
-itself: `pll_hdmi` is -0.596 ns with -2.777 of TNS and the emu domain -8.686 with
--47,262.057, while `h2f_user0_clk` is +3.439, `FPGA_CLK1_50` +6.378,
-`FPGA_CLK2_50` +8.306, `pll_audio` +14.992 and `FPGA_CLK3_50` +18.882. Hold is
-positive in every domain (worst +0.211), recovery +3.145, removal +0.929 and
+itself: `pll_hdmi` is -0.124 ns with -1.263 of TNS and the emu domain -8.514 with
+-41,694.455, while `h2f_user0_clk` is +2.464, `FPGA_CLK1_50` +6.636,
+`FPGA_CLK2_50` +10.393, `pll_audio` +15.003 and `FPGA_CLK3_50` +18.795. Hold is
+positive in every domain (worst +0.250), recovery +3.075, removal +1.078 and
 minimum pulse width +1.065.
 
 So the remaining deficit is inside the 67.03 MHz domain, which no constraint can
@@ -316,7 +316,7 @@ result register `t64`. Measured, it is a loss:
 | build | ALMs | DSP | LABs | interconnect | setup worst | setup TNS | rbf |
 |---|---|---|---|---|---|---|---|
 | t11 | 39,685 | 63 | 4,160 | 84.2/83.1/91.3 | -8.339 | -45,936.820 | 3,749,124 |
-| t12, `t64` on DSP | 39,884 | 67 | 4,183 | 87.7/85.8/93.8 | -8.618 | -39,865.075 | 3,780,460 |
+| t12, `t64` on DSP | 39,884 | 67 | 4,186 | 87.7/85.8/93.8 | -8.618 | -39,865.075 | 3,780,460 |
 
 The attribute did what it advertises: `arm9_core` goes from 11 to 15 DSP blocks
 and the multiply leaves the failing set -- the worst t12 path is no longer the
@@ -1028,7 +1028,7 @@ were tried against it. Two move nothing, and the third is worth 9 LABs.
 | shipping | 39,254 | 31,129 | 4,168 | 89.3% | -9.155 | 00:56:15 |
 | register + router duplication off | 39,254 | 29,492 | 4,168 | 84.8% | not run | 00:49:29 |
 | `PLACEMENT_EFFORT_MULTIPLIER 4.0` | 39,254 | 31,394 | **4,159** | 90.0% | **-8.475** | 00:45:00 |
-| that setting + the CRT video modes (today's tree) | 40,210 | 31,369 | 4,183 | 92.1% | -8.686 | 00:50:11 |
+| that setting + the CRT video modes (today's tree) | 39,804 | 31,244 | 4,186 | 87.5% | -8.514 | 00:50:04 |
 
 **Duplication off.** `PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION OFF` removed 1,637
 duplicate registers -- 31,129 to 29,492 -- and changed the ALM count by zero and

@@ -59,6 +59,13 @@ reg [7:0] sy;        // y within the 192-tall screen box
 reg       use_top;   // which screen
 reg       box_hit;   // inside that screen's box
 
+// The 192-line picture's vertical window: 24 lines down in the 240p modes
+// (centred in 240), 96 down in the HDMI layouts (centred in 384). One window
+// and one offset serve every layout, so the two comparators and the
+// subtractor are built once instead of once per layout.
+wire [7:0] v_off = (vmode == 2'd0) ? 8'd96 : 8'd24;
+wire       win   = (y >= {1'b0, v_off}) && (y < {1'b0, v_off} + 9'd192);
+
 always_comb begin
 	sx = 8'd0;
 	sy = 8'd0;
@@ -71,33 +78,33 @@ always_comb begin
 		// the right-hand screen as well.
 		use_top = (x < 9'd256) ^ swap;
 		sx = x[7:0];
-		sy = y[7:0] - 8'd24;          // 192-line picture centred in 240
-		box_hit = (y >= 9'd24) && (y < 9'd216);
+		sy = y[7:0] - v_off;
+		box_hit = win;
 	end else if (vmode == 2'd2) begin
 		// CRT 240p, one screen at native size, centred the same way.
 		sx = x[7:0];
-		sy = y[7:0] - 8'd24;
+		sy = y[7:0] - v_off;
 		use_top = (layout != 3'd3) ^ swap;   // Bottom only picks engine B
-		box_hit = (y >= 9'd24) && (y < 9'd216);
+		box_hit = win;
 	end else begin
 	case (layout)
 	3'd1: begin // side by side, decimated to 128 wide
-		sy = y[7:0] - 8'd96;              // centred vertically
+		sy = y[7:0] - v_off;             // centred vertically
 		sx = {1'b0, x[7:1]};              // decimate x
 		use_top = (x < 9'd128) ^ swap;
-		box_hit = (y >= 9'd96) && (y < 9'd288);
+		box_hit = win;
 	end
 	3'd2: begin // top only
 		sx = x[7:0];
-		sy = y[7:0] - 8'd96;
+		sy = y[7:0] - v_off;
 		use_top = ~swap;
-		box_hit = (y >= 9'd96) && (y < 9'd288);
+		box_hit = win;
 	end
 	3'd3: begin // bottom only
 		sx = x[7:0];
-		sy = y[7:0] - 8'd96;
+		sy = y[7:0] - v_off;
 		use_top = swap;
-		box_hit = (y >= 9'd96) && (y < 9'd288);
+		box_hit = win;
 	end
 	default: begin // stacked
 		sx = x[7:0];

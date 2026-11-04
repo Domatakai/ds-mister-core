@@ -867,9 +867,9 @@ where `NDS.rbf` landed and how to copy it to the SD card.
 
 First full compile (analysis + fit + ASM + timing) takes roughly
 10–20 min on a modern multicore machine (`NUM_PARALLEL_PROCESSORS ALL`
-is set). A build with the ten macros above fits: **4,183 of 4,191 LABs**, a
-3,795,912-byte `NDS.rbf`, 18 fitter warnings, and setup short only on the
-67.03 MHz `emu` domain (-8.686 ns). Without those macros the same tree needs
+is set). A build with the ten macros above fits: **4,186 of 4,191 LABs**, a
+3,780,152-byte `NDS.rbf`, 18 fitter warnings, and setup short only on the
+67.03 MHz `emu` domain (-8.514 ns). Without those macros the same tree needs
 5,759 LABs and stops at the fitter with `170012`; that is the default flow, not
 a regression. Success criteria are:
 

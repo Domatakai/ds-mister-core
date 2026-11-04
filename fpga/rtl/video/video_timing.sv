@@ -50,14 +50,22 @@ module video_timing (
 	output           frame_start
 );
 
-wire [9:0] h_act   = (vmode == 2'd1) ? 10'd512 : 10'd256;
-wire [9:0] v_act   = (vmode == 2'd0 || vmode == 2'd3) ? 10'd384 : 10'd240;
-wire [9:0] h_front = (vmode == 2'd1) ? 10'd40 : (vmode == 2'd2) ? 10'd24 :
-                     (vmode == 2'd3) ? 10'd16 : 10'd8;
-wire [9:0] h_sync  = (vmode == 2'd1) ? 10'd52 : (vmode == 2'd2) ? 10'd32 :
-                     (vmode == 2'd3) ? 10'd48 : 10'd32;
-wire [9:0] v_front = (vmode == 2'd0) ? 10'd24 : 10'd4;
-wire [9:0] v_sync  = (vmode == 2'd0) ? 10'd4  : 10'd3;
+wire [9:0] h_act = (vmode == 2'd1) ? 10'd512 : 10'd256;
+wire [9:0] v_act = (vmode == 2'd0 || vmode == 2'd3) ? 10'd384 : 10'd240;
+
+// Sync windows as absolute counts instead of act+front+width sums, so both
+// comparators see a constant and no adder sits in the sync path. These are
+// the same edges the sums produced:
+//   mode 0  hs 264..296 (32), vs 408..412 (4)
+//   mode 1  hs 552..604 (52), vs 244..247 (3)
+//   mode 2  hs 280..312 (32), vs 244..247 (3)
+//   mode 3  hs 272..320 (48), vs 388..391 (3)
+wire [9:0] hs_beg = (vmode == 2'd1) ? 10'd552 : (vmode == 2'd2) ? 10'd280 :
+                    (vmode == 2'd3) ? 10'd272 : 10'd264;
+wire [9:0] hs_end = (vmode == 2'd1) ? 10'd604 : (vmode == 2'd2) ? 10'd312 :
+                    (vmode == 2'd3) ? 10'd320 : 10'd296;
+wire [9:0] vs_beg = (vmode == 2'd0) ? 10'd408 : (vmode == 2'd3) ? 10'd388 : 10'd244;
+wire [9:0] vs_end = (vmode == 2'd0) ? 10'd412 : (vmode == 2'd3) ? 10'd391 : 10'd247;
 
 // Single-cycle enable on the last count: 67.0274/5 = 13.40548 MHz,
 // /6 = 11.17123 MHz, /10 = 6.70274 MHz. >= rather than == so an OSD mode
@@ -105,8 +113,8 @@ always @(posedge clk) begin
 		x  <= h_active ? h_cnt[8:0] : 9'd0;
 		y  <= v_active ? v_cnt[8:0] : 9'd0;
 		de <= h_active & v_active;
-		hs <= (h_cnt >= h_act + h_front) && (h_cnt < h_act + h_front + h_sync);
-		vs <= (v_cnt >= v_act + v_front) && (v_cnt < v_act + v_front + v_sync);
+		hs <= (h_cnt >= hs_beg) && (h_cnt < hs_end);
+		vs <= (v_cnt >= vs_beg) && (v_cnt < vs_end);
 	end
 end
 
