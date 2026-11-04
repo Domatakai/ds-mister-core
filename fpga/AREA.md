@@ -1011,3 +1011,55 @@ now, so a request that outlives its completion cannot re-run the call — the
 per-core version relied on the core dropping `go` in the `done` cycle, which
 is true but fragile. Both are covered by `tb_swi_share` (44 checks), and the
 ARM7/ARM9 benches still pass unchanged (43 and 109 checks).
+
+## The capacity settings, measured and rejected (2026-11-03)
+
+The shipping build is 4,168 of 4,191 LABs (99%) while the same fit uses 39,254
+of 41,910 ALMs (94%), and that gap is the question: ten ALMs to a LAB means
+4,168 LABs *are* 41,680 ALM slots, and 2,426 of them sit empty. Two settings
+were expected to reclaim them. Both were built on the ten-macro tree, and
+neither moves a single LAB.
+
+| build | ALMs | registers | LABs | peak interconnect | fit |
+|---|---|---|---|---|---|
+| shipping | 39,254 | 31,129 | 4,168 | 89.3% | 00:56:15 |
+| register + router duplication off | 39,254 | **29,492** | 4,168 | 84.8% | 00:49:29 |
+
+Duplicate registers are what the first switch removes, and it removed 1,637 of
+them: 31,129 to 29,492. The ALM count did not move by one, and neither did the
+LAB count. The fitter's own breakdown says why -- `[c] ALMs used for registers`
+is 3,452 of the 40,132 placed, so the duplicates were sharing ALMs the logic had
+already paid for. Registers were never the wall (29,492 of 83,820 is 35%); the
+LAB is. Both switches are reverted in `NDS.qsf`.
+
+The switches themselves (`PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION` and
+`ROUTER_LCELL_INSERTION_AND_LOGIC_DUPLICATION`) are fitter-stage, so the map
+that precedes them is byte-identical either way -- only the fit can price them,
+which is why this row cost a 49-minute fit rather than a 12-minute map.
+
+`OPTIMIZATION_MODE` is still `BALANCED` in `NDS.qsf` while
+`OPTIMIZATION_TECHNIQUE` is `AREA`, so it looked like a lever that had never been
+pulled. Mapped with `AGGRESSIVE AREA` it produces **39,896 ALMs, 57,080 ALUTs and
+28,538 registers -- every digit identical to the balanced map**, with the same 46
+warnings: the technique assignment wins and the mode has nothing left to decide.
+
+What remains is packing, and the fitter prices its own shortfall:
+
+```
+[A] ALMs used in final placement                    40,132 / 41,910 (96%)
+[B] estimate of ALMs recoverable by dense packing    1,716 (4%)
+[C] ALMs unavailable                                   838 (2%)
+      LAB-wide signal conflicts                           96
+      LAB input limits                                   742
+```
+
+That 1,716 is a hint, not a switch: Quartus 17.0 has no dense-packing
+assignment, and the options near it (`FITTER_EFFORT`, `PLACEMENT_EFFORT_MULTIPLIER`,
+`ALM_REGISTER_PACKING_EFFORT`) are set to `Standard Fit`, `1.0` and `HIGH`, the
+last one already at its maximum. The 838 is structural: 742 ALMs are lost to how
+many distinct inputs a LAB can take, which follows the shape of the logic rather
+than the effort the placer spends.
+
+So the LAB count follows the LUT volume -- 25,803 of the 40,132 placed ALMs hold
+LUT logic alone -- and neither of the two settings that looked like capacity
+reclaims it.
