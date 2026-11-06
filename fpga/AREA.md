@@ -372,6 +372,36 @@ shared read port, or a copy of the array per port -- reduces that; the first
 is a large refactor of the state machine and the second costs far more than
 the 37 spare LABs. Neither is a knob.
 
+### What collapsing the register reads would actually buy (2026-11-06)
+
+The obvious repair is one shared read port. The core has none to share: three
+sites read two different registers in the same cycle -- the Thumb load/store
+register offset (`rread(insn[5:3]) + rread(insn[8:6])`), the long
+multiply-accumulate pair, and MUL's two operands -- so the minimum is two
+ports, not one. There are also eleven distinct index expressions across the 47
+sites, and the sites that share an index already collapse to one mux in
+synthesis.
+
+What the muxing costs was measured, not guessed: a scratch map with every
+read pinned to `regs[3]` (same data flow, same widths, only the index mux
+gone) comes out at 14,251 ALUTs in `arm9_core` against 18,126 for the tree as
+it ships, and 52,479 combinational ALUTs across the design against 56,441.
+The index muxing is therefore worth 3,875 ALUTs -- 21% of the core's
+combinational logic, about 390 ALMs or 39 LABs, more than the 37 the tree has
+spare.
+
+Two shared ports would recover most of it, since two muxes would remain. The
+catch is that the read index has to become a function of the decode state
+rather than an inline expression at each site: the FSM assigns its temporaries
+with blocking assignments inside one clocked block, so a port index written in
+that same block would be read one delta too late. All 47 sites would move onto
+two named ports whose indices are decoded combinationally from `state` and
+`insn` -- a rewrite of the operand fetch, not a setting, and one that needs a
+bench able to tell a timing change from a bug.
+
+Until then the 39 LABs stay unclaimed and the `emu` setup path stays at
+-8.376 ns.
+
 Every domain passes except setup, and the failing set has shrunk to the core
 itself: `pll_hdmi` is -0.240 ns with -0.695 of TNS and the emu domain -8.376 with
 -41,728.820, while `h2f_user0_clk` is +3.620, `FPGA_CLK1_50` +7.094,
