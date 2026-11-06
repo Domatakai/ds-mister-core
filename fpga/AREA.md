@@ -303,13 +303,17 @@ which is placement luck rather than a saving — with setup at -8.354 ns
 Removing the adder from the pak address does not pay. The pak sits at
 0xA00000, one 25-bit add above `{3'd0, a[22:1]}`; since 8 MB is exactly a
 quarter of the chip's 16 MB, a base of 0xC00000 turns the address into the
-concatenation `{1'b0, 2'b11, a[22:1]}` and ends the pak on the chip's last
-halfword, 0xFFFFFF. Fitted, that version placed 4,183 of 4,191 LABs -- two
-more than the adder it removes, the shared low/high mux making no difference
-to the count -- and then failed to route: 02:22:07 of fitting, `Error (16618)`
-congestion and no successful final attempt, at 100% LAB utilisation. At that
-occupancy the adder is smaller than the placement noise, so the adder stays
-and this build is the one above.
+concatenation `{1'b0, 2'b11, a[22:1]}`, ends the pak on the chip's last
+halfword, 0xFFFFFF, and lets both SDRAM sequences share one high-halfword
+mux. Three fitter seeds were tried against it and none placed tighter than
+the adder. Seed 2 put it in 4,183 of 4,191 LABs and then abandoned routing on
+congestion (`Error (16618)`, 02:22:07 of fitting, no successful final
+attempt); seed 3 used 4,188 LABs and 31,789 registers, placed in 8:44 and
+gave up routing in 8:28 (`Error (170143)`, 00:47:53 in total); seed 4 placed
+in 17:24 and was still routing after 3 h 00, 928 CPU-minutes in, when the
+sweep was stopped. At 99% LAB occupancy the adder costs less than the
+placement noise -- the shipped build is 4,181 -- so the adder stays and this
+build is the one above.
 
 Every domain passes except setup, and the failing set has shrunk to the core
 itself: `pll_hdmi` is -0.267 ns with -0.511 of TNS and the emu domain -8.354 with
