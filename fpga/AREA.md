@@ -286,8 +286,8 @@ routability.
 
 Routing falls from 01:20:34 to 00:05:53 because the router no longer tries to
 make unrelated clocks meet, the assembler still reports 0 errors and 0 warnings
-and writes a 3,764,604-byte `NDS.rbf`, and the fitter's warning count drops
-from 20 to 18. The
+and writes a 3,764,604-byte `NDS.rbf`, and the fitter's warning count
+drops from 20 to 18. The
 `current` row is that build plus two measured changes: the save file's load path,
 which costs 8 LABs and 0.816 ns on its own, and `PLACEMENT_EFFORT_MULTIPLIER 4.0`,
 which gives back 9 LABs and 0.680 ns. That build fitted at 4,159 of 4,191 LABs.
