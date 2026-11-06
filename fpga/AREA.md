@@ -282,19 +282,19 @@ routability.
 |---|---|---|---|---|---|---|
 | before | -19.413 (emu) | -96,426.996 | -53.667 (audio) | 4,177 | 88.8/87.6/93.1 | 01:50:47 |
 | after (t11) | -8.339 (emu) | -45,936.820 | +0.203 (hdmi) | 4,160 | 84.2/83.1/91.3 | 00:45:25 |
-| current | -8.354 (emu) | -44,563.505 | +0.226 (h2f_user0_clk) | 4,181 | 86.8/85.9/91.6 | 00:50:53 |
+| current | -8.376 (emu) | -41,728.820 | +0.251 (emu) | 4,154 | 79.8/78.8/83.8 | 00:46:36 |
 
-Routing falls from 01:20:34 to 00:10:34 because the router no longer tries to
+Routing falls from 01:20:34 to 00:05:53 because the router no longer tries to
 make unrelated clocks meet, the assembler still reports 0 errors and 0 warnings
-and writes a 3,730,440-byte `NDS.rbf`, and the fitter's warning count drops from
-20 to 19. The
+and writes a 3,764,604-byte `NDS.rbf`, and the fitter's warning count drops
+from 20 to 18. The
 `current` row is that build plus two measured changes: the save file's load path,
 which costs 8 LABs and 0.816 ns on its own, and `PLACEMENT_EFFORT_MULTIPLIER 4.0`,
 which gives back 9 LABs and 0.680 ns. That build fitted at 4,159 of 4,191 LABs.
 The CRT video modes then cost 27 LABs and 0.039 ns -- four output timings in
 `video_timing` plus the 240p placements in `screen_composer` -- so the tree now
 fits at **4,186 of 4,191 LABs**, 5 spare. The Slot-2 RAM expansion pak
-builds at **4,181 of 4,191 LABs**, 10 spare — five fewer than the CRT tree,
+built at **4,181 of 4,191 LABs**, 10 spare — five fewer than the CRT tree,
 which is placement luck rather than a saving — with setup at -8.354 ns
 (0.160 ns better), TNS
 -44,563.505, hold +0.226, peak interconnect 86.8/85.9/91.6 and a
@@ -312,14 +312,46 @@ attempt); seed 3 used 4,188 LABs and 31,789 registers, placed in 8:44 and
 gave up routing in 8:28 (`Error (170143)`, 00:47:53 in total); seed 4 placed
 in 17:24 and was still routing after 3 h 00, 928 CPU-minutes in, when the
 sweep was stopped. At 99% LAB occupancy the adder costs less than the
-placement noise -- the shipped build is 4,181 -- so the adder stays and this
+placement noise -- the adder build was 4,181 -- so the adder stays and this
 build is the one above.
 
+### The firmware shadow's written flag fits in its own RAM (2026-11-06)
+
+The SPI firmware shadow at 3FE00h/3FF00h kept the 512 bytes in one block RAM
+and a separate `fw_written[511:0]` bitmap saying which of them had been
+written since reset: 502 flip-flops in the netlist, plus the 512-way read mux
+that selecting one bit of it needs. The flag is worth one bit -- the array is
+9 bits wide, `{written, byte}`, so the bitmap rides in the block RAM the bytes
+already occupy, and the mux goes with it.
+
+| build | ALMs | registers | LABs | peak interconnect | setup worst | setup TNS | rbf | fit |
+|---|---|---|---|---|---|---|---|---|
+| pak tree | 39,729 | 31,179 | 4,181 | 86.8/85.9/91.6 | -8.354 | -44,563.505 | 3,730,440 | 00:50:53 |
+| flag in the shadow RAM | 39,083 | 30,691 | **4,154** | 79.8/78.8/83.8 | -8.376 | -41,728.820 | 3,764,604 | 00:46:36 |
+
+The map says the flag landed where it was meant to: registers fall 502 while
+block memory bits rise by exactly 512, so the bit went into the block instead
+of being rebuilt in logic. The saving is larger than 502 flops are worth on
+their own, because the array's read mux goes with them, and it is real: 27
+LABs is three times the +-9 LAB spread placement alone produces here. That is
+the difference from the register-duplication experiment above, where 1,637
+registers vanished and no LAB did: those duplicates shared ALMs the logic
+already occupied, while these sat in register-only ALMs and dragged a 512-way
+mux behind them.
+
+Setup is 0.022 ns worse and TNS 2,835 better, hold improves to +0.251 and peak
+interconnect falls from 86.8% to 79.8%: the tree now has 37 spare LABs where it
+had 10. `tb_spi` and `tb_main_bus` pass unchanged. The first attempt failed the
+bench for a reason worth keeping: with the flag in the array, an unwritten
+entry's flag is whatever the RAM holds, and being initialised in hardware is
+not being initialised in simulation, so the bench read X where the device reads
+0. The array is now explicitly initialised to zero.
+
 Every domain passes except setup, and the failing set has shrunk to the core
-itself: `pll_hdmi` is -0.267 ns with -0.511 of TNS and the emu domain -8.354 with
--44,563.505, while `h2f_user0_clk` is +3.060, `FPGA_CLK1_50` +7.397,
-`FPGA_CLK2_50` +11.733, `pll_audio` +15.128 and `FPGA_CLK3_50` +18.805. Hold is
-positive in every domain (worst +0.226), recovery +2.777, removal +0.759 and
+itself: `pll_hdmi` is -0.240 ns with -0.695 of TNS and the emu domain -8.376 with
+-41,728.820, while `h2f_user0_clk` is +3.620, `FPGA_CLK1_50` +7.094,
+`FPGA_CLK2_50` +10.859, `pll_audio` +14.718 and `FPGA_CLK3_50` +18.803. Hold is
+positive in every domain (worst +0.251), recovery +3.447, removal +0.792 and
 minimum pulse width +1.065.
 
 So the remaining deficit is inside the 67.03 MHz domain, which no constraint can
@@ -1048,7 +1080,8 @@ were tried against it. Two move nothing, and the third is worth 9 LABs.
 | shipping | 39,254 | 31,129 | 4,168 | 89.3% | -9.155 | 00:56:15 |
 | register + router duplication off | 39,254 | 29,492 | 4,168 | 84.8% | not run | 00:49:29 |
 | `PLACEMENT_EFFORT_MULTIPLIER 4.0` | 39,254 | 31,394 | **4,159** | 90.0% | **-8.475** | 00:45:00 |
-| that setting + the CRT video modes + the RAM expansion pak (today's tree) | 39,729 | 31,179 | 4,181 | 91.6% | -8.354 | 00:50:53 |
+| that setting + the CRT video modes + the RAM expansion pak (the pak tree) | 39,729 | 31,179 | 4,181 | 91.6% | -8.354 | 00:50:53 |
+| that + the firmware shadow's flag in its block RAM (today's tree) | 39,083 | 30,691 | 4,154 | 79.8% | -8.376 | 00:46:36 |
 
 **Duplication off.** `PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION OFF` removed 1,637
 duplicate registers -- 31,129 to 29,492 -- and changed the ALM count by zero and

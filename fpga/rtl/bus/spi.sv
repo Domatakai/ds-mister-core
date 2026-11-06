@@ -76,8 +76,14 @@ module nds_spi (
 	localparam FW_NONE = 3'd0, FW_ID = 3'd1, FW_STATUS = 3'd2,
 	           FW_READ = 3'd3, FW_PROG = 3'd4, FW_ERASE = 3'd5;
 
-	reg  [7:0]   fw_ram [0:511];
-	reg  [511:0] fw_written = 512'd0;
+	// 9 bits per entry: the byte and a written flag, so the shadow and the
+	// bitmap of which bytes it holds share the one block RAM instead of a
+	// block plus 512 flip-flops and a 512-way read mux.
+	reg  [8:0]   fw_ram [0:511];
+	// a cleared flag means the default image is still in force, so the
+	// array starts all-zero in both the block RAM and the simulator
+	integer fw_i;
+	initial for (fw_i = 0; fw_i < 512; fw_i = fw_i + 1) fw_ram[fw_i] = 9'd0;
 
 	reg  [17:0]  fw_ptr   = 18'd0;
 	reg  [2:0]   fw_mode  = FW_NONE;
@@ -111,7 +117,7 @@ module nds_spi (
 	// 4,096 flip-flops instead of one 10 Kb block.
 	reg  [8:0]  fw_idx_d   = 9'd0;
 	reg         fw_inwin_d = 1'b0;
-	reg  [7:0]  fw_ram_q   = 8'hFF;
+	reg  [8:0]  fw_ram_q   = 9'h1FF;
 	reg         prep_d     = 1'b0;   // prep, one cycle on
 
 	always @(posedge clk) begin
@@ -122,8 +128,8 @@ module nds_spi (
 
 	fw_default u_fwdef (.addr(fw_idx_d), .lang(lang), .d(fw_default_d));
 
-	wire [7:0] fw_byte = !fw_inwin_d           ? 8'hFF :
-	                     fw_written[fw_idx_d] ? fw_ram_q : fw_default_d;
+	wire [7:0] fw_byte = !fw_inwin_d ? 8'hFF :
+	                     fw_ram_q[8] ? fw_ram_q[7:0] : fw_default_d;
 
 	wire [7:0] fw_status = {6'd0, fw_wel, fw_wip};
 
@@ -451,16 +457,14 @@ module nds_spi (
 			// one address/data mux here: two write sites with different
 			// addresses are two write ports, and a 10 Kb block has one.
 			if (eras_go) begin
-				fw_ram[eras_addr]     <= 8'hFF;
-				fw_written[eras_addr] <= 1'b1;
+				fw_ram[eras_addr]     <= 9'h1FF;
 				if (eras_addr == eras_last) begin
 					eras_go <= 1'b0;
 					fw_wip  <= 1'b0;
 				end
 				eras_addr <= eras_addr + 9'd1;
 			end else if (fw_prog_we) begin
-				fw_ram[fw_prog_addr]     <= fw_prog_byte;
-				fw_written[fw_prog_addr] <= 1'b1;
+				fw_ram[fw_prog_addr]     <= {1'b1, fw_prog_byte};
 				fw_prog_we <= 1'b0;
 			end
 
