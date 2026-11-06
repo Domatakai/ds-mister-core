@@ -347,6 +347,31 @@ entry's flag is whatever the RAM holds, and being initialised in hardware is
 not being initialised in simulation, so the bench read X where the device reads
 0. The array is now explicitly initialised to zero.
 
+### Spending the spare LABs on the emu path did nothing measurable (2026-11-06)
+
+The LABs the flag change freed invited an attempt at the domain that still
+misses: emu setup is -8.376 ns against a 14.917 ns period. The worst twenty
+setup paths in the fresh report are all one shape -- they start at a bit of
+`arm9_core|regs` and end at the operand mux, 13 logic levels and 22.420 ns of
+data delay, of which 11.846 ns (53%) is interconnect and 10.574 ns is cell
+delay. It is the register file's read, not the 64-bit multiply the section
+above blames.
+
+`PHYSICAL_SYNTHESIS_EFFORT EXTRA` is the assignment that spends area to
+shorten exactly such a path, and it was the one physical-synthesis knob not
+already in `NDS.qsf` (retiming, combinational logic and asynchronous
+pipelining are all on). Measured against the shipping build it changes
+nothing: the same LAB count, the same slack and TNS, and a bitstream of the
+same size -- the signature of an inert setting rather than a small win. It is
+reverted.
+
+The reason no setting helps is in the source: `rread()` is a function over a
+plain 16x32 flop array and the core calls it at 47 sites, so every `regs` bit
+fans out into 47 separate 16-way mux trees. Only a structural change -- one
+shared read port, or a copy of the array per port -- reduces that; the first
+is a large refactor of the state machine and the second costs far more than
+the 37 spare LABs. Neither is a knob.
+
 Every domain passes except setup, and the failing set has shrunk to the core
 itself: `pll_hdmi` is -0.240 ns with -0.695 of TNS and the emu domain -8.376 with
 -41,728.820, while `h2f_user0_clk` is +3.620, `FPGA_CLK1_50` +7.094,
