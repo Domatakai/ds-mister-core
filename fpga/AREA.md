@@ -282,11 +282,11 @@ routability.
 |---|---|---|---|---|---|---|
 | before | -19.413 (emu) | -96,426.996 | -53.667 (audio) | 4,177 | 88.8/87.6/93.1 | 01:50:47 |
 | after (t11) | -8.339 (emu) | -45,936.820 | +0.203 (hdmi) | 4,160 | 84.2/83.1/91.3 | 00:45:25 |
-| current | -8.376 (emu) | -41,728.820 | +0.251 (emu) | 4,154 | 79.8/78.8/83.8 | 00:46:36 |
+| current | -8.313 (emu) | -47,647.790 | +0.250 (emu) | 4,143 | 87.9/86.7/91.5 | 01:04:29 |
 
-Routing falls from 01:20:34 to 00:05:53 because the router no longer tries to
+Routing falls from 01:20:34 to 00:21:25 because the router no longer tries to
 make unrelated clocks meet, the assembler still reports 0 errors and 0 warnings
-and writes a 3,764,604-byte `NDS.rbf`, and the fitter's warning count drops from
+and writes a 3,718,564-byte `NDS.rbf`, and the fitter's warning count drops from
 20 to 18. The
 `current` row is that build plus two measured changes: the save file's load path,
 which costs 8 LABs and 0.816 ns on its own, and `PLACEMENT_EFFORT_MULTIPLIER 4.0`,
@@ -372,41 +372,54 @@ shared read port, or a copy of the array per port -- reduces that; the first
 is a large refactor of the state machine and the second costs far more than
 the 37 spare LABs. Neither is a knob.
 
-### What collapsing the register reads would actually buy (2026-11-06)
+### The register-file read ports (2026-11-06)
 
-The obvious repair is one shared read port. The core has none to share: three
-sites read two different registers in the same cycle -- the Thumb load/store
-register offset (`rread(insn[5:3]) + rread(insn[8:6])`), the long
-multiply-accumulate pair, and MUL's two operands -- so the minimum is two
-ports, not one. There are also eleven distinct index expressions across the 47
-sites, and the sites that share an index already collapse to one mux in
-synthesis.
+The obvious repair was one shared read port. The core has none to share:
+three sites read two different registers in the same cycle -- the Thumb
+load/store register offset, the long multiply-accumulate pair and MUL's two
+operands -- and LDRD/STRD (`Rd`, `Rd+1`), SMLALxy and the long multiply each
+need four distinct registers in one cycle, so the smallest set that keeps one
+instruction per cycle is four ports, not one.
 
-What the muxing costs was measured, not guessed: a scratch map with every
-read pinned to `regs[3]` (same data flow, same widths, only the index mux
-gone) comes out at 14,251 ALUTs in `arm9_core` against 18,126 for the tree as
-it ships, and 52,479 combinational ALUTs across the design against 56,441.
-The index muxing is therefore worth 3,875 ALUTs -- 21% of the core's
-combinational logic, about 390 ALMs or 39 LABs, more than the 37 the tree has
-spare.
+All 47 read sites now go through four ports (`rp_a`..`rp_d`) and `rread` is
+gone. Each port's index is decoded from `state` and `insn` alone, which is the
+part that makes it work: the machine assigns its temporaries with blocking
+assignments inside the clocked block, so an index written there would be read
+a delta too late. The ARM side needed almost no branch tests -- Rn 19:16, Rm
+3:0, Rs 11:8 and Rd 15:12 are every field an ARM read comes from, so those are
+the defaults and only the halfword group's Rd+1 is an override. Thumb reads
+three-bit fields and does need a table.
 
-Two shared ports would recover most of it, since two muxes would remain. The
-catch is that the read index has to become a function of the decode state
-rather than an inline expression at each site: the FSM assigns its temporaries
-with blocking assignments inside one clocked block, so a port index written in
-that same block would be read one delta too late. All 47 sites would move onto
-two named ports whose indices are decoded combinationally from `state` and
-`insn` -- a rewrite of the operand fetch, not a setting, and one that needs a
-bench able to tell a timing change from a bug.
+Measured against the same ten-macro map: `arm9_core` falls from 18,126 to
+17,522 ALUTs and the design from 56,441 to 55,403, with the register count
+unchanged at 2,471 -- nothing went dead, which a pinned-index experiment
+would have hidden. That is 604 ALUTs of the 3,875 a pinned index releases:
+the four 32-bit 16:1 muxes and their decode cost 3,271, so most of the
+theoretical prize is the price of having ports at all rather than of having
+eleven mux trees.
 
-Until then the 39 LABs stay unclaimed and the `emu` setup path stays at
--8.376 ns.
+`tb_arm9` (109 checks), `tb_main_bus` and `tb_spi` pass, but they do not
+cover every branch: checking the 48 sites against the decode caught a Thumb
+format-4 ALU operand that had been left reading `Rd` twice, which `tb_arm9`
+passes because its Thumb program never uses that form with two different
+registers. That gap wants a directed test before the next change here.
+
+Fitted for real, the tree lands at **4,143 of 4,191 LABs**, 48 spare: setup
+-8.313 ns on `emu` (0.063 ns better than before the change), hold +0.250, a
+3,718,564-byte `NDS.rbf`, and the same 18 fitter warnings with 0 errors from
+both the fitter and the assembler. The LAB count moves less than the ALUT count
+suggests, and the reports say why: total registers rise from 30,691 to 31,996,
+because the fitter duplicates register bits to keep the four shared muxes' fanout
+down, and peak interconnect rises from 79.8/78.8/83.8 to 87.9/86.7/91.5. So the
+ports do take the reads from eleven mux trees to four, but synthesis spends most
+of the saved logic on that duplication and the router, and the net is 11 LABs,
+0.063 ns and a 46 KB smaller bitstream for a fit that takes 18 minutes longer.
 
 Every domain passes except setup, and the failing set has shrunk to the core
-itself: `pll_hdmi` is -0.240 ns with -0.695 of TNS and the emu domain -8.376 with
--41,728.820, while `h2f_user0_clk` is +3.620, `FPGA_CLK1_50` +7.094,
-`FPGA_CLK2_50` +10.859, `pll_audio` +14.718 and `FPGA_CLK3_50` +18.803. Hold is
-positive in every domain (worst +0.251), recovery +3.447, removal +0.792 and
+itself: `pll_hdmi` is -0.061 ns with -0.061 of TNS and the emu domain -8.313 with
+-41,728.820, while `h2f_user0_clk` is +3.793, `FPGA_CLK1_50` +7.062,
+`FPGA_CLK2_50` +9.728, `pll_audio` +14.082 and `FPGA_CLK3_50` +18.801. Hold is
+positive in every domain (worst +0.251), recovery +3.439, removal +0.917 and
 minimum pulse width +1.065.
 
 So the remaining deficit is inside the 67.03 MHz domain, which no constraint can

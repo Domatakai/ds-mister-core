@@ -251,23 +251,6 @@ function [5:0] popcnt16 (input [15:0] v);
 	end
 endfunction
 
-// R15 reads the address of the current instruction + 8 (ARM) or + 4 (Thumb);
-// `pc` already points at the next instruction, so that is pc+4 / pc+2.
-//
-// The index is masked to the four bits a 16-entry array needs. The encoding
-// field it comes from is five bits wide: r==15 is handled above and nothing
-// from 16 up can reach here, but an unmasked index still tells the synthesiser
-// that this read can address 32 slots. (Quartus 17 keeps printing warning
-// 10027 on the variable index either way -- it prints it for a 4-bit index too,
-// and not for a constant one -- so it is not the thing that stops the build;
-// that is the RAM conversion described in NDS.qsf.)
-function [31:0] rread (input [4:0] r);
-	begin
-		if (r == 5'd15) rread = pc + (insn_thumb ? 32'd2 : 32'd4);
-		else            rread = regs[r[3:0]];
-	end
-endfunction
-
 // the user-mode bank, for LDM/STM with S=1
 function [31:0] rread_user (input [4:0] r);
 	begin
@@ -497,15 +480,21 @@ reg         op2_c;
 reg  [31:0] sh_in;
 reg  [7:0]  sh_amt;
 
-// Read the register file directly here rather than through `rread`: a
-// combinational block is only sensitive to what it names, and a function's
-// internal reads of `regs` are invisible to `always @(*)`. Naming the array
-// keeps the operand and the shifter amount live.
-wire [4:0]  rm_f = insn[3:0];
-wire [4:0]  rs_f = insn[11:8];
+// A combinational block is only sensitive to what it names, and a function's
+// internal reads of `regs` are invisible to `always @(*)` -- which is why the
+// read ports below (search "The register-file read ports") select the array
+// directly instead of going through a function.
 wire [31:0] pc_ahead = pc + (insn_thumb ? 32'd2 : 32'd4);
-wire [31:0] rm_val = (rm_f == 5'd15) ? pc_ahead : regs[rm_f];
-wire [7:0]  rs_amt = (rs_f == 5'd15) ? pc_ahead[7:0] : regs[rs_f][7:0];
+
+// the four shared read ports: index and data, wired up after blk_idx
+reg  [3:0] rp_ia, rp_ib, rp_ic, rp_id;
+reg [31:0] rp_a, rp_b, rp_c, rp_d;
+
+// operand 2 and the shifter amount are Rm and Rs, which are insn[3:0] and
+// insn[11:8] in every encoding that reads them, so the ports decode them for
+// every ARM instruction and each Thumb one names them in the table below
+wire [31:0] rm_val = rp_b;
+wire [7:0]  rs_amt = rp_c[7:0];
 
 always @(*) begin
 	sh_in  = insn[25] ? {24'd0, insn[7:0]} : rm_val;
@@ -598,8 +587,7 @@ wire cond_ok = cond_hold(insn[31:28]);
 //------------------------------------------------------------------
 // Data processing ALU
 //------------------------------------------------------------------
-wire [4:0]  rn_f = insn[19:16];
-wire [31:0] dp_a = (rn_f == 5'd15) ? pc_ahead : regs[rn_f];
+wire [31:0] dp_a = rp_a;
 wire [31:0] dp_b = insn[25] ? imm32 : op2;
 
 reg  [31:0] dp_out;
@@ -687,6 +675,104 @@ end
 
 // SP adjustment for Thumb PUSH/POP: four bytes per listed register, and the
 // link bit adds r14 to the count as well
+//------------------------------------------------------------------------
+// The register-file read ports
+//------------------------------------------------------------------------
+// Four ports serve every register read in the machine, and each port's index
+// is decoded from `state` and `insn` alone. What that removes is the point: a
+// read whose index is an instruction field makes the synthesiser build a
+// 16-entry mux over the register file, and an index written inline at each
+// call site builds one mux per field -- eleven of them, 3,875 ALUTs, 21% of
+// this core's combinational logic. Four muxes fed by four decoded indices cost
+// about a quarter of that, and the register bits fan out to four trees instead
+// of eleven, which is what the worst setup path was made of.
+//
+// The index cannot be a register. The machine assigns its temporaries with
+// blocking assignments inside the clocked block, so an index written there
+// would be read a delta too late; it has to be a function of `state` and
+// `insn`, which is why the decode repeats the FSM's branch conditions.
+//
+// The ARM side needs almost no branch tests: Rn (19:16), Rm (3:0), Rs (11:8)
+// and Rd (15:12) are the four fields every ARM read comes from, so those are
+// the defaults and only the halfword/doubleword group's Rd+1 is special. Thumb
+// reads three-bit fields, so it does need its table.
+//
+// R15 reads pc+8 (ARM) or pc+4 (Thumb) rather than the array, exactly as the
+// per-site function it replaces did. The index is four bits, which is all a
+// 16-entry array needs. (Quartus 17 prints warning 10027 on the variable index
+// either way -- for a 4-bit index too, and not for a constant one -- so it is
+// not what stops the build; that is the RAM conversion described in NDS.qsf.)
+always @(*) begin
+	if (rp_ia == 4'd15) rp_a = pc_ahead; else rp_a = regs[rp_ia];
+	if (rp_ib == 4'd15) rp_b = pc_ahead; else rp_b = regs[rp_ib];
+	if (rp_ic == 4'd15) rp_c = pc_ahead; else rp_c = regs[rp_ic];
+	if (rp_id == 4'd15) rp_d = pc_ahead; else rp_d = regs[rp_id];
+end
+
+always @(*) begin
+	rp_ia = 4'd0; rp_ib = 4'd0; rp_ic = 4'd0; rp_id = 4'd0;
+	case (state)
+	S_EXEC: begin
+		if (insn_thumb) begin
+			if (insn[15:13] == 3'b000 && insn[12:11] != 2'b11) begin
+				// LSL/LSR/ASR immediate: Rs
+				rp_ia = insn[5:3];
+			end else if (insn[15:13] == 3'b000) begin
+				// ADD/SUB register or imm3: Rs and Rn
+				rp_ia = insn[5:3];
+				rp_ib = insn[8:6];
+			end else if (insn[15:13] == 3'b001) begin
+				// MOV/CMP/ADD/SUB imm8: Rd, which is also the source
+				rp_ia = insn[10:8];
+			end else if (insn[15:10] == 6'b010000) begin
+				// ALU operations: Rd and Rs
+				rp_ia = insn[2:0];
+				rp_ib = insn[5:3];
+			end else if (insn[15:10] == 6'b010001) begin
+				// hi-register ops / BX: the two five-bit register fields
+				rp_ia = {insn[6], insn[5:3]};
+				rp_ib = {insn[7], insn[2:0]};
+			end else if (insn[15:12] == 4'b0101) begin
+				// load/store with register offset: base, offset, data
+				rp_ia = insn[5:3];
+				rp_ib = insn[8:6];
+				rp_ic = insn[2:0];
+			end else if (insn[15:13] == 3'b011) begin
+				// LDR/STR word or byte, imm5: base and data
+				rp_ia = insn[5:3];
+				rp_ic = insn[2:0];
+			end else if (insn[15:12] == 4'b1000) begin
+				// LDRH/STRH, imm5: base and data
+				rp_ia = insn[5:3];
+				rp_ic = insn[2:0];
+			end else if (insn[15:12] == 4'b1001) begin
+				// LDR/STR, SP relative: data
+				rp_ic = insn[10:8];
+			end else if (insn[15:12] == 4'b1100 ||
+			             (insn[15:12] == 4'b1101 && insn[11])) begin
+				// STMIA / LDMIA: base
+				rp_ia = insn[10:8];
+			end
+		end else begin
+			// ARM: Rn, Rm, Rs, Rd -- every field an ARM read comes from
+			rp_ia = insn[19:16];
+			rp_ib = insn[3:0];
+			rp_ic = insn[11:8];
+			rp_id = insn[15:12];
+			if (insn[27:26] == 2'b00 && !insn[25] && insn[4] &&
+			    (insn[7:5] == 3'b101 || insn[7:5] == 3'b110 ||
+			     insn[7:5] == 3'b111)) begin
+				// halfword / signed / doubleword transfers read the pair Rd,
+				// Rd+1, and Rd+1 is the one index that is not an insn field
+				rp_ic = insn[15:12] + 4'd1;
+			end
+		end
+	end
+	S_BLK: rp_ia = blk_idx;
+	default: begin rp_ia = 4'd0; rp_ib = 4'd0; rp_ic = 4'd0; rp_id = 4'd0; end
+	endcase
+end
+
 wire [31:0] thumb_sp_off = {23'd0, insn[8], insn[7:0]} << 2;
 
 //------------------------------------------------------------------
@@ -858,7 +944,7 @@ always @(posedge clk) begin
 				if (insn[15:13] == 3'b000 && insn[12:11] != 2'b11) begin
 					// ---- 1. LSL/LSR/ASR immediate ----
 					tidx  = {2'd0, insn[2:0]};
-					t32   = rread(insn[5:3]);
+					t32   = rp_a;
 					c_tmp = c;
 					case (insn[12:11])
 					2'b00: begin   // LSL
@@ -896,8 +982,8 @@ always @(posedge clk) begin
 				end else if (insn[15:13] == 3'b000) begin
 					// ---- 2. ADD/SUB register or imm3 ----
 					tidx = {2'd0, insn[2:0]};
-					t32  = rread(insn[5:3]);
-					t32b = insn[10] ? {29'd0, insn[8:6]} : rread(insn[8:6]);
+					t32  = rp_a;
+					t32b = insn[10] ? {29'd0, insn[8:6]} : rp_b;
 					if (insn[9]) wide = {1'b0, t32} - {1'b0, t32b};
 					else         wide = {1'b0, t32} + {1'b0, t32b};
 					v_tmp = insn[9] ? ((t32[31] ^ t32b[31]) & (t32[31] ^ wide[31]))
@@ -912,7 +998,7 @@ always @(posedge clk) begin
 				end else if (insn[15:13] == 3'b001) begin
 					// ---- 3. MOV/CMP/ADD/SUB imm8 ----
 					tidx = {1'b0, insn[10:8]};
-					t32  = rread(insn[10:8]);
+					t32  = rp_a;
 					t32b = {24'd0, insn[7:0]};
 					case (insn[12:11])
 					2'b00: begin                       // MOV
@@ -943,8 +1029,8 @@ always @(posedge clk) begin
 				end else if (insn[15:10] == 6'b010000) begin
 					// ---- 4. ALU operations ----
 					tidx  = {2'd0, insn[2:0]};
-					t32   = rread(insn[2:0]);
-					t32b  = rread(insn[5:3]);
+					t32   = rp_a;
+					t32b  = rp_b;
 					c_tmp = c;
 					t32c  = 32'd0;
 					case (insn[9:6])
@@ -1034,8 +1120,8 @@ always @(posedge clk) begin
 				end else if (insn[15:10] == 6'b010001) begin
 					// ---- 5. hi-register ops / BX ----
 					tidx = {insn[7], insn[2:0]};
-					t32  = rread({insn[6], insn[5:3]});
-					t32b = rread(tidx);
+					t32  = rp_a;
+					t32b = rp_b;
 					case (insn[9:8])
 					2'b00: begin   // ADD (no flags)
 						t32c = t32b + t32;
@@ -1077,10 +1163,10 @@ always @(posedge clk) begin
 
 				end else if (insn[15:12] == 4'b0101) begin
 					// ---- 7. load/store with register offset ----
-					t32   = rread(insn[5:3]) + rread(insn[8:6]);
+					t32   = rp_a + rp_b;
 					ea    <= t32;
 					dst     <= {2'd0, insn[2:0]};
-					wdata_r <= rread(insn[2:0]);
+					wdata_r <= rp_c;
 					mload   <= (insn[11:9] > 3'd2);
 					mrot    <= 1'b0;
 					case (insn[11:9])
@@ -1097,10 +1183,10 @@ always @(posedge clk) begin
 
 				end else if (insn[15:13] == 3'b011) begin
 					// ---- 8. LDR/STR word or byte, imm5 ----
-					t32  = rread(insn[5:3]) + {24'd0, insn[10:6]};
+					t32  = rp_a + {24'd0, insn[10:6]};
 					ea   <= t32;
 					dst   <= {2'd0, insn[2:0]};
-					wdata_r <= rread(insn[2:0]);
+					wdata_r <= rp_c;
 					mload   <= insn[11];
 					msz     <= insn[12] ? 2'd0 : 2'd2;
 					msigned <= 1'b0;
@@ -1108,9 +1194,9 @@ always @(posedge clk) begin
 
 				end else if (insn[15:12] == 4'b1000) begin
 					// ---- 9. LDRH/STRH, imm5 scaled by two ----
-					ea      <= rread(insn[5:3]) + {23'd0, insn[10:6], 1'b0};
+					ea      <= rp_a + {23'd0, insn[10:6], 1'b0};
 					dst     <= {2'd0, insn[2:0]};
-					wdata_r <= rread(insn[2:0]);
+					wdata_r <= rp_c;
 					msz     <= 2'd1;
 					mload   <= insn[11];
 					msigned <= 1'b0;
@@ -1121,7 +1207,7 @@ always @(posedge clk) begin
 					// ---- 10. LDR/STR, SP relative ----
 					ea      <= r13_b[cur_m] + {22'd0, insn[7:0], 2'b00};
 					dst     <= {1'b0, insn[10:8]};
-					wdata_r <= rread(insn[10:8]);
+					wdata_r <= rp_c;
 					msz     <= 2'd2;
 					mload   <= insn[11];
 					msigned <= 1'b0;
@@ -1179,7 +1265,7 @@ always @(posedge clk) begin
 				end else if (insn[15:12] == 4'b1100) begin
 					// ---- 14. STMIA ----
 					blk_list <= insn[7:0];
-					blk_addr <= rread(insn[10:8]);
+					blk_addr <= rp_a;
 					blk_ld   <= 1'b0;
 					blk_pc_hit <= 1'b0;
 					blk_usr  <= 1'b0;
@@ -1187,7 +1273,7 @@ always @(posedge clk) begin
 					blk_run  <= 1'b1;
 					wb_en    <= 1'b1;
 					wb_reg   <= {2'd0, insn[10:8]};
-					wb_val   <= rread(insn[10:8]) +
+					wb_val   <= rp_a +
 					            {24'd0, popcnt16(insn[7:0]), 2'b00};
 					state    <= S_BLK;
 
@@ -1207,7 +1293,7 @@ always @(posedge clk) begin
 				end else if (insn[15:12] == 4'b1101 && insn[11]) begin
 					// ---- 15. LDMIA ----
 					blk_list <= insn[7:0];
-					blk_addr <= rread(insn[10:8]);
+					blk_addr <= rp_a;
 					blk_ld   <= 1'b1;
 					blk_pc_hit <= 1'b0;
 					blk_usr  <= 1'b0;
@@ -1215,7 +1301,7 @@ always @(posedge clk) begin
 					blk_run  <= 1'b1;
 					wb_en    <= 1'b1;
 					wb_reg   <= {2'd0, insn[10:8]};
-					wb_val   <= rread(insn[10:8]) +
+					wb_val   <= rp_a +
 					            {24'd0, popcnt16(insn[7:0]), 2'b00};
 					state    <= S_BLK;
 
@@ -1296,7 +1382,7 @@ always @(posedge clk) begin
 						3'b100: begin
 							if (insn[27:23] == 5'b00010) begin
 								// SWP / SWPB: read, then write back
-								t32a       = rread(insn[19:16]);
+								t32a       = rp_a;
 								ea         <= t32a;
 								msz        <= insn[22] ? 2'd0 : 2'd2;
 								mload      <= 1'b1;
@@ -1305,18 +1391,18 @@ always @(posedge clk) begin
 								mrot       <= !insn[22] && (t32a[1:0] != 2'b00);
 								swap_en    <= 1'b1;
 								swap_phase <= 1'b0;
-								swap_src   <= rread(insn[3:0]);
+								swap_src   <= rp_b;
 								state      <= S_MEM;
 							end else if (insn[23]) begin
 								// ---- long multiply: bit 23 separates UMULL/UMLAL/
 								// SMULL/SMLAL from MUL/MLA, and only these four set
 								// the flags (from the whole 64-bit result)
-								t32e = rread(insn[3:0]);
-								t32f = rread(insn[11:8]);
+								t32e = rp_b;
+								t32f = rp_c;
 								if (insn[22]) t64 = $signed(t32e) * $signed(t32f);
 								else          t64 = {32'd0, t32e} * {32'd0, t32f};
 								if (insn[21])
-									t64 = t64 + {rread(insn[19:16]), rread(insn[15:12])};
+									t64 = t64 + {rp_a, rp_d};
 								if (insn[20]) begin
 									n <= t64[63];
 									z <= (t64 == 64'd0);
@@ -1326,8 +1412,8 @@ always @(posedge clk) begin
 								state <= S_FETCH;
 							end else begin
 								// ---- MUL / MLA ----
-								t64 = rread(insn[3:0]) * rread(insn[11:8]);
-								if (insn[21]) t64 = t64 + {32'd0, rread(insn[15:12])};
+								t64 = rp_b * rp_c;
+								if (insn[21]) t64 = t64 + {32'd0, rp_d};
 								if (insn[20]) begin
 									n <= t64[31];
 									z <= (t64[31:0] == 32'd0);
@@ -1342,8 +1428,8 @@ always @(posedge clk) begin
 							// data-processing sense of the immediate flag: here set
 							// means the 8-bit immediate offset, clear a register.
 							t32  = insn[22] ? {24'd0, insn[11:8], insn[3:0]}
-							                : rread(insn[3:0]);
-							t32b = rread(insn[19:16]);
+							                : rp_b;
+							t32b = rp_a;
 							t32c = insn[23] ? (t32b + t32) : (t32b - t32);
 							t32d = insn[24] ? t32c : t32b;
 							ea      <= t32d;
@@ -1367,14 +1453,14 @@ always @(posedge clk) begin
 									dw_addr  <= {t32d[31:2], 2'b00};
 									// a store sends the pair on the two beats, a
 									// load collects them into r15:12 and r15:12+1
-									dw_lo    <= rread(insn[15:12]);
-									dw_hi    <= rread(insn[15:12] + 4'd1);
+									dw_lo    <= rp_d;
+									dw_hi    <= rp_c;
 									state    <= S_MEM;
 								end
 							end else begin
 								// ---- LDRH/STRH/LDRSB/LDRSH ----
 								dst     <= insn[15:12];
-								wdata_r <= rread(insn[15:12]);
+								wdata_r <= rp_d;
 								msz     <= (insn[6] && !insn[5]) ? 2'd0 : 2'd1;
 								msigned <= insn[6];
 								mload   <= insn[20];
@@ -1394,7 +1480,7 @@ always @(posedge clk) begin
 							if (insn[23:20] == 4'b0010 && insn[11:8] == 4'hF &&
 							    insn[7:4] == 4'b0001) begin
 								// BX: branch and interwork, without linking
-								t32 = rread(insn[3:0]);
+								t32 = rp_b;
 								pc  <= t32 & 32'hFFFF_FFFE;
 								t   <= t32[0];
 								state <= S_FETCH;
@@ -1402,14 +1488,14 @@ always @(posedge clk) begin
 							             insn[7:4] == 4'b0011) begin
 								// BLX (register): link, then the same branch
 								regs[14] <= pc;
-								t32 = rread(insn[3:0]);
+								t32 = rp_b;
 								pc  <= t32 & 32'hFFFF_FFFE;
 								t   <= t32[0];
 								state <= S_FETCH;
 							end else if (insn[23:20] == 4'b0110 && insn[11:8] == 4'hF &&
 							             insn[7:4] == 4'b0001) begin
 								// ---- CLZ (ARMv5T) ----
-								`WREG(insn[15:12], {26'd0, count_lead_zeros(rread(insn[3:0]))})
+								`WREG(insn[15:12], {26'd0, count_lead_zeros(rp_b)})
 								state <= S_FETCH;
 							end else
 								`UND
@@ -1422,8 +1508,8 @@ always @(posedge clk) begin
 							if (insn[11:8] == 4'h0 &&
 							    (insn[23:20] == 4'h0 || insn[23:20] == 4'h2 ||
 							     insn[23:20] == 4'h4 || insn[23:20] == 4'h6)) begin
-								t32  = rread(insn[3:0]);     // Rm
-								t32b = rread(insn[19:16]);   // Rn
+								t32  = rp_b;     // Rm
+								t32b = rp_a;   // Rn
 								c_tmp = 1'b0;
 								if (insn[22]) begin          // QDADD/QDSUB double Rn
 									// by 8:0 /* 2*Rn saturates when its top two bits
@@ -1466,8 +1552,8 @@ always @(posedge clk) begin
 						// ---- ARMv5TE halfword media instructions. Bits 7:4 are
 						//      1xy0 — x (bit 5) picks Rm's half, y (bit 6) Rs's —
 						//      and bits 23:20 select which of the four forms it is.
-						t32e = rread(insn[3:0]);                     // Rm
-						t32f = rread(insn[11:8]);                    // Rs
+						t32e = rp_b;                     // Rm
+						t32f = rp_c;                    // Rs
 						t32  = insn[5] ? {16'd0, t32e[31:16]} : {16'd0, t32e[15:0]};
 						t32b = insn[6] ? {16'd0, t32f[31:16]} : {16'd0, t32f[15:0]};
 						case (insn[23:20])
@@ -1478,7 +1564,7 @@ always @(posedge clk) begin
 							// instruction puts Rn). No flags, no saturation: the
 							// result just wraps.
 							t64  = $signed(t32[15:0]) * $signed(t32b[15:0]);
-							t32c = t64[31:0] + rread(insn[15:12]);
+							t32c = t64[31:0] + rp_d;
 							`WREG(insn[19:16], t32c)
 							state <= S_FETCH;
 						end
@@ -1489,14 +1575,14 @@ always @(posedge clk) begin
 							t64  = $signed(t32e) * $signed(t32b[15:0]);
 							t32c = t64[47:16];
 							if (insn[5]) `WREG(insn[19:16], t32c)
-							else         `WREG(insn[19:16], t32c + rread(insn[15:12]))
+							else         `WREG(insn[19:16], t32c + rp_d)
 							state <= S_FETCH;
 						end
 						4'h4: begin
 							// SMLALxy: the 64-bit accumulate. It is the one media
 							// instruction that touches flags (N and Z).
 							t64 = $signed(t32[15:0]) * $signed(t32b[15:0]);
-							t64 = t64 + {rread(insn[19:16]), rread(insn[15:12])};
+							t64 = t64 + {rp_a, rp_d};
 							n <= t64[63];
 							z <= (t64 == 64'd0);
 							`WREG(insn[15:12], t64[31:0])
@@ -1520,7 +1606,7 @@ always @(posedge clk) begin
 						if (insn[21:20] == 2'b00) begin
 							`WREG(insn[15:12], insn[22] ? cur_spsr() : cpsr_w)
 						end else
-							psr_write(rread(insn[3:0]), insn[19:16], insn[22]);
+							psr_write(rp_b, insn[19:16], insn[22]);
 						state <= S_FETCH;
 
 					end else if (insn[27:23] == 5'b00110 && insn[25] &&
@@ -1568,7 +1654,7 @@ always @(posedge clk) begin
 					// bit 25 set means a register offset, clear means the 12-bit
 					// immediate (the opposite of data processing)
 					t32  = insn[25] ? op2 : {20'd0, insn[11:0]};
-					t32b = rread(insn[19:16]);
+					t32b = rp_a;
 					t32c = insn[23] ? (t32b + t32) : (t32b - t32);
 					t32d = insn[24] ? t32c : t32b;
 					ea      <= t32d;
@@ -1576,7 +1662,7 @@ always @(posedge clk) begin
 					wb_reg  <= insn[19:16];
 					wb_val  <= t32c;
 					dst     <= insn[15:12];
-					wdata_r <= rread(insn[15:12]);
+					wdata_r <= rp_d;
 					msz     <= insn[22] ? 2'd0 : 2'd2;
 					msigned <= 1'b0;
 					mload   <= insn[20];
@@ -1589,7 +1675,7 @@ always @(posedge clk) begin
 					// bit 25 clear separates LDM/STM (100 P U S W L) from B/BL
 					// (101 L), which share bits 27:26
 					blk_list <= insn[15:0];
-					t32      = rread(insn[19:16]);
+					t32      = rp_a;
 					t32b     = (insn[15:0] == 16'd0) ? 32'd64
 					                                : {24'd0, popcnt16(insn[15:0]), 2'b00};
 					if (insn[24])
@@ -1634,9 +1720,9 @@ always @(posedge clk) begin
 							// code that was just patched or flushed is
 							// re-read from memory.
 							if (cp15_crn == 4'h1 && cp15_op2 == 3'd1)
-								cp15_aux <= rread(insn[15:12]);
+								cp15_aux <= rp_d;
 							else if (cp15_crn != 4'h0)
-								cp15_r[cp15_crn] <= rread(insn[15:12]);
+								cp15_r[cp15_crn] <= rp_d;
 							if (cp15_crn == 4'h7) f_valid <= 1'b0;
 						end
 						state <= S_FETCH;
@@ -1824,7 +1910,7 @@ always @(posedge clk) begin
 				// instruction after it, which is what pc_ahead holds
 				bus_wdata <= blk_usr ? rread_user(blk_idx)
 				                     : ((blk_idx == 4'd15) ? pc_ahead
-				                                           : regs[blk_idx]);
+				                                           : rp_a);
 				bus_be    <= 4'b1111;
 				bus_rd    <= blk_ld;
 				bus_wr    <= ~blk_ld;
