@@ -468,22 +468,35 @@ fix should look like: no state was added, so the extra logic is the terms the
 old predicates had folded away. The 127 mapper warnings are the same 23 messages
 in the same counts as before the fixes, and the map has 0 errors.
 
-Fitted for real, the same ten macros no longer close. Two runs of
-`quartus_fit` on the same mapped database (38:47 and 46:19) both place the
-design -- 4,040 of 4,191 LABs, 38,707 ALMs, 30,581 registers, peak interconnect
-80.1/82.5/89.2 -- and then abandon routing: `16684` reports an exceedingly large
-amount of congestion, `16618` terminates the routing phase, critical warning
-`188026` says the design did not route, and `11802` ends the fit with 2 errors
-and 22 warnings. No `NDS.rbf` and no timing report exist for this tree, so the
-`current` row above is the last build that closed.
+Fitted at `PLACEMENT_EFFORT_MULTIPLIER 4.0`, the same ten macros no longer
+close. Two runs of `quartus_fit` on the same mapped database (38:47 and 46:19)
+both place the design -- 4,040 of 4,191 LABs, 38,707 ALMs, 30,581 registers,
+peak interconnect 80.1/82.5/89.2 -- and then abandon routing: `16684` reports
+an exceedingly large amount of congestion, `16618` terminates the routing
+phase, critical warning `188026` says the design did not route, and `11802`
+ends the fit with 2 errors and 22 warnings. No `NDS.rbf` and no timing report
+come out of that configuration.
 
-That build had 48 LABs spare (4,143 of 4,191) and routed at 87.9/86.7/91.5, and
-the fixes add 315 ALMs to the map; the margin is what the design runs out of,
-not total capacity, where the map still leaves 3,230 of the 41,910 ALMs. The
-registers the failed fit reports (30,581 against 31,996) are not comparable
-because the run never finishes. The fitter's own advice -- try another seed --
-was not followed: the settings quoted throughout this file are seed 2 with
-aggressive routability, and changing them would measure a different build.
+The fitter's own remedy costs no mapped logic: `quartus_map`'s output is
+identical (38,680 ALMs, 56,002 ALUTs, 28,049 registers) and only the placement
+effort changes. At `PLACEMENT_EFFORT_MULTIPLIER 8.0` --
+seed 2, the same ten macros, the same aggressive routability -- the same
+database fits. Placement takes 14:51 and routing 7:21, the fit ends at 00:53:48
+with 0 errors and 18 warnings, the assembler adds 0 errors and 0 warnings,
+TimeQuest 0 errors, and the build uses 4,126 of 4,191 LABs (65 spare), 38,707
+ALMs, 32,290 registers, peak interconnect 81.7/79.1/89.9 and writes a
+3,761,748-byte `NDS.rbf`.
+
+| ten-macro build | LABs | spare | setup (`emu`) | setup TNS | hold | rbf |
+|---|---|---|---|---|---|---|
+| 2026-11-06, effort 4.0 (the `current` row above) | 4,143 | 48 | -8.313 | -47,647.790 | +0.250 | 3,718,564 |
+| 2026-11-07, effort 8.0 | 4,126 | 65 | -8.403 | -46,613.591 | +0.256 | 3,761,748 |
+
+That is 0.090 ns of setup for a build that exists, and it is the only change:
+`NDS.qsf` now asks for 8.0 with the reason beside
+it. The margin it buys is 65 LABs, the same order as the 48 the previous build
+had, so the next feature still has to find its own area. A different seed was
+not tried -- the fitter suggests one, but the effort alone was enough.
 
 `tb_arm9` reports 161 checks with 0 failures and `tb_cpu_clk` 23 with 0. The
 bench is directed, not merely passing: pointing Thumb format 4's `t32b` at

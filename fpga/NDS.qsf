@@ -53,11 +53,13 @@ set_global_assignment -name SEED 2
 # core's clock"): default settings abandon it on congestion.
 set_global_assignment -name FITTER_AGGRESSIVE_ROUTABILITY_OPTIMIZATION Always
 
-# Four times the placement effort does not just place better: it packs the
-# build into 4,159 LABs instead of 4,168 and improves setup by 0.68 ns, at
-# the cost of 0.7% more peak interconnect and 0.118 ns of hold (AREA.md,
-# "The capacity settings, measured").
-set_global_assignment -name PLACEMENT_EFFORT_MULTIPLIER 4.0
+# Eight times the placement effort is what keeps the 99%-LAB build routable:
+# at 4.0 the ten-macro build places but abandons routing on congestion, at 8.0
+# it routes into 4,126 of 4,191 LABs. The mapped logic is identical -- 38,680
+# ALMs, 56,002 ALUTs, 28,049 registers -- and only the effort changes; the
+# cost is 0.090 ns of setup (AREA.md, "The operand-form bench's decoder
+# fixes").
+set_global_assignment -name PLACEMENT_EFFORT_MULTIPLIER 8.0
 
 # Quartus 17.0's Verific front end aborts on the ARM9's register arrays with
 #   Internal Error: Sub-system: VRFX ... veriname_elab.cpp, Line: 836
