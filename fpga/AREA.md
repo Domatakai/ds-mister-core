@@ -11,22 +11,30 @@ from a datasheet.
 
 | resource | used | device | headroom |
 |---|---|---|---|
-| ALMs needed (mapper) | 58,325 | 41,910 | **−16,415 (139%)** |
-| ALMs used (fitter) | 58,065 | 41,910 | **−16,155 (139%)** |
-| combinational nodes (ALUTs) | 83,296 | 83,820 | 524 (99.4%) |
-| registers | 53,805 | 83,820 | 30,015 (64%) |
+| ALMs needed (mapper) | 57,207 | 41,910 | **−15,297 (137%)** |
+| ALMs used (fitter, last fit) | 58,065 | 41,910 | **−16,155 (139%)** |
+| combinational nodes (ALUTs) | 82,280 | 83,820 | 1,540 (98.2%) |
+| registers | 53,431 | 83,820 | 30,389 (64%) |
 | DSP blocks | 96 | 112 | 16 (86%) |
-| M10K bits | 1,873,331 | 5,662,720 | 3,789,389 (33%) |
-| I/O pins | 145 | 314 | 169 (46%) |
+| M10K bits | 1,877,683 | 5,662,720 | 3,785,037 (33%) |
+| I/O pins | 143 | 314 | 171 (46%) |
 
 41,910 ALMs each give two combinational nodes and two registers, so the LUT and
 register limits are the same 83,820. The node count is now *under* that limit —
-83,296, 524 spare — so the mapper's `170011` check passes and the fitter reaches
-placement. What it runs out of there is LABs: 5,883 required against 4,191, 140%.
-A LAB holds ten ALMs, so 5,883 LABs is the same statement as 58,830 ALMs, and
-the gap is 16,474 ALMs at the mapper's count — 28% of the design.
+82,280, 1,540 spare — so the mapper's `170011` check passes and the fitter reaches
+placement. What it runs out of there is LABs: 57,207 ALMs is 5,721 LABs' worth
+against the device's 4,191, and the last full compile of this configuration, made
+before the ARM9 read-port and decode changes, had its fitter count 5,883 after
+placement. A LAB holds ten ALMs, so those are the same statement, and the gap at
+the mapper's count is 15,297 ALMs — 27% of the design.
 
-The full compile stops at the fitter, in its own words:
+Those mapper rows were re-measured on 2026-11-07 with no macros: 57,207 ALMs,
+82,280 ALUTs, 53,431 registers, 1,877,683 memory bits and 143 pins. The numbers
+they replace -- 58,325 / 83,296 / 53,805 / 1,873,331 / 145 -- predate the ARM9
+read-port and decode changes, and the fitter row above is the last full fit of
+the default configuration, which was made before either change.
+
+That last compile stops at the fitter, in its own words:
 
 ```
 Error (170012): Fitter requires 5883 LABs to implement the design, but the device contains only 4191 LABs
@@ -39,7 +47,7 @@ analyzer still never runs: there is no Fmax for this build, only the mapper's
 numbers above.
 
 Nothing else is close to its budget. Pins are *not* a constraint and never
-were: 145 of the 314 I/O the part exposes, 46%, so the periphery has 169 spare
+were: 143 of the 314 I/O the part exposes, 46%, so the periphery has 171 spare
 pins. PLLs are 3 of 6. DSPs are 96 of 112 — they were over at 124 until item 1
 serialised the geometry engine's matrix multiply. The 33% memory figure is the
 mapper's bit count against 5.66 Mbit; a failed fit allocates no blocks, so the
@@ -425,6 +433,62 @@ minimum pulse width +1.065.
 So the remaining deficit is inside the 67.03 MHz domain, which no constraint can
 fix: it is design work in the core, and the -53.667 ns hold figure that looked
 impossible was the same constraint mistake seen from the other side.
+
+### The operand-form bench's decoder fixes, measured (2026-11-07)
+
+`tb_arm9`'s program E drives every Thumb and ARM operand-encoding form with a
+different register in every field, so a read port that decodes the wrong field
+stores a value the bench can see. It failed five real decode gaps, fixed in the
+RTL rather than worked around in the bench:
+
+- the register-shift data-processing forms (`dp_rshift`, and the multiply group
+  that shared its predicate) no longer take `UND`;
+- the halfword/media gate is `insn[24] && !insn[23] && !insn[20]`, so the forms
+  that had been falling into the single-transfer decode reach their own one;
+- Thumb format 8 (immediate offset) scales imm5 by a word, not a byte;
+- Thumb LDMIA decodes at `insn[15:12] == 4'b1100`, with bit 11 choosing load or
+  store;
+- single data transfer gained `sdt_sh`, so a shifted register offset
+  (`ldr r12,[r8,r9,lsl #1]`) is no longer treated as an immediate offset.
+
+Measured on the same ten macros, seed 2 and aggressive routability as every
+other row here, with `quartus_map` before and after:
+
+| build | ALMs needed | ALUTs | registers | DSP | M10K bits | warnings |
+|---|---|---|---|---|---|---|
+| before the fixes | 38,365 | 55,403 | 28,049 | 63 | 1,800,523 | 127 |
+| after the fixes | 38,680 | 56,002 | 28,049 | 63 | 1,800,523 | 127 |
+| delta | +315 | +599 | 0 | 0 | 0 | none new |
+
+The `arm9_core` entity carries 18,012 ALUTs against 17,522, so the decoder costs
+490 of the 604 ALUTs the four-port read change saved; against the build before
+the ports the core sits at 18,012 against 18,126. The register count does not
+move at all (2,471 in the entity, 28,049 in the design), which is what a decode
+fix should look like: no state was added, so the extra logic is the terms the
+old predicates had folded away. The 127 mapper warnings are the same 23 messages
+in the same counts as before the fixes, and the map has 0 errors.
+
+Fitted for real, the same ten macros no longer close. Two runs of
+`quartus_fit` on the same mapped database (38:47 and 46:19) both place the
+design -- 4,040 of 4,191 LABs, 38,707 ALMs, 30,581 registers, peak interconnect
+80.1/82.5/89.2 -- and then abandon routing: `16684` reports an exceedingly large
+amount of congestion, `16618` terminates the routing phase, critical warning
+`188026` says the design did not route, and `11802` ends the fit with 2 errors
+and 22 warnings. No `NDS.rbf` and no timing report exist for this tree, so the
+`current` row above is the last build that closed.
+
+That build had 48 LABs spare (4,143 of 4,191) and routed at 87.9/86.7/91.5, and
+the fixes add 315 ALMs to the map; the margin is what the design runs out of,
+not total capacity, where the map still leaves 3,230 of the 41,910 ALMs. The
+registers the failed fit reports (30,581 against 31,996) are not comparable
+because the run never finishes. The fitter's own advice -- try another seed --
+was not followed: the settings quoted throughout this file are seed 2 with
+aggressive routability, and changing them would measure a different build.
+
+`tb_arm9` reports 161 checks with 0 failures and `tb_cpu_clk` 23 with 0. The
+bench is directed, not merely passing: pointing Thumb format 4's `t32b` at
+`rp_a` instead of `rp_b` fails 11 checks on the same build (AND, EOR, LSL, LSR,
+ASR, ORR, MUL, BIC, TST, CMP and the ASR immediate).
 
 ### Why micro-optimising one path does not close it (2026-11-01)
 
@@ -850,7 +914,7 @@ What does fit, with margin:
 Item 7 is out (see above: the shared renderer needs 128% of the line period), so
 the *only* projected build that fit — the 2D core with the merge — is not
 buildable. The same build with two renderers is the 88,400 row: no fit, and the
-measured design is **83,296 ALUTs / 58,325 ALMs** today (the table at the top),
+measured design is **82,280 ALUTs / 57,207 ALMs** today (the table at the top),
 so what the A6 actually
 needs before any of this is about 24,000 ALUTs of things this list does not
 contain.

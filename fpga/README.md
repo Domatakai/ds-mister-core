@@ -876,11 +876,17 @@ where `NDS.rbf` landed and how to copy it to the SD card.
 
 First full compile (analysis + fit + ASM + timing) takes roughly
 10–20 min on a modern multicore machine (`NUM_PARALLEL_PROCESSORS ALL`
-is set). A build with the ten macros above fits: **4,143 of 4,191 LABs**, a
-3,718,564-byte `NDS.rbf`, 18 fitter warnings, and setup short only on the
-67.03 MHz `emu` domain (-8.313 ns). Without those macros the same tree needs
-5,759 LABs and stops at the fitter with `170012`; that is the default flow, not
-a regression. Success criteria are:
+is set). A build with the ten macros above **no longer closes** on
+5CSEBA6: the mapper reports 38,680 ALMs, the fitter places 4,040 of
+4,191 LABs and then gives up in routing with `16618`, critical warning
+`188026` and `11802` (2 errors, 22 warnings, 38:47 and 46:19 in two
+runs). The last build that closed was 4,143 of 4,191 LABs with a
+3,718,564-byte `NDS.rbf`, 18 fitter warnings and setup short only on the
+67.03 MHz `emu` domain (-8.313 ns); it predates the ARM9 decode fixes,
+which cost 490 ALUTs inside `arm9_core` and 599 in the design -- both
+measured, in `AREA.md`. Without those macros the same tree needs
+5,759 LABs and stops at the fitter with `170012`; that is the default
+flow, not a regression. Success criteria are:
 
 - `output_files/NDS.rbf` exists (GENERATE_RBF_FILE is on),
 - TimeQuest reports no failing paths on the 67.0274 MHz `clk_sys` domain
