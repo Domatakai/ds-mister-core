@@ -334,6 +334,29 @@ task run_to(input [31:0] marker, input integer limit, input [8*44-1:0] what);
 	end
 endtask
 
+// Program E reports completion by storing a sentinel word in the low page.
+// Waiting for that word does not depend on where the core's tail spin happens
+// to be when the bench looks, which a pc marker in a short loop does.
+task run_until_lo(input [13:0] widx, input [31:0] want, input integer limit,
+                  input [8*44-1:0] what);
+	begin
+		guard = 0;
+		while (lo[widx] !== want && guard < limit) begin
+			@(posedge clk);
+			guard = guard + 1;
+		end
+		checks = checks + 1;
+		if (lo[widx] !== want) begin
+			errors = errors + 1;
+			$display("  FAIL %0s did not write its completion word (pc = %h, halted = %0d)",
+			         what, pc_out, halted);
+			$display("       state = %0d, insn = %h (%0s), mode = %h, bus rd=%b wr=%b addr=%h",
+			         dut.state, dut.insn, dut.insn_thumb ? "thumb" : "arm",
+			         dut.mode, bus_rd, bus_wr, bus_addr);
+		end
+	end
+endtask
+
 task reset_core;
 	begin
 		reset = 1;
@@ -521,6 +544,70 @@ initial begin
 	check_reg(7,  32'h0BAD_F00D,  "CpuSet copy read back, second word");
 	check_reg(5,  32'h0000_0300,  "CpuSet wrote no registers");
 	check_val(dut.mode, 5'h13, "SVC after the HLE call");
+
+	//==================== program E: every operand field distinct ====================
+	// A read port whose index is decoded from the wrong instruction field now
+	// returns another register's value, so the arithmetic below comes out wrong.
+	// Program E ends by storing 0x5a to 0x217c and then spinning; waiting for
+	// that word keeps the bench out of the spin's pc timing altogether.
+	load_e;
+	reset_core;
+	run_until_lo(14'h085F, 32'h5a, 40000, "program E");
+
+	check_scratch(16'h100, 32'd41,       "dp Rn,Rm,Rs register shift (5 + 9<<2)");
+	check_scratch(16'h104, 32'd5,        "dp Rd apart from Rn,Rm (11 - 13>>1)");
+	check_scratch(16'h108, 32'd83,       "dp immediate operand 2 (19 | 0x40)");
+	check_scratch(16'h10C, 32'h0000_00AA, "TST with a shifted Rm, MOVNE");
+	check_scratch(16'h110, 32'd240,      "MLA Rd,Rm,Rs,Rn (13*17+19)");
+	check_scratch(16'h114, 32'd15,       "UMLAL RdLo (1 + 7*2)");
+	check_scratch(16'h118, 32'd0,        "UMLAL RdHi");
+	check_scratch(16'h11C, 32'h0000_0044, "LDR Rn,Rd,Rm shifted offset");
+	check_scratch(16'h120, 32'h0000_0011, "LDRD Rd");
+	check_scratch(16'h124, 32'h0000_0044, "LDRD Rd+1");
+	check_scratch(16'h128, 32'd19,       "STRD Rd");
+	check_scratch(16'h12C, 32'd1,        "STRD Rd+1");
+	check_scratch(16'h130, 32'h0000_0055, "STMIA/LDMIA base apart from list");
+	check_scratch(16'h134, 32'h0000_0066, "STMIA/LDMIA second word");
+	check_scratch(16'h138, 32'd308,      "QADD Rd,Rm,Rn (0x44 + 240)");
+
+	check_scratch(16'h40, 32'h0000_0030, "Thumb 1 LSL imm, Rd != Rs");
+	check_scratch(16'h44, 32'h0000_0010, "Thumb 1 LSR imm, Rd != Rs");
+	check_scratch(16'h48, 32'hFFFF_FFC0, "Thumb 1 ASR imm, Rd != Rs");
+	check_scratch(16'h4C, 32'd12,        "Thumb 2 ADD register");
+	check_scratch(16'h50, 32'd5,         "Thumb 2 SUB imm3");
+	check_scratch(16'h54, 32'h0000_0012, "Thumb 2 ADD imm3");
+	check_scratch(16'h58, 32'h0000_0042, "Thumb 3 ADD imm8");
+	check_scratch(16'h5C, 32'h0000_000F, "Thumb 3 SUB imm8");
+	check_scratch(16'h60, 32'h0000_0033, "Thumb 3 CMP imm8 + BNE");
+	check_scratch(16'h64, 32'd0,         "Thumb 4 AND Rd != Rs");
+	check_scratch(16'h68, 32'h0000_00F0, "Thumb 4 EOR Rd != Rs");
+	check_scratch(16'h6C, 32'd8,         "Thumb 4 LSL register");
+	check_scratch(16'h70, 32'h0000_0010, "Thumb 4 LSR register");
+	check_scratch(16'h74, 32'hFFFF_FFF0, "Thumb 4 ASR register of a negative");
+	check_scratch(16'h78, 32'h0000_003F, "Thumb 4 ORR register");
+	check_scratch(16'h7C, 32'd42,        "Thumb 4 MUL register");
+
+	check_scratch(16'hC0, 32'h0000_00F0, "Thumb 4 BIC register");
+	check_scratch(16'hC4, 32'hFFFF_FFFF, "Thumb 4 MVN register");
+	check_scratch(16'hC8, 32'hFFFF_FFFB, "Thumb 4 NEG register");
+	check_scratch(16'hCC, 32'h0000_0021, "Thumb 4 TST took its Z-set path");
+	check_scratch(16'hD0, 32'h0000_0022, "Thumb 4 CMP took its Z-clear path");
+	check_scratch(16'hD4, 32'h0000_0099, "Thumb 4 CMN took its Z-clear path");
+	check_scratch(16'hD8, 32'h0000_0032, "Thumb 5 ADD hi register");
+	check_scratch(16'hDC, 32'h0000_0032, "Thumb 5 MOV hi register");
+	check_scratch(16'hE0, 32'h0000_0077, "Thumb 7 LDR register offset");
+	check_scratch(16'hE4, 32'h0000_005A, "Thumb 7 LDRB register offset");
+	check_scratch(16'hE8, 32'h0000_009A, "Thumb 8 LDR imm5");
+	check_scratch(16'hEC, 32'h0000_0028, "Thumb 8 LDRB imm5");
+	check_scratch(16'hF0, 32'h0000_0055, "Thumb 9 LDRH");
+	check_scratch(16'hF4, 32'h0000_003C, "Thumb 10 LDR [sp]");
+	check_scratch(16'hF8, 32'h0200_3F08, "Thumb 11 ADD Rd, SP, #8");
+	check_scratch(16'hFC, 32'h0200_3F00, "Thumb 12 ADD/SUB SP round trip");
+
+	check_scratch(16'h140, 32'h0000_0011, "Thumb 13 PUSH/POP first");
+	check_scratch(16'h144, 32'h0000_0022, "Thumb 13 PUSH/POP second");
+	check_scratch(16'h148, 32'h0000_0066, "Thumb 14 STMIA apart from base");
+	check_scratch(16'h14C, 32'h0000_0077, "Thumb 14 LDMIA apart from base");
 
 	$display("  fetch buffer %0s: %0d bus reads", FETCH_BUF ? "on " : "off", bus_reads);
 	$display("  %0d checks, %0d failure(s)", checks, errors);

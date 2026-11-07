@@ -31,6 +31,11 @@ CP15 reset values):
      through the low vector, BKPT taking the prefetch abort -- leaving c6 alone
      and linking past the breakpoint, as the architecture has it -- MSR with an
      immediate, and Thumb BLX, BKPT and PUSH/POP
+  E  the operand fields: every ARM form that reads a register with a different
+     register in each field (data processing with a register shift, MLA, UMLAL,
+     register-offset loads with a shifted offset register, LDRD/STRD, block
+     transfers, QADD), then a Thumb block covering formats 1-5 and 7-14 with
+     distinct source, destination and base registers throughout
 
 The bench seats the exception vectors this script prints at the end: the
 "return from exception" instruction (CPSR <- SPSR) at 0x08/0x0C in the low
@@ -131,8 +136,9 @@ class Prog(object):
     def word(self, value):
         self.items.append(("word", value))
 
-    def label_word(self, name):
-        self.items.append(("labelword", name))
+    def label_word(self, name, bump=0):
+        """A literal holding a label's address, optionally biased (the Thumb bit)."""
+        self.items.append(("labelword", (name, bump)))
 
     def encode(self, base):
         """Address everything, then assemble. Labels may be forward-referenced."""
@@ -185,8 +191,10 @@ class Prog(object):
             elif kind == "word":
                 mem[addr] = (val, ".word 0x%08X" % val, 4)
             elif kind == "labelword":
-                v = labels[val]
-                mem[addr] = (v, ".word %s (0x%08X)" % (val, v), 4)
+                name, bump = val
+                v = labels[name] + bump
+                mem[addr] = (v, ".word %s%s (0x%08X)"
+                             % (name, "+%d" % bump if bump else "", v), 4)
         return mem, labels
 
 
@@ -513,6 +521,280 @@ C.ins("b {end_c}")
 
 
 #------------------------------------------------------------------
+# program E: the operand fields, with every register distinct
+#------------------------------------------------------------------
+# The point of this program is the *read ports*, not the arithmetic. Each
+# instruction form below puts a different register in each operand field, so a
+# port whose index is decoded from the wrong field returns a different value
+# and the check afterwards fails. Program C's Thumb block uses `movs r0, #n`
+# style instructions where the fields often name the same register, which is
+# why a Thumb ALU operand reading Rd twice once survived the bench.
+E = Prog(thumb_base=RAM_BASE + 0x400)
+E.arm()
+E.ins("mov r5, #0x2000")           # scratch block the checks read
+E.ins("mov r0, #3")                # Rm
+E.ins("mov r1, #5")                # Rn
+E.ins("mov r2, #7")                # Rs / RdLo
+E.ins("mov r3, #2")                # shift amount / RdHi
+E.ins("mov r6, #9")
+E.ins("mov r7, #11")
+E.ins("mov r8, #13")
+E.ins("mov r9, #17")
+E.ins("mov r10, #19")
+E.ins("mov r12, #23")
+# a stack above the Thumb block, so the SP-relative Thumb forms are safe
+E.ins("mov r11, #0x02000000")
+E.ins("add r11, r11, #0x3f00")
+E.ins("mov sp, r11")
+# data processing: Rn, Rm and Rs all distinct, shift amount in a register
+E.ins("add r0, r1, r6, lsl r3")    # 5 + (9 << 2) = 41
+E.ins("str r0, [r5, #0x100]")
+# data processing: Rd distinct from both sources, immediate shift
+E.ins("sub r4, r7, r8, lsr #1")    # 11 - (13 >> 1) = 5
+E.ins("str r4, [r5, #0x104]")
+# data processing: immediate operand 2, Rn in 19:16
+E.ins("orr r6, r10, #0x40")        # 19 | 0x40 = 83
+E.ins("str r6, [r5, #0x108]")
+# TST with the shift amount in a register: flags only, then a conditional move
+E.ins("tst r1, r3, lsl #1")        # 5 & 4, Z clear
+E.ins("movne r6, #0xaa")
+E.ins("str r6, [r5, #0x10c]")
+# MLA with Rd, Rm, Rs and the accumulate source all distinct
+E.ins("mla r7, r8, r9, r10")       # 13*17 + 19 = 240
+E.ins("str r7, [r5, #0x110]")
+# UMLAL: RdLo, RdHi, Rm and Rs all distinct
+E.ins("mov r0, #1")
+E.ins("mov r1, #0")
+E.ins("umlal r0, r1, r2, r3")      # 1 + 7*2 = 15
+E.ins("str r0, [r5, #0x114]")
+E.ins("str r1, [r5, #0x118]")
+# single data transfer with a register offset whose shift is in a register:
+# Rn=r8, Rd=r12, Rm=r9, Rs=r11, four distinct registers
+E.ins("mov r8, #0x2200")
+E.ins("mov r9, #2")
+E.ins("mov r11, #1")
+E.ins("mov r6, #0x44")
+E.ins("str r6, [r8, #4]")          # the immediate form fills 0x2204
+E.ins("ldr r12, [r8, r9, lsl #1]")     # 0x2200 + (2 << 1)
+E.ins("str r12, [r5, #0x11c]")
+# LDRD: Rd, Rd+1 and Rn all distinct
+E.ins("mov r6, #0x11")
+E.ins("str r6, [r8]")              # 0x2200 = 0x11
+E.ins("ldrd r2, r3, [r8]")
+E.ins("str r2, [r5, #0x120]")
+E.ins("str r3, [r5, #0x124]")
+# STRD with a base of its own
+E.ins("add r9, r8, #8")
+E.ins("strd r10, r11, [r9]")
+E.ins("ldr r6, [r9]")
+E.ins("str r6, [r5, #0x128]")
+E.ins("ldr r6, [r9, #4]")
+E.ins("str r6, [r5, #0x12c]")
+# block transfer: base distinct from every register in the list
+E.ins("add r9, r8, #0x20")
+E.ins("mov r2, #0x55")
+E.ins("mov r3, #0x66")
+E.ins("stmia r9, {r2, r3}")
+E.ins("mov r2, #0")
+E.ins("mov r3, #0")
+E.ins("ldmia r9, {r2, r3}")
+E.ins("str r2, [r5, #0x130]")
+E.ins("str r3, [r5, #0x134]")
+# QADD with Rd distinct from Rm and Rn
+E.ins("mov r6, #0x44")
+E.ins("qadd r4, r6, r7")           # 0x44 + 240 = 308
+E.ins("str r4, [r5, #0x138]")
+# into the Thumb block
+E.ins("mov r10, #0x02000000")
+E.ins("add r10, r10, #0x400")
+E.ins("add r10, r10, #1")
+E.ins("bx r10")
+E.thumb()
+E.ins("movs r7, #0x20")
+E.ins("lsls r7, r7, #8")           # r7 = 0x2000, the result block
+# ---- format 1: LSL/LSR/ASR immediate, Rd != Rs ----
+E.ins("movs r1, #3")
+E.ins("lsls r0, r1, #4")           # 3 << 4 = 0x30
+E.ins("str r0, [r7, #0x40]")
+E.ins("movs r2, #0x80")
+E.ins("lsrs r3, r2, #3")           # 0x80 >> 3 = 0x10
+E.ins("str r3, [r7, #0x44]")
+E.ins("movs r4, #0x80")
+E.ins("negs r6, r4")               # 0xffffff80
+E.ins("asrs r5, r6, #1")           # 0xffffffc0
+E.ins("str r5, [r7, #0x48]")
+# ---- format 2: ADD/SUB register or imm3 ----
+E.ins("movs r0, #5")
+E.ins("movs r1, #7")
+E.ins("adds r2, r0, r1")           # 12
+E.ins("str r2, [r7, #0x4c]")
+E.ins("movs r3, #9")
+E.ins("subs r4, r3, #4")           # 5
+E.ins("str r4, [r7, #0x50]")
+E.ins("movs r5, #0x10")
+E.ins("adds r6, r5, #2")           # 0x12
+E.ins("str r6, [r7, #0x54]")
+# ---- format 3: MOV/CMP/ADD/SUB imm8 ----
+E.ins("movs r0, #0x41")
+E.ins("adds r0, #1")               # 0x42
+E.ins("str r0, [r7, #0x58]")
+E.ins("movs r1, #0x10")
+E.ins("subs r1, #1")               # 0x0f
+E.ins("str r1, [r7, #0x5c]")
+E.ins("movs r3, #0")
+E.ins("movs r2, #0x40")
+E.ins("cmp r2, #0x40")             # Z set, so the bne below is not taken
+E.ins("bne {t3}")
+E.ins("movs r3, #0x33")
+E.label("t3")
+E.ins("str r3, [r7, #0x60]")
+# ---- format 4: the ALU operations, Rd != Rs everywhere ----
+E.ins("movs r0, #0xf0")
+E.ins("movs r1, #0x0f")
+E.ins("ands r0, r1")               # 0
+E.ins("str r0, [r7, #0x64]")
+E.ins("movs r2, #0xff")
+E.ins("eors r2, r1")               # 0xf0
+E.ins("str r2, [r7, #0x68]")
+E.ins("movs r3, #1")
+E.ins("movs r4, #3")
+E.ins("lsls r3, r4")               # 1 << 3
+E.ins("str r3, [r7, #0x6c]")
+E.ins("movs r5, #0x80")
+E.ins("lsrs r5, r4")               # 0x80 >> 3
+E.ins("str r5, [r7, #0x70]")
+E.ins("movs r6, #0x80")
+E.ins("negs r6, r6")                     # 0xFFFFFF80, so ASR != LSR here
+E.ins("asrs r6, r4")               # 0xfffffff0
+E.ins("str r6, [r7, #0x74]")
+E.ins("movs r0, #0x30")
+E.ins("movs r1, #0x0f")
+E.ins("orrs r0, r1")               # 0x3f
+E.ins("str r0, [r7, #0x78]")
+E.ins("movs r2, #7")
+E.ins("movs r3, #6")
+E.ins("muls r2, r3")               # 42
+E.ins("str r2, [r7, #0x7c]")
+E.ins("adds r7, #0x80")            # results move to 0x2080
+E.ins("movs r4, #0xff")
+E.ins("movs r5, #0x0f")
+E.ins("bics r4, r5")               # 0xf0
+E.ins("str r4, [r7, #0x40]")
+E.ins("movs r6, #0")
+E.ins("mvns r6, r6")               # 0xffffffff
+E.ins("str r6, [r7, #0x44]")
+E.ins("movs r0, #5")
+E.ins("negs r0, r0")               # 0xfffffffb
+E.ins("str r0, [r7, #0x48]")
+# the flag-only forms, with two different registers in Rd and Rs
+E.ins("movs r1, #0")
+E.ins("movs r2, #0x0f")
+E.ins("tst r2, r1")                # 0x0f & 0, Z set
+E.ins("bne {t4}")
+E.ins("movs r3, #0x21")
+E.label("t4")
+E.ins("str r3, [r7, #0x4c]")
+E.ins("movs r4, #0x0f")
+E.ins("movs r5, #3")
+E.ins("cmp r4, r5")                # Z clear
+E.ins("beq {t5}")
+E.ins("movs r6, #0x22")
+E.label("t5")
+E.ins("str r6, [r7, #0x50]")
+E.ins("movs r0, #1")
+E.ins("movs r1, #2")
+E.ins("cmn r0, r1")                # 3, Z clear
+E.ins("beq {t6}")
+E.ins("movs r2, #0x99")
+E.label("t6")
+E.ins("str r2, [r7, #0x54]")
+# ---- format 5: hi-register ops ----
+E.ins("movs r0, #0x21")
+E.ins("mov r8, r0")
+E.ins("movs r1, #0x11")
+E.ins("mov r9, r1")
+E.ins("add r8, r9")                # 0x32
+E.ins("mov r3, r8")
+E.ins("str r3, [r7, #0x58]")
+E.ins("cmp r8, r9")
+E.ins("mov r10, r8")
+E.ins("mov r4, r10")
+E.ins("str r4, [r7, #0x5c]")
+# ---- format 7: load/store with a register offset ----
+E.ins("movs r2, #0x28")
+E.ins("movs r3, #0x77")
+E.ins("str r3, [r7, r2]")
+E.ins("ldr r4, [r7, r2]")
+E.ins("str r4, [r7, #0x60]")
+E.ins("movs r5, #0x5a")
+E.ins("strb r5, [r7, r2]")
+E.ins("ldrb r6, [r7, r2]")
+E.ins("str r6, [r7, #0x64]")
+# ---- format 8: word/byte, imm5 ----
+E.ins("movs r0, #0x9a")
+E.ins("str r0, [r7, #0x30]")
+E.ins("ldr r1, [r7, #0x30]")
+E.ins("str r1, [r7, #0x68]")
+E.ins("strb r2, [r7, #0x1c]")
+E.ins("ldrb r3, [r7, #0x1c]")
+E.ins("str r3, [r7, #0x6c]")
+# ---- format 9: LDRH/STRH ----
+E.ins("movs r4, #0x55")
+E.ins("strh r4, [r7, #0x38]")
+E.ins("ldrh r5, [r7, #0x38]")
+E.ins("str r5, [r7, #0x70]")
+# ---- format 10: SP relative ----
+E.ins("movs r0, #0x3c")
+E.ins("str r0, [sp, #0]")
+E.ins("ldr r1, [sp, #0]")
+E.ins("str r1, [r7, #0x74]")
+# ---- format 11: ADD Rd, SP, #imm ----
+E.ins("add r2, sp, #8")
+E.ins("str r2, [r7, #0x78]")
+# ---- format 12: ADD/SUB SP, #imm ----
+E.ins("sub sp, #16")
+E.ins("add sp, #16")
+E.ins("mov r3, sp")
+E.ins("str r3, [r7, #0x7c]")
+E.ins("adds r7, #0x80")            # results move to 0x2100
+# ---- format 13: PUSH/POP ----
+E.ins("movs r4, #0x11")
+E.ins("movs r5, #0x22")
+E.ins("push {r4, r5}")
+E.ins("movs r4, #0")
+E.ins("movs r5, #0")
+E.ins("pop {r4, r5}")
+E.ins("str r4, [r7, #0x40]")
+E.ins("str r5, [r7, #0x44]")
+# ---- format 14: STMIA/LDMIA, base distinct from the list ----
+E.ins("mov r6, r7")
+E.ins("adds r6, #0x60")
+E.ins("movs r1, #0x66")
+E.ins("movs r2, #0x77")
+E.ins("stmia r6!, {r1, r2}")
+E.ins("mov r6, r7")
+E.ins("adds r6, #0x60")
+E.ins("movs r1, #0")
+E.ins("movs r2, #0")
+E.ins("ldmia r6!, {r1, r2}")
+E.ins("str r1, [r7, #0x48]")
+E.ins("str r2, [r7, #0x4c]")
+# Program E says it is done by storing a sentinel; the bench watches that word
+# rather than the pc. The tail below then spins so the core has somewhere to
+# be, and the branch back into it through a literal keeps Thumb BX exercised
+# with a register of its own (the literal is biased by one for the Thumb bit).
+E.ins("movs r0, #0x5a")
+E.ins("str r0, [r7, #0x7c]")            # 0x217c: program E has finished
+E.ins("ldr r3, [pc, #4]")               # two nops put the literal at base+4
+E.ins("bx r3")
+E.ins("nop")
+E.ins("nop")
+E.label_word("end_e", 1)
+E.label("end_e")               # end marker: the branch below loops on itself
+E.ins("b {end_e}")
+
+
+#------------------------------------------------------------------
 # exception vectors: return from the exception (CPSR <- SPSR)
 #------------------------------------------------------------------
 VEC = Prog()
@@ -534,7 +816,7 @@ def fragments():
            "// capstone, loaded over main RAM. Each program starts from a clean",
            "// register file and the CP15 reset values.",
            ""]
-    for name, prog in (("a", A), ("b", B), ("c", C)):
+    for name, prog in (("a", A), ("b", B), ("c", C), ("e", E)):
         mem, _ = prog.encode(RAM_BASE)
         words = {}
         for addr in sorted(mem):

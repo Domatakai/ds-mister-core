@@ -496,6 +496,35 @@ reg [31:0] rp_a, rp_b, rp_c, rp_d;
 wire [31:0] rm_val = rp_b;
 wire [7:0]  rs_amt = rp_c[7:0];
 
+// Bit 4 with bit 25 clear is the multiply space *and* data processing with a
+// register-specified shift of operand 2, which also encodes Rs in bits 11:8.
+// Each multiply-space group pins down a pattern the shift form cannot produce
+// (Rs = r15 for BX/BLX/CLZ, Rs = r0 for the QADD family, 0001 0010 in 27:20
+// for BKPT), so whatever is left over is data processing and must reach the
+// data-processing branch rather than the undefined vector.
+wire mult_group =
+    (insn[7:5] >= 3'b100) ? 1'b1      // 100 MUL/MLA/SWP, 101/110/111 halfwords
+    : (insn[7:5] == 3'b000 || insn[7:5] == 3'b001)
+          ? (insn[11:8] == 4'hF &&
+             (insn[23:20] == 4'b0010 || insn[23:20] == 4'b0110))   // BX/BLX/CLZ
+          : (insn[7:5] == 3'b010)
+                ? (insn[11:8] == 4'h0 &&
+                   (insn[23:20] == 4'h0 || insn[23:20] == 4'h2 ||
+                    insn[23:20] == 4'h4 || insn[23:20] == 4'h6))    // QADD family
+                : (insn[23:20] == 4'b0010 && insn[31:28] == 4'hE);  // BKPT
+
+wire dp_rshift = !insn[25] && insn[4] && !mult_group;
+
+// mode 2 (single data transfer) puts the same shift field on Rm that data
+// processing puts on Rm, but its bit 25 means "register offset", not "immediate
+// operand 2", so the shared shifter's immediate side would shift the raw field
+wire [31:0] sdt_sh =
+    (insn[11:7] == 5'd0) ? rm_val :
+    (insn[6:5] == 2'b00) ? (rm_val << insn[11:7]) :
+    (insn[6:5] == 2'b01) ? (rm_val >> insn[11:7]) :
+    (insn[6:5] == 2'b10) ? ($signed(rm_val) >>> insn[11:7]) :
+    ((rm_val >> insn[11:7]) | (rm_val << (6'd32 - {1'b0, insn[11:7]})));
+
 always @(*) begin
 	sh_in  = insn[25] ? {24'd0, insn[7:0]} : rm_val;
 	sh_amt = insn[25] ? {insn[11:8], 1'b0}
@@ -748,8 +777,7 @@ always @(*) begin
 			end else if (insn[15:12] == 4'b1001) begin
 				// LDR/STR, SP relative: data
 				rp_ic = insn[10:8];
-			end else if (insn[15:12] == 4'b1100 ||
-			             (insn[15:12] == 4'b1101 && insn[11])) begin
+			end else if (insn[15:12] == 4'b1100) begin
 				// STMIA / LDMIA: base
 				rp_ia = insn[10:8];
 			end
@@ -1183,7 +1211,10 @@ always @(posedge clk) begin
 
 				end else if (insn[15:13] == 3'b011) begin
 					// ---- 8. LDR/STR word or byte, imm5 ----
-					t32  = rp_a + {24'd0, insn[10:6]};
+					//      the field is unscaled in the encoding: a word offset
+					//      counts words, a byte offset counts bytes
+					t32  = rp_a + (insn[12] ? {24'd0, insn[10:6]}
+					                        : {23'd0, insn[10:6], 2'b00});
 					ea   <= t32;
 					dst   <= {2'd0, insn[2:0]};
 					wdata_r <= rp_c;
@@ -1262,7 +1293,7 @@ always @(posedge clk) begin
 					//           this halfword, so +2 makes LR = A+4 as on hardware)
 					`PABT(pc + 32'd2)
 
-				end else if (insn[15:12] == 4'b1100) begin
+				end else if (insn[15:12] == 4'b1100 && !insn[11]) begin
 					// ---- 14. STMIA ----
 					blk_list <= insn[7:0];
 					blk_addr <= rp_a;
@@ -1290,7 +1321,7 @@ always @(posedge clk) begin
 					hle_go   <= 1'b1;
 					state    <= S_SWI;
 
-				end else if (insn[15:12] == 4'b1101 && insn[11]) begin
+				end else if (insn[15:12] == 4'b1100 && insn[11]) begin
 					// ---- 15. LDMIA ----
 					blk_list <= insn[7:0];
 					blk_addr <= rp_a;
@@ -1373,7 +1404,7 @@ always @(posedge clk) begin
 					state <= S_FETCH;
 
 				end else if (insn[27:26] == 2'b00) begin
-					if (!insn[25] && insn[4]) begin
+					if (!insn[25] && insn[4] && !dp_rshift) begin
 						// ---- multiply group, where bit 4 is always set:
 						//      1001 MUL/MLA/long multiply/SWP, 1011/1101/1111
 						//      the halfword, signed and doubleword transfers,
@@ -1548,7 +1579,8 @@ always @(posedge clk) begin
 						end
 						endcase
 
-					end else if (!insn[25] && insn[7] && !insn[4]) begin
+					end else if (!insn[25] && insn[24] && !insn[23] && !insn[20] &&
+					             insn[7] && !insn[4]) begin
 						// ---- ARMv5TE halfword media instructions. Bits 7:4 are
 						//      1xy0 — x (bit 5) picks Rm's half, y (bit 6) Rs's —
 						//      and bits 23:20 select which of the four forms it is.
@@ -1653,7 +1685,7 @@ always @(posedge clk) begin
 					// ---- single data transfer ----
 					// bit 25 set means a register offset, clear means the 12-bit
 					// immediate (the opposite of data processing)
-					t32  = insn[25] ? op2 : {20'd0, insn[11:0]};
+					t32  = insn[25] ? sdt_sh : {20'd0, insn[11:0]};
 					t32b = rp_a;
 					t32c = insn[23] ? (t32b + t32) : (t32b - t32);
 					t32d = insn[24] ? t32c : t32b;
