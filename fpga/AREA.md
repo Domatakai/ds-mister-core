@@ -290,11 +290,11 @@ routability.
 |---|---|---|---|---|---|---|
 | before | -19.413 (emu) | -96,426.996 | -53.667 (audio) | 4,177 | 88.8/87.6/93.1 | 01:50:47 |
 | after (t11) | -8.339 (emu) | -45,936.820 | +0.203 (hdmi) | 4,160 | 84.2/83.1/91.3 | 00:45:25 |
-| current | -8.313 (emu) | -47,647.790 | +0.250 (emu) | 4,143 | 87.9/86.7/91.5 | 01:04:29 |
+| current | -8.403 (emu) | -46,613.591 | +0.256 (hdmi) | 4,126 | 81.7/79.1/89.9 | 00:53:48 |
 
-Routing falls from 01:20:34 to 00:21:25 because the router no longer tries to
+Routing fell from 01:20:34 to 00:21:25 because the router no longer tries to
 make unrelated clocks meet, the assembler still reports 0 errors and 0 warnings
-and writes a 3,718,564-byte `NDS.rbf`, and the fitter's warning count drops from
+and wrote a 3,718,564-byte `NDS.rbf`, and the fitter's warning count drops from
 20 to 18. The
 `current` row is that build plus two measured changes: the save file's load path,
 which costs 8 LABs and 0.816 ns on its own, and `PLACEMENT_EFFORT_MULTIPLIER 4.0`,
@@ -423,12 +423,12 @@ ports do take the reads from eleven mux trees to four, but synthesis spends most
 of the saved logic on that duplication and the router, and the net is 11 LABs,
 0.063 ns and a 46 KB smaller bitstream for a fit that takes 18 minutes longer.
 
-Every domain passes except setup, and the failing set has shrunk to the core
-itself: `pll_hdmi` is -0.061 ns with -0.061 of TNS and the emu domain -8.313 with
--41,728.820, while `h2f_user0_clk` is +3.793, `FPGA_CLK1_50` +7.062,
-`FPGA_CLK2_50` +9.728, `pll_audio` +14.082 and `FPGA_CLK3_50` +18.801. Hold is
-positive in every domain (worst +0.251), recovery +3.439, removal +0.917 and
-minimum pulse width +1.065.
+Every domain passed except setup, and the failing set had shrunk to the core
+itself: `pll_hdmi` was -0.061 ns with -0.061 of TNS and the emu domain at -8.313
+with -41,728.820, while `h2f_user0_clk` was +3.793, `FPGA_CLK1_50` at +7.062,
+`FPGA_CLK2_50` at +9.728, `pll_audio` at +14.082 and `FPGA_CLK3_50` at +18.801.
+Hold was positive in every domain (worst +0.251), recovery at +3.439, removal at
++0.917 and minimum pulse width at +1.065.
 
 So the remaining deficit is inside the 67.03 MHz domain, which no constraint can
 fix: it is design work in the core, and the -53.667 ns hold figure that looked
@@ -484,8 +484,8 @@ seed 2, the same ten macros, the same aggressive routability -- the same
 database fits. Placement takes 14:51 and routing 7:21, the fit ends at 00:53:48
 with 0 errors and 18 warnings, the assembler adds 0 errors and 0 warnings,
 TimeQuest 0 errors, and the build uses 4,126 of 4,191 LABs (65 spare), 38,707
-ALMs, 32,290 registers, peak interconnect 81.7/79.1/89.9 and writes a
-3,761,748-byte `NDS.rbf`.
+ALMs, 32,290 registers, peak interconnect 81.7/79.1/89.9, and
+writes a 3,761,748-byte `NDS.rbf`.
 
 | ten-macro build | LABs | spare | setup (`emu`) | setup TNS | hold | rbf |
 |---|---|---|---|---|---|---|
@@ -497,6 +497,13 @@ That is 0.090 ns of setup for a build that exists, and it is the only change:
 it. The margin it buys is 65 LABs, the same order as the 48 the previous build
 had, so the next feature still has to find its own area. A different seed was
 not tried -- the fitter suggests one, but the effort alone was enough.
+
+Only setup fails, as before: `pll_hdmi` is -0.146 ns with -0.310 of TNS.
+Inside the 67.03 MHz core: the emu domain -8.403 with -46,613.591.
+`h2f_user0_clk` is +2.951, `FPGA_CLK1_50` +5.929, `FPGA_CLK2_50` +10.116,
+`pll_audio` +14.615 and `FPGA_CLK3_50` +18.804. Hold is positive in every
+domain (worst +0.256), recovery +3.262, removal +1.000 and minimum
+pulse width +1.065.
 
 `tb_arm9` reports 161 checks with 0 failures and `tb_cpu_clk` 23 with 0. The
 bench is directed, not merely passing: pointing Thumb format 4's `t32b` at
