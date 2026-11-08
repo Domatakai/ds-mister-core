@@ -510,6 +510,37 @@ bench is directed, not merely passing: pointing Thumb format 4's `t32b` at
 `rp_a` instead of `rp_b` fails 11 checks on the same build (AND, EOR, LSL, LSR,
 ASR, ORR, MUL, BIC, TST, CMP and the ASR immediate).
 
+### Sharing the ARM9 barrel shifter (2026-11-08)
+
+The single-transfer fix added `sdt_sh`, a second 32-bit barrel shifter with all
+four shift types, and by size it was the largest thing the fixes bought. It does
+not have to exist. In mode 2 the shift field sits on Rm exactly where data
+processing keeps it; only bit 25 (register offset rather than immediate operand)
+and bit 4 (the low bit of the shift amount, not a shift-by-register flag) mean
+something else. Steering the one shifter into its immediate form for that case
+and reading `op2`, with `ROR #0` held at Rm -- which is how this core has always
+read it, unlike the architectural RRX -- is behaviour-identical: `tb_arm9`
+stays at 161 checks with 0 failures.
+
+Measured, the sharing is real but small: `quartus_map` on the same ten macros
+gives 38,416 ALMs and 55,637 ALUTs against 38,680 and 56,002, so 365 of the 599
+come back, with 28,049 registers (still unchanged) and `arm9_core` at 17,795
+against 18,012.
+
+Fitted at seed 2 and effort 8.0 it routes with 0 errors, and it is a worse build
+than the one the tree ships: 4,158 of 4,191 LABs (33 spare, against 65), 38,520
+ALMs, 33,548 registers (up 1,258 from 32,290), peak interconnect 89.1/87.8/93.2
+(against 81.7/79.1/89.9), and setup short by 8.574 ns with -49,692.260 of TNS
+(against 8.403 and -46,613.591). Routing alone took 52:29 of the 01:40:26 fit --
+the router logged `16684` on the way -- and the fitter ended with 19 warnings
+rather than 18.
+
+So the 365 ALUTs of mapped logic did not survive packing: the router spent 32
+more LABs, 1,258 more registers and 3,079 ns of TNS placing the smaller netlist.
+The change is reverted and the 2026-11-07 build stays the one to quote. The
+measurement is kept because it says where the decode cost lives, and because a
+different seed is the obvious next try.
+
 ### Why micro-optimising one path does not close it (2026-11-01)
 
 The worst t11 path is the ARM9's 64-bit multiply-accumulate, built in LUTs
