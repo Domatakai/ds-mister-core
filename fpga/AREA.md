@@ -535,11 +535,18 @@ build than the one the tree ships: 4,158 of 4,191 LABs (33 spare, against 65),
 the 01:40:26 fit -- the router logged `16684` on the way -- and the fitter
 ended with 19 warnings rather than 18.
 
-So the 365 ALUTs of mapped logic did not survive packing: the router spent 32
-more LABs, 1,258 more registers and 3,079 ns of TNS placing the smaller
-netlist. The change is reverted and the 2026-11-07 build stays the one to
-quote. The measurement is kept because it says where the decode cost lives, and
-because a different seed is the obvious next try.
+Seed 3 was tried next, at the same effort, in case the spare LABs were the
+seed's fault: it places in 13:17 and routes in 29:08, uses 4,144 of 4,191 LABs
+(47 spare), 38,393 ALMs and 33,582 registers, and finishes with 0 errors and 18
+warnings. The margin does not come back with it -- emu slack is short by 9.559
+ns, TNS -56,577.958, and `pll_hdmi` misses by 0.224 ns (-0.443 of TNS), both
+worse than seed 2.
+
+So the 365 ALUTs of mapped logic do not survive packing at either seed: seed 2
+spends 32 more LABs than the shipped build and 3,079 ns of TNS, seed 3 spends
+18 more LABs and 9,964 ns of TNS. The change is reverted and the 2026-11-07
+build stays the one to quote; the measurement is kept because it says where the
+decode cost lives.
 
 ### Why micro-optimising one path does not close it (2026-11-01)
 
