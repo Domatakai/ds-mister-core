@@ -399,6 +399,20 @@ def batch_cases(new):
           rc == 1 and "needs a number of days" in out
           and "Using:" not in out, out)
 
+    root = new()
+    binp = fake_quartus(root)
+    rc, out = batch_full(root, 0, argv=[binp, "--max-age", "abc"])
+    check("build.bat rejects a non-numeric --max-age",
+          rc == 1 and 'wants a whole number of days, got "abc"' in out
+          and "Compiling NDS" not in out and "Using:" not in out, out)
+
+    root = new()
+    binp = fake_quartus(root)
+    rc, out = batch_full(root, 0, argv=[binp, "--max-age", "-1"])
+    check("build.bat rejects a negative --max-age",
+          rc == 1 and "wants a whole number of days" in out
+          and "Compiling NDS" not in out, out)
+
 
 def main():
     roots = []

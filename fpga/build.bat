@@ -42,6 +42,11 @@ if "%~2"=="" (
   echo ERROR: --max-age needs a number of days, e.g. --max-age 7
   exit /b 1
 )
+rem A value that is all digits leaves no token for /f to split off.
+for /f "delims=0123456789" %%A in ("%~2") do (
+  echo ERROR: --max-age wants a whole number of days, got "%~2"
+  exit /b 1
+)
 set "MAX_AGE=%~2"
 shift
 shift
