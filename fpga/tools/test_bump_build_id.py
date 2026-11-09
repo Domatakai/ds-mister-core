@@ -111,6 +111,35 @@ def tail_lines():
     return tail
 
 
+def script_lines():
+    text = io.open(BUILD_BAT, "rb").read().decode("utf-8", "replace")
+    return text.splitlines()
+
+
+def fake_quartus(root):
+    path = os.path.join(root, "bin")
+    if not os.path.isdir(path):
+        os.makedirs(path)
+    write(os.path.join(path, "quartus_sh.exe"), b"")
+    return path
+
+
+def batch_full(root, quartus_rc):
+    """Run build.bat from its first line, with Quartus stubbed out."""
+    body = []
+    for line in script_lines():
+        if line.startswith('"%QUARTUS_BIN%'):
+            line = "cmd /c exit %d" % quartus_rc
+        body.append(line)
+    path = os.path.join(root, "build_all.bat")
+    write(path, os.linesep.join(body + [""]).encode("utf-8"))
+    done = subprocess.run(["cmd", "/c", path, fake_quartus(root)],
+                          cwd=root, stdin=subprocess.DEVNULL,
+                          stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT)
+    return done.returncode, done.stdout.decode("utf-8", "replace")
+
+
 def batch(root, answer, python=None):
     """Run build.bat's success path with the prompt answered."""
     body = []
@@ -177,6 +206,26 @@ def batch_cases(new):
     rc, out = batch(root, 2, python="nosuchpython")
     check("build.bat skips the check without python",
           rc == 0 and "Deploy to the" in out, out)
+
+    root = new()
+    rc, out = batch_full(root, 1)
+    check("build.bat fails when the compile fails",
+          rc == 1 and "COMPILE FAILED" in out and "SUCCESS" not in out,
+          out)
+
+    root = new()
+    os.remove(os.path.join(root, "output_files", "NDS.rbf"))
+    rc, out = batch_full(root, 0)
+    check("build.bat fails when no rbf appears",
+          rc == 1 and "was not generated" in out
+          and "SUCCESS" not in out, out)
+
+    root = new()
+    rc, out = batch_full(root, 0)
+    check("build.bat completes a full flow",
+          rc == 0 and "SUCCESS" in out
+          and "Build stamp: 261108" in out
+          and "Deploy to the" in out, out)
 
 
 def main():
