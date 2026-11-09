@@ -137,6 +137,11 @@ def verify(rbf, stamp):
     fields = read_record(side)
     data = io.open(rbf, "rb").read()
     digest = hashlib.sha256(data).hexdigest()
+    pin_path = stamp_file()
+    if os.path.exists(pin_path):
+        if os.path.getmtime(side) < os.path.getmtime(pin_path):
+            print("warning: %s is older than sys/build_id.txt - the pin"
+                  " changed after it was recorded" % name)
     problems = []
     if fields.get("build stamp") != stamp:
         problems.append("record holds stamp %s, the pin is %s"

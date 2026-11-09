@@ -367,6 +367,14 @@ def main():
         check("verify catches a moved pin", rc == 1 and "261109" in out, out)
 
         root = new()
+        run(root, "--record")
+        os.utime(sidecar(root), (1000, 1000))
+        rc, out = run(root, "--verify")
+        check("verify warns when the pin is newer",
+              rc == 0 and "warning:" in out and "matches NDS.rbf" in out,
+              out)
+
+        root = new()
         rc, out = run(root, "--verify")
         check("verify reports a missing record",
               rc == 1 and "no record at" in out, out)
