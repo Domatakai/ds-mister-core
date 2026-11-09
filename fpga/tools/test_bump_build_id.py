@@ -413,6 +413,16 @@ def batch_cases(new):
           rc == 1 and "wants a whole number of days" in out
           and "Compiling NDS" not in out, out)
 
+    root = new()
+    run(root, "--record")
+    age_record(root, 10)
+    binp = fake_quartus(root)
+    rc, out = batch_full(root, 0, argv=[binp, "--verify", "--max-age", "0"])
+    check("build.bat --max-age 0 rejects an older record",
+          rc == 1 and "older than --max-age 0 (10 days ago)" in out
+          and "wants a whole number" not in out
+          and "Deploy to the" not in out, out)
+
 
 def main():
     roots = []
