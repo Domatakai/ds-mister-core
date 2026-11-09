@@ -12,6 +12,8 @@ rem   build.bat "D:\other\quartus\bin64"      -> custom location
 rem   build.bat --no-test              -> skip the tool self-test
 rem   build.bat --record --verify      -> record and check without
 rem                                       prompting
+rem   build.bat --strict              -> fail when the record predates
+rem                                       the pin
 rem ---------------------------------------------------------------------------
 cd /d "%~dp0"
 
@@ -19,9 +21,11 @@ set "QUARTUS_BIN="
 set "SKIP_TEST="
 set "RECORD_FLAG="
 set "VERIFY_FLAG="
+set "STRICT_FLAG="
 call :want_arg %1
 call :want_arg %2
 call :want_arg %3
+call :want_arg %4
 if "%QUARTUS_BIN%"=="" set "QUARTUS_BIN=C:\intelFPGA_lite\17.0\quartus\bin64"
 
 if not exist "%QUARTUS_BIN%\quartus_sh.exe" (
@@ -98,7 +102,12 @@ echo ERROR: --verify asked for a record and there is none for this
 echo bitstream - build with --record, or answer Y at the prompt.
 exit /b 1
 :verifystamp
+if defined STRICT_FLAG goto :verifystrict
 python "tools\bump_build_id.py" --verify
+goto :verifydone
+:verifystrict
+python "tools\bump_build_id.py" --verify --strict
+:verifydone
 if errorlevel 9009 goto :deploy
 if errorlevel 1 goto :stalestamp
 goto :deploy
@@ -125,5 +134,6 @@ if "%~1"=="" exit /b 0
 if /i "%~1"=="--no-test" (set "SKIP_TEST=1" & exit /b 0)
 if /i "%~1"=="--record" (set "RECORD_FLAG=1" & exit /b 0)
 if /i "%~1"=="--verify" (set "VERIFY_FLAG=1" & exit /b 0)
+if /i "%~1"=="--strict" (set "STRICT_FLAG=1" & exit /b 0)
 set "QUARTUS_BIN=%~1"
 exit /b 0

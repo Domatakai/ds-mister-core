@@ -312,6 +312,31 @@ def batch_cases(new):
           and "stamp 261109" in out
           and "build stamp: 261109" in out, out)
 
+    root = new()
+    run(root, "--record")
+    os.utime(sidecar(root), (1000, 1000))
+    binp = fake_quartus(root)
+    rc, out = batch_full(root, 0, argv=[binp, "--verify"])
+    check("build.bat warns on an old record",
+          rc == 0 and "warning:" in out and "Deploy to the" in out, out)
+
+    root = new()
+    run(root, "--record")
+    os.utime(sidecar(root), (1000, 1000))
+    binp = fake_quartus(root)
+    rc, out = batch_full(root, 0, argv=[binp, "--verify", "--strict"])
+    check("build.bat --strict fails on an old record",
+          rc == 1 and "older than sys/build_id.txt" in out
+          and "Deploy to the" not in out, out)
+
+    root = new()
+    run(root, "--record")
+    os.utime(sidecar(root), (1000, 1000))
+    binp = fake_quartus(root)
+    rc, out = batch_full(root, 0, argv=[binp, "--strict", "--verify"])
+    check("build.bat takes --strict before --verify",
+          rc == 1 and "older than sys/build_id.txt" in out, out)
+
 
 def main():
     roots = []
@@ -373,6 +398,27 @@ def main():
         check("verify warns when the pin is newer",
               rc == 0 and "warning:" in out and "matches NDS.rbf" in out,
               out)
+
+        root = new()
+        run(root, "--record")
+        rc, out = run(root, "--verify", "--strict")
+        check("verify --strict accepts a fresh record",
+              rc == 0 and "warning:" not in out and "matches NDS.rbf" in out,
+              out)
+
+        root = new()
+        run(root, "--record")
+        os.utime(sidecar(root), (1000, 1000))
+        rc, out = run(root, "--verify", "--strict")
+        check("verify --strict fails on an old record",
+              rc == 1 and "older than sys/build_id.txt" in out
+              and "does not describe" in out, out)
+
+        root = new()
+        run(root, "--record")
+        rc, out = run(root, "--strict")
+        check("--strict needs --verify",
+              rc == 2 and "--strict only applies" in out, out)
 
         root = new()
         rc, out = run(root, "--verify")

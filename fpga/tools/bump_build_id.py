@@ -19,6 +19,11 @@ that is already there against the file and the current pin:
 
   python fpga/tools/bump_build_id.py --verify
 
+Add `--strict` to that check to make a record older than the pin a failure
+rather than a warning:
+
+  python fpga/tools/bump_build_id.py --verify --strict
+
 Comments in the stamp file are kept.
 """
 
@@ -124,7 +129,7 @@ def record(rbf, stamp):
     return 0
 
 
-def verify(rbf, stamp):
+def verify(rbf, stamp, strict=False):
     rbf = bitstream_path(rbf)
     side = rbf + ".stamp"
     name = os.path.basename(side)
@@ -137,12 +142,16 @@ def verify(rbf, stamp):
     fields = read_record(side)
     data = io.open(rbf, "rb").read()
     digest = hashlib.sha256(data).hexdigest()
+    problems = []
     pin_path = stamp_file()
     if os.path.exists(pin_path):
         if os.path.getmtime(side) < os.path.getmtime(pin_path):
-            print("warning: %s is older than sys/build_id.txt - the pin"
-                  " changed after it was recorded" % name)
-    problems = []
+            stale = ("%s is older than sys/build_id.txt - the pin changed"
+                     " after it was recorded" % name)
+            if strict:
+                problems.append(stale)
+            else:
+                print("warning: " + stale)
     if fields.get("build stamp") != stamp:
         problems.append("record holds stamp %s, the pin is %s"
                         % (fields.get("build stamp"), stamp))
@@ -177,7 +186,11 @@ def main(argv=None):
     mode.add_argument("--verify", nargs="?", const="output_files/NDS.rbf",
                       metavar="RBF",
                       help="check an existing record against the bitstream")
+    parser.add_argument("--strict", action="store_true",
+                        help="fail when the record predates the pin")
     args = parser.parse_args(argv)
+    if args.strict and not args.verify:
+        parser.error("--strict only applies to --verify")
 
     if args.stamp is not None:
         if not STAMP.match(args.stamp):
@@ -197,7 +210,7 @@ def main(argv=None):
         return 2
     if args.record:
         return record(args.record, stamp)
-    return verify(args.verify, stamp)
+    return verify(args.verify, stamp, args.strict)
 
 
 if __name__ == "__main__":
