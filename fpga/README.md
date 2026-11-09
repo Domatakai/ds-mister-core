@@ -901,6 +901,10 @@ Release checklist:
 4. `python fpga/tools/bump_build_id.py --verify` -- confirm the
    record matches the bitstream and the pin before copying the rbf.
 
+The tool keeps its own cases: `python fpga/tools/test_bump_build_id.py` checks
+the bump, record and verify paths against throwaway copies of this layout,
+needs no Quartus, and exits nonzero if any case fails.
+
 First full compile (analysis + fit + ASM + timing) takes roughly
 10–20 min on a modern multicore machine (`NUM_PARALLEL_PROCESSORS ALL`
 is set). A build with the ten macros above fits with
