@@ -357,6 +357,48 @@ def batch_cases(new):
           rc == 0 and "Record for output_files" in block
           and "less than a minute ago" in block, out)
 
+    root = new()
+    run(root, "--record")
+    age_record(root, 10)
+    binp = fake_quartus(root)
+    rc, out = batch_full(root, 0, argv=[binp, "--verify", "--max-age", "5"])
+    check("build.bat --max-age fails an old record",
+          rc == 1 and "older than --max-age 5 (10 days ago)" in out
+          and "Deploy to the" not in out, out)
+
+    root = new()
+    run(root, "--record")
+    binp = fake_quartus(root)
+    rc, out = batch_full(root, 0, argv=[binp, "--verify", "--max-age", "1"])
+    check("build.bat --max-age passes a fresh record",
+          rc == 0 and "matches NDS.rbf" in out
+          and "Deploy to the" in out, out)
+
+    root = new()
+    run(root, "--record")
+    age_record(root, 10)
+    binp = fake_quartus(root)
+    rc, out = batch_full(root, 0, argv=[binp, "--max-age", "5", "--verify"])
+    check("build.bat takes --max-age before --verify",
+          rc == 1 and "older than --max-age 5" in out, out)
+
+    root = new()
+    run(root, "--record")
+    age_record(root, 10)
+    os.utime(sidecar(root), (1000, 1000))
+    binp = fake_quartus(root)
+    rc, out = batch_full(root, 0, argv=[binp, "--strict", "--max-age", "5"])
+    check("build.bat combines --strict and --max-age",
+          rc == 1 and "older than sys/build_id.txt" in out
+          and "older than --max-age 5" in out, out)
+
+    root = new()
+    binp = fake_quartus(root)
+    rc, out = batch_full(root, 0, argv=[binp, "--max-age"])
+    check("build.bat needs a value for --max-age",
+          rc == 1 and "needs a number of days" in out
+          and "Using:" not in out, out)
+
 
 def main():
     roots = []

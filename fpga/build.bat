@@ -14,6 +14,8 @@ rem   build.bat --record --verify      -> record and check without
 rem                                       prompting
 rem   build.bat --strict              -> fail when the record predates
 rem                                       the pin
+rem   build.bat --max-age 7           -> fail when the record is older
+rem                                       than 7 days
 rem The summary below the deploy steps prints the record's stamp, its
 rem SHA-256 and how long ago it was written.
 rem ---------------------------------------------------------------------------
@@ -24,10 +26,27 @@ set "SKIP_TEST="
 set "RECORD_FLAG="
 set "VERIFY_FLAG="
 set "STRICT_FLAG="
-call :want_arg %1
-call :want_arg %2
-call :want_arg %3
-call :want_arg %4
+set "MAX_AGE="
+:args
+if "%~1"=="" goto :argsdone
+if /i "%~1"=="--no-test" (set "SKIP_TEST=1" & shift & goto :args)
+if /i "%~1"=="--record" (set "RECORD_FLAG=1" & shift & goto :args)
+if /i "%~1"=="--verify" (set "VERIFY_FLAG=1" & shift & goto :args)
+if /i "%~1"=="--strict" (set "STRICT_FLAG=1" & shift & goto :args)
+if /i "%~1"=="--max-age" goto :maxage
+set "QUARTUS_BIN=%~1"
+shift
+goto :args
+:maxage
+if "%~2"=="" (
+  echo ERROR: --max-age needs a number of days, e.g. --max-age 7
+  exit /b 1
+)
+set "MAX_AGE=%~2"
+shift
+shift
+goto :args
+:argsdone
 if "%QUARTUS_BIN%"=="" set "QUARTUS_BIN=C:\intelFPGA_lite\17.0\quartus\bin64"
 
 if not exist "%QUARTUS_BIN%\quartus_sh.exe" (
@@ -104,12 +123,10 @@ echo ERROR: --verify asked for a record and there is none for this
 echo bitstream - build with --record, or answer Y at the prompt.
 exit /b 1
 :verifystamp
-if defined STRICT_FLAG goto :verifystrict
-python "tools\bump_build_id.py" --verify
-goto :verifydone
-:verifystrict
-python "tools\bump_build_id.py" --verify --strict
-:verifydone
+set "VERIFY_ARGS=--verify"
+if defined STRICT_FLAG set "VERIFY_ARGS=%VERIFY_ARGS% --strict"
+if defined MAX_AGE set "VERIFY_ARGS=%VERIFY_ARGS% --max-age %MAX_AGE%"
+python "tools\bump_build_id.py" %VERIFY_ARGS%
 if errorlevel 9009 goto :deploy
 if errorlevel 1 goto :stalestamp
 goto :deploy
@@ -133,11 +150,3 @@ if errorlevel 9009 findstr /b /c:"recorded:" "output_files\NDS.rbf.stamp"
 :finished
 exit /b 0
 
-:want_arg
-if "%~1"=="" exit /b 0
-if /i "%~1"=="--no-test" (set "SKIP_TEST=1" & exit /b 0)
-if /i "%~1"=="--record" (set "RECORD_FLAG=1" & exit /b 0)
-if /i "%~1"=="--verify" (set "VERIFY_FLAG=1" & exit /b 0)
-if /i "%~1"=="--strict" (set "STRICT_FLAG=1" & exit /b 0)
-set "QUARTUS_BIN=%~1"
-exit /b 0

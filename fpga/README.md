@@ -913,7 +913,8 @@ can run unattended. A build that has a record closes with its stamp, its
 SHA-256 and how long ago it was recorded, below the deploy steps. `--verify`
 also warns when the record predates the pin file. `--strict` makes that a
 failure instead, which is what an unattended release wants. `--max-age DAYS`
-fails the check when the record is older than that many days.
+fails the check when the record is older than that many days, and `build.bat
+--max-age DAYS` forwards it.
 
 First full compile (analysis + fit + ASM + timing) takes roughly
 10–20 min on a modern multicore machine (`NUM_PARALLEL_PROCESSORS ALL`
