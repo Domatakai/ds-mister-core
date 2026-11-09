@@ -8,7 +8,9 @@ the project layout, so they can be re-checked after any change:
 
 One line per case; exits 1 if any of them fails. The repository is not
 touched - each case works in a temporary directory that is removed again
-at the end.
+at the end. The build.bat cases run the real success path from
+that file with the prompt answered for it, so they only run on
+Windows.
 """
 
 import hashlib
@@ -22,6 +24,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOL = os.path.join(HERE, "bump_build_id.py")
+BUILD_BAT = os.path.join(HERE, os.pardir, "build.bat")
 RBF = bytes(range(256))
 
 failures = []
@@ -88,6 +91,92 @@ def fields(root):
                 key, value = line.split(":", 1)
                 found[key.strip()] = value.strip()
     return found
+
+
+def move_pin(root, stamp):
+    set_pin(root, stamp)
+    write(os.path.join(root, "build_id.v"),
+          ('`define BUILD_DATE "%s"' % stamp).encode("utf-8"))
+    os.utime(os.path.join(root, "build_id.v"), (1000, 1000))
+
+
+def tail_lines():
+    text = io.open(BUILD_BAT, "rb").read().decode("utf-8", "replace")
+    lines = text.splitlines()
+    start = [n for n, l in enumerate(lines)
+             if l.startswith("echo SUCCESS: output_files")]
+    assert len(start) == 1, "build.bat: no single success line"
+    tail = lines[start[0]:]
+    assert len([l for l in tail if l.startswith("choice ")]) == 1, tail
+    return tail
+
+
+def batch(root, answer, python=None):
+    """Run build.bat's success path with the prompt answered."""
+    body = []
+    for line in tail_lines():
+        if line.startswith("choice "):
+            line = "cmd /c exit %d" % answer
+        elif line.startswith('python "tools'):
+            line = (python or '"%s"' % sys.executable) + line[6:]
+        body.append(line)
+    script = ["@echo off", 'cd /d "%s"' % root,
+              'set "BUILD_STAMP=261108"'] + body + [""]
+    path = os.path.join(root, "build_tail.bat")
+    write(path, os.linesep.join(script).encode("utf-8"))
+    done = subprocess.run(["cmd", "/c", path], cwd=root,
+                          stdin=subprocess.DEVNULL,
+                          stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT)
+    return done.returncode, done.stdout.decode("utf-8", "replace")
+
+
+def batch_cases(new):
+    if os.name != "nt":
+        print("%-48s %s" % ("build.bat cases", "skipped (not Windows)"))
+        return
+
+    root = new()
+    run(root, "--record")
+    rc, out = batch(root, 2)
+    check("build.bat decline keeps a good record",
+          rc == 0 and "matches NDS.rbf" in out and "Deploy to the" in out,
+          out)
+
+    root = new()
+    run(root, "--record")
+    move_pin(root, "261109")
+    rc, out = batch(root, 2)
+    check("build.bat fails on a stale record",
+          rc == 1 and "ERROR: the recorded stamp" in out
+          and "Deploy to the" not in out, out)
+
+    root = new()
+    rc, out = batch(root, 2)
+    check("build.bat notes a missing record",
+          rc == 0 and "No record for this bitstream" in out
+          and "Deploy to the" in out, out)
+
+    root = new()
+    rc, out = batch(root, 1)
+    check("build.bat records when answered yes",
+          rc == 0 and "recorded NDS.rbf" in out
+          and "matches NDS.rbf" in out, out)
+
+    root = new()
+    run(root, "--record")
+    move_pin(root, "261109")
+    rc, out = batch(root, 1)
+    check("build.bat re-records a moved pin",
+          rc == 0 and "recorded NDS.rbf" in out
+          and "stamp 261109" in out, out)
+
+    root = new()
+    run(root, "--record")
+    move_pin(root, "261109")
+    rc, out = batch(root, 2, python="nosuchpython")
+    check("build.bat skips the check without python",
+          rc == 0 and "Deploy to the" in out, out)
 
 
 def main():
@@ -184,6 +273,8 @@ def main():
         rc, out = run(root, "--record", "--verify")
         check("record and verify are exclusive",
               rc == 2 and "not allowed" in out, out)
+
+        batch_cases(new)
     finally:
         for root in roots:
             shutil.rmtree(root, ignore_errors=True)
