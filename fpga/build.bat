@@ -9,10 +9,15 @@ rem location; pass a different bin64 directory as the first argument if needed:
 rem
 rem   build.bat                               -> C:\intelFPGA_lite\17.0\quartus\bin64
 rem   build.bat "D:\other\quartus\bin64"      -> custom location
+rem   build.bat --no-test              -> skip the tool self-test
 rem ---------------------------------------------------------------------------
 cd /d "%~dp0"
 
 set "QUARTUS_BIN=%~1"
+set "SKIP_TEST="
+if /i "%~1"=="--no-test" set "QUARTUS_BIN=%~2"
+if /i "%~1"=="--no-test" set "SKIP_TEST=1"
+if /i "%~2"=="--no-test" set "SKIP_TEST=1"
 if "%QUARTUS_BIN%"=="" set "QUARTUS_BIN=C:\intelFPGA_lite\17.0\quartus\bin64"
 
 if not exist "%QUARTUS_BIN%\quartus_sh.exe" (
@@ -33,6 +38,8 @@ if defined BUILD_STAMP (
   echo Build stamp: none pinned - the flow uses today's date.
 )
 echo.
+if defined SKIP_TEST echo Skipping the tool self-test on request.
+if defined SKIP_TEST goto :testdone
 echo Checking the build-stamp tool...
 python "tools\test_bump_build_id.py"
 if errorlevel 9009 goto :notest

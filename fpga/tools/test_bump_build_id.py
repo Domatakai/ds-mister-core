@@ -124,7 +124,7 @@ def fake_quartus(root):
     return path
 
 
-def batch_full(root, quartus_rc, bin_path=None,
+def batch_full(root, quartus_rc, argv=None,
                selftest_rc=0, selftest_python=None):
     """Run build.bat from its first line, with Quartus stubbed out."""
     body = []
@@ -141,9 +141,9 @@ def batch_full(root, quartus_rc, bin_path=None,
         body.append(line)
     path = os.path.join(root, "build_all.bat")
     write(path, os.linesep.join(body + [""]).encode("utf-8"))
-    if bin_path is None:
-        bin_path = fake_quartus(root)
-    done = subprocess.run(["cmd", "/c", path, bin_path],
+    if argv is None:
+        argv = [fake_quartus(root)]
+    done = subprocess.run(["cmd", "/c", path] + argv,
                           cwd=root, stdin=subprocess.DEVNULL,
                           stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT)
@@ -239,7 +239,7 @@ def batch_cases(new):
 
     root = new()
     missing = os.path.join(root, "no-quartus-here")
-    rc, out = batch_full(root, 0, bin_path=missing)
+    rc, out = batch_full(root, 0, argv=[missing])
     check("build.bat fails without quartus_sh.exe",
           rc == 1 and "quartus_sh.exe not found" in out
           and "Using:" not in out, out)
@@ -254,6 +254,22 @@ def batch_cases(new):
     rc, out = batch_full(root, 0, selftest_python="nosuchpython")
     check("build.bat skips the self-test without python",
           rc == 0 and "skipping the tool self-test" in out
+          and "SUCCESS" in out, out)
+
+    root = new()
+    binp = fake_quartus(root)
+    rc, out = batch_full(root, 0, argv=[binp, "--no-test"])
+    check("build.bat skips the test after --no-test",
+          rc == 0 and "Skipping the tool self-test" in out
+          and "Checking the build-stamp tool" not in out
+          and "SUCCESS" in out, out)
+
+    root = new()
+    binp = fake_quartus(root)
+    rc, out = batch_full(root, 0, argv=["--no-test", binp])
+    check("build.bat takes --no-test before the path",
+          rc == 0 and "Skipping the tool self-test" in out
+          and "Checking the build-stamp tool" not in out
           and "SUCCESS" in out, out)
 
 

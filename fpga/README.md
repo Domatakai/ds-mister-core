@@ -907,6 +907,7 @@ The tool keeps its own cases: `python fpga/tools/test_bump_build_id.py` checks
 the bump, record and verify paths and the `build.bat` branches - its install
 check, its prompt, its compile failure and its missing rbf - against throwaway
 copies of this layout, needs no Quartus, and exits nonzero if any case fails.
+`build.bat --no-test` skips that check for a quick local build.
 
 First full compile (analysis + fit + ASM + timing) takes roughly
 10–20 min on a modern multicore machine (`NUM_PARALLEL_PROCESSORS ALL`
