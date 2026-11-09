@@ -23,6 +23,16 @@ if not exist "%QUARTUS_BIN%\quartus_sh.exe" (
 )
 
 echo Using: "%QUARTUS_BIN%\quartus_sh.exe"
+rem Print the pinned build stamp so a release build shows its date. The
+rem flow takes it from sys\build_id.txt; without one it uses today's date.
+set "BUILD_STAMP="
+if exist "sys\build_id.txt" for /f "tokens=1" %%S in ('findstr /r "^[0-9][0-9][0-9][0-9][0-9][0-9]$" sys\build_id.txt') do set "BUILD_STAMP=%%S"
+if defined BUILD_STAMP (
+  echo Build stamp: %BUILD_STAMP%  from sys\build_id.txt
+) else (
+  echo Build stamp: none pinned - the flow uses today's date.
+)
+echo.
 echo Compiling NDS - first full compile takes roughly 10-20 minutes...
 echo.
 
