@@ -58,7 +58,7 @@ module nds_spi (
 	input      [8:0]  touch_x,
 	input      [7:0]  touch_y,
 	input             touch_down,
-	input             mic_in,
+	input      [11:0] mic_in,
 
 	output            irq
 );
@@ -203,7 +203,10 @@ module nds_spi (
 	//------------------------------------------------------------------
 	wire [11:0] x_adc = touch_down ? (12'h100 + ({3'd0, touch_x} * 12'd14)) : 12'h000;
 	wire [11:0] y_adc = touch_down ? (12'h100 + ({4'd0, touch_y} * 12'd14)) : 12'hFFF;
-	wire [11:0] aux_adc = mic_in ? 12'hC00 : 12'h400;
+	// the OSD "Microphone" row decides what arrives here: the mid-scale floor
+	// when it is off, the R3 constant when it is a button, and the board ADC's
+	// live 12-bit sample when it is the host device.
+	wire [11:0] aux_adc = mic_in;
 
 	reg [2:0]  ts_ch  = 3'd0;
 

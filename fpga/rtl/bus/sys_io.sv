@@ -48,7 +48,7 @@ module sys_io (
 	input      [8:0]   touch_x,
 	input      [7:0]   touch_y,
 	input              touch_down,
-	input              mic_in,
+	input      [11:0]  mic_in,
 
 	// OSD "Language" row -> the firmware user settings on the SPI flash
 	input      [2:0]   lang,

@@ -516,6 +516,11 @@ bench is directed, not merely passing: pointing Thumb format 4's `t32b` at
 `rp_a` instead of `rp_b` fails 11 checks on the same build (AND, EOR, LSL, LSR,
 ASR, ORR, MUL, BIC, TST, CMP and the ASR immediate).
 
+The microphone ADC (`mic_adc`, one LTC2308 channel at 48 kHz) landed after the
+figures above: `tb_mic_adc` measures the sample path and the conversion rate,
+and its fit has not run yet, so every number in this section still describes
+the 2026-11-08 tree without it.
+
 ### Sharing the ARM9 barrel shifter (2026-11-08)
 
 The single-transfer fix added `sdt_sh`, a second 32-bit barrel shifter with all

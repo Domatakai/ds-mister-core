@@ -67,7 +67,7 @@ module tb_sys_clk;
 		.cpu9(cpu9), .addr(addr), .acc(acc), .we(we),
 		.wdata(wdata), .wdata32(wdata32), .rdata(rdata),
 		.recv_hit(1'b0), .recv_rdata(recv_rdata),
-		.touch_x(9'd0), .touch_y(8'd0), .touch_down(1'b0), .mic_in(1'b0),
+		.touch_x(9'd0), .touch_y(8'd0), .touch_down(1'b0), .mic_in(12'h400),
 		.lang(3'd0),
 		.irq_src9(32'd0), .irq_src7(32'd0),
 		.ie9(ie9), .if9(if9), .ime9(ime9), .irq9(irq9),

@@ -23,12 +23,14 @@ reg [1:0] stylus_cursor = 0;
 reg [1:0] tap_sel = 0;
 reg face_swap = 0, shoulder_swap = 0;
 reg [1:0] mic_source = 0;
+reg [11:0] mic_adc = 12'h400;
 reg [1:0] lid_sel = 0;
 
 wire [11:0] keys;
 wire [8:0] touch_x;
 wire [7:0] touch_y;
-wire touch_down, mic_pressed, hinge_closed;
+wire touch_down, hinge_closed;
+wire [11:0] mic_lvl;
 
 input_mapper dut (
 	.clk(clk), .reset(reset),
@@ -36,9 +38,9 @@ input_mapper dut (
 	.menu_active(menu_active),
 	.stylus_cursor(stylus_cursor), .tap_sel(tap_sel),
 	.face_swap(face_swap), .shoulder_swap(shoulder_swap),
-	.mic_source(mic_source), .lid_sel(lid_sel),
+	.mic_source(mic_source), .mic_adc(mic_adc), .lid_sel(lid_sel),
 	.keys(keys), .touch_x(touch_x), .touch_y(touch_y),
-	.touch_down(touch_down), .mic_pressed(mic_pressed),
+	.touch_down(touch_down), .mic_lvl(mic_lvl),
 	.hinge_closed(hinge_closed)
 );
 
@@ -130,16 +132,29 @@ initial begin
 		stick0 = 0;
 	end
 
-	// --- microphone via R3
+	// --- microphone: Off / R3 button / board ADC
 	mic_source = 2'd1;
 	repeat (3) @(posedge clk);
 	joy0 = 32'h0000_8000; // bit15 = R3
 	repeat (3) @(posedge clk);
-	check("mic R3 hold", mic_pressed === 1'b1);
+	check("mic R3 hold reads C00h", mic_lvl === 12'hC00);
 	joy0 = 0;
 	repeat (3) @(posedge clk);
-	check("mic release", mic_pressed === 1'b0);
+	check("mic release reads 400h", mic_lvl === 12'h400);
+
+	mic_source = 2'd2;
+	mic_adc = 12'hF5A;
+	repeat (3) @(posedge clk);
+	check("host device follows the ADC", mic_lvl === 12'hF5A);
+	joy0 = 32'h0000_8000;              // R3 must not matter in this mode
+	repeat (3) @(posedge clk);
+	check("and R3 does not override it", mic_lvl === 12'hF5A);
+	joy0 = 0;
+
 	mic_source = 2'd0;
+	mic_adc = 12'hFFF;
+	repeat (3) @(posedge clk);
+	check("mic off holds the floor", mic_lvl === 12'h400);
 
 	// --- lid chord: L2+R2 (bit12|bit13) closes the hinge while held
 	lid_sel = 2'd1;

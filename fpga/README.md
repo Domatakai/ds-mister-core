@@ -29,10 +29,13 @@ is written down rather than left to be discovered:
   in. Missing: the SPU's two capture units (`0x4000508`), the two FLASH parts'
   *upper* address space (they carry data below 64 KB — see `tb_flash_save` —
   and read `FFh` above it), `.sav` persistence and erase, and the `0x0555`/`0x0AAA` cart unlock sequence.
-- **M5, sensors** — the microphone is the R3 button; the rumble pak answers its
+- **M5, sensors** — the microphone is Off / R3 button / Host device. Host
+  device is the board's LTC2308 converter, one channel at 48 kHz, which is the
+  only input path there is: the HPS has no audio capture, so a USB microphone
+  (including one on a controller's headset jack) cannot reach the core — the
+  microphone has to be wired to the ADC pins. The rumble pak answers its
   open-bus pattern and drives the pad's motors from the slot-2 latch; the lid is
-  a chord on `EXTKEYIN`. Missing: a host-device microphone, which has no
-  audio-in path on this platform, and local DS-to-DS wireless.
+  a chord on `EXTKEYIN`. Missing: local DS-to-DS wireless.
 - **M6, the front end** — the cheat engine and the DS-native menu are in; save
   states, rewind and replay are rows in that menu whose hardware does not
   exist yet.
@@ -697,6 +700,9 @@ fpga/
   tb/tb_mt32_select.sv    mode/index request, one reload pulse per
                           change, none for a bank change in MT-32 mode
                                                           [SIM-VERIFIED]
+  tb/tb_mic_adc.sv        LTC2308 model on the bus: twelve bits reach the
+                          sample, a later conversion replaces it, 96
+                          conversions measure 2 ms (48 kHz)  [SIM-VERIFIED]
   tb/sdram_model.sv       behavioural SDRAM device with command counts
                           and protocol checks (shared by both benches)
 ```
@@ -773,14 +779,10 @@ Seven were real and are fixed:
   tables are still in M10K, and the warning fixes together come out 76 ALMs and
   103 ALUTs smaller than before them.
 - **15610 twice, and 21074** — `SD_SPI_MISO` and `ADC_SDO` were top-level inputs
-  that nothing in the core reads: it implements no secondary SD card and no ADC,
-  and the framework only routed them into `SD_MISO` and the ADC bus. Both pins
-  are gone from `sys_top` and from the pin assignments, which is the only way to
-  clear "no output depends on this input" without implementing the hardware. The
-  ADC bus keeps its four bits with a tie net on the vacated one, because an inout
-  port has to be connected to a net rather than a constant. Nothing that was read
-  before is read now, and the design measures exactly the same as before it (see
-  `AREA.md`).
+  that nothing in the core read. `SD_SPI_MISO` is still gone, because there is
+  no secondary SD card. `ADC_SDO` is back: `mic_adc` samples the LTC2308 for the
+  OSD's Host-device microphone, so `sys_top` feeds the converter's data line
+  into `ADC_BUS[2]` again and the pin keeps its `PIN_AD4` assignment.
 
 What is left is the tool describing its own implementation, plus the framework:
 
@@ -1515,7 +1517,7 @@ this core added:
 | **Slot-1 Card** | load `.nds` into the next free slot (F1), **Slot-2 RAM expansion Off / 8 MB** (8 MB of main-bus RAM at 0x09000000, for the games that ask for the pak), save type, erase, **Boot menu** (also on the pad's Select), **Clear game slots** |
 | **Screens** | screen layout **Vertical / Horizontal / Top only / Bottom only** (the DS's own arrangement is the default), rotation 0-270, swap screens, aspect, **Backlight Dim / Low / Medium / High / Brightest** (the panel gain the DS's backlight steps map to), scanlines, refresh rate Native 59.82 / 59.95 / 60.00, video output HDMI 256x384 / CRT 240p side by side / CRT 240p single / CRT 31 kHz, video filter Off / Soft / Smooth / Sharp, **LCD colour** Original / DS LCD / Vivid / Warm / Cool / Grayscale |
 | **Sound** | master volume, **Sound output Stereo / Mono / Headphones** (the DS Settings wording), SPU sync, I²S latency 1 / 2 / 4 frames, audio filter Off / Warm / Bright / Bass, stereo width Off / Soft / Strong |
-| **Touch & Pad** | stylus cursor Off / D-pad / Left stick, stylus tap L2 / R2 / L3 / R3, **Lid close Ignore / L2+R2 / L3+R3**, microphone Off / Button / Host device, rumble pak, face + shoulder swaps, pad profile |
+| **Touch & Pad** | stylus cursor Off / D-pad / Left stick, stylus tap L2 / R2 / L3 / R3, **Lid close Ignore / L2+R2 / L3+R3**, **Microphone Off / Button / Host device** (Host device samples the board ADC at 48 kHz; the mic has to be wired to the ADC pins), rumble pak, face + shoulder swaps, pad profile |
 | **Firmware** | **ARM7 BIOS HLE / bios7.bin**, **ARM9 BIOS HLE / bios9.bin**, **Firmware HLE / firmware.bin**, **Language English / Japanese / French / German / Italian / Spanish**, **Auto-start Manual / Auto**, region |
 | **System** | core speed 100 / 150 / 200 / Max %, CPU overclock Normal / ARM7 ×2 / ARM7 ×4, **auto overclock On / Off** (per
 game — see below), frameskip, auto frameskip, rewind buffer. A `Diagnostics` header row follows with FPS, frame graph, bus LEDs, log level and **Disable all cheats** |
@@ -1644,7 +1646,7 @@ diagnostics overlay only — NTSC-U, NTSC-J and PAL carts all boot.
 | M3 | GXFIFO → serialised multiplier → triangle setup → flat rasteriser → VRAM write-back → 3D layer composited by engine A; both 2D engines' fetches in bursts and the OAM scan pipelined so a line fits its period | **working** | W-buffer depth, fog, edge marking, toon shading, alpha test, QUADS/QUAD_STRIP, span fill |
 | M4 | Sixteen SPU channels (PCM8/PCM16/ADPCM, loops, pan, master volume, 48 kHz mix); AUXSPI save probe over an emulated EEPROM/FRAM/FLASH chip; MT-32-pi MIDI and its return mix; timers, IPC, maths, per-CPU IRQ banks, HALT, RTC and the three-device SPI bus | **working** | SPU capture units, `.sav` persistence and erase, cart unlock
   sequence, FLASH above its 64 KB backed window |
-| M5 | Microphone via the R3 button and the SPI touchscreen; slot-2 rumble pak (open-bus pattern, pad motors); the lid chord on `EXTKEYIN` | **partial** | Host-device microphone, DS-to-DS wireless |
+| M5 | Microphone Off / R3 button / board ADC (LTC2308 at 48 kHz through the touchscreen's AUX channel) and the SPI touchscreen; slot-2 rumble pak (open-bus pattern, pad motors); the lid chord on `EXTKEYIN` | **working** | DS-to-DS wireless |
 | M6 | Cheat engine (Action Replay, 8 entries per clock) and the DS-native menu, profiles and the video/audio filter rows | **partial** | Save states, rewind, replay |
 
 What each of those measured, for the record: a 4bpp BG line fetches in 425

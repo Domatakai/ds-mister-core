@@ -17,7 +17,11 @@
 //     OSD "Stylus cursor": Off / D-pad / Left stick
 //     OSD "Stylus tap":    L2 / R2 / L3 / R3  (any extra button)
 //     Cursor accelerates while held; tap presses the "screen".
-//     OSD "Microphone": Off / Button (hold R3) / Host device (M5)
+//     OSD "Microphone": Off / Button (hold R3) / Host device
+//     "Host device" is the board ADC (mic_adc): an analog microphone wired to
+//     the DE10-Nano's converter, sampled at 48 kHz. The DS reads it through
+//     the touchscreen's AUX channel, so what leaves here is a 12-bit level,
+//     not a pressed flag.
 //
 //   Lid (hinge): OSD "Lid close" picks the chord that shuts the shell —
 //     L2+R2 (default when enabled) or L3+R3. While it is held the core
@@ -43,7 +47,8 @@ module input_mapper (
 	input      [1:0] tap_sel,       // 0 L2, 1 R2, 2 L3, 3 R3
 	input            face_swap,     // A<->B, X<->Y
 	input            shoulder_swap, // L<->R
-	input      [1:0] mic_source,    // 0 off, 1 button (R3), 2 host device (M5)
+	input      [1:0] mic_source,    // 0 off, 1 button (R3), 2 board ADC
+	input     [11:0] mic_adc,       // the ADC's latest sample (mic_adc)
 	input      [1:0] lid_sel,       // 0 ignore, 1 L2+R2, 2 L3+R3
 
 	// toward main_bus (KEYINPUT/TSC servicing lands with the CPUs in M1)
@@ -51,7 +56,7 @@ module input_mapper (
 	output reg  [8:0] touch_x,     // 0..255
 	output reg  [7:0] touch_y,     // 0..191
 	output reg        touch_down,
-	output reg        mic_pressed,
+	output reg [11:0] mic_lvl,
 	output reg        hinge_closed  // EXTKEYIN bit 7 (1 = closed)
 );
 
@@ -160,7 +165,7 @@ always @(posedge clk) begin
 	if (reset) begin
 		keys         <= 12'hFFF;
 		touch_down   <= 1'b0;
-		mic_pressed  <= 1'b0;
+		mic_lvl      <= 12'h400;
 		hinge_closed <= 1'b0;
 	end else begin
 		// while the boot menu has the screen, the game gets no input: the
@@ -168,7 +173,10 @@ always @(posedge clk) begin
 		// background must not see Select/A presses aimed at it
 		keys <= menu_active ? 12'hFFF : ~pressed;
 		touch_down <= !menu_active && stylus_cursor != 2'd0 && tap;
-		mic_pressed <= (mic_source == 2'd1) && joy0[JR3];
+		// mid-scale is the DS's silent reading; R3 drives it high, the board
+		// ADC passes through, and Off holds the floor whatever arrives
+		mic_lvl <= (mic_source == 2'd1) ? (joy0[JR3] ? 12'hC00 : 12'h400) :
+		           (mic_source == 2'd2) ? mic_adc : 12'h400;
 		// the boot menu swallows the pad, so it owns the lid too
 		hinge_closed <= !menu_active && lid_chord;
 	end

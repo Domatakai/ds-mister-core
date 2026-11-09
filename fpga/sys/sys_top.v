@@ -108,6 +108,7 @@ module sys_top
 	output        ADC_SCK,
 	output        ADC_SDI,
 	output        ADC_CONVST,
+	input         ADC_SDO,
 
 	////////// MB KEY ///////////
 	input   [1:0] KEY,
@@ -124,7 +125,6 @@ module sys_top
 
 //////////////////////  Secondary SD  ///////////////////////////////////
 wire SD_CS, SD_CLK, SD_MOSI, SD_MISO, SD_CD;
-wire adc_sdo_tie = 1'b0;   // holds ADC_BUS bit 2, the pin no logic depended on
 
 `ifndef MISTER_DUAL_SDRAM
 	wire   sd_cd       = SDCD_SPDIF & ~SW[2]; // SW[2]=ON workaround for faulty boards without SD card detect pin.
@@ -1899,10 +1899,9 @@ emu emu
 	.AUDIO_S(audio_s),
 	.AUDIO_MIX(audio_mix),
 
-	// ADC_SDO was an input pin no logic depended on; the bus keeps its width,
-	// with a tie net holding the bit that pin used to drive (an inout port has
-	// to be connected to a net, not to a constant).
-	.ADC_BUS({ADC_SCK,adc_sdo_tie,ADC_SDI,ADC_CONVST}),
+	// bit 2 is the converter's data output; the core samples it for the
+	// microphone (mic_adc), so the pin is back on the top level.
+	.ADC_BUS({ADC_SCK,ADC_SDO,ADC_SDI,ADC_CONVST}),
 
 	.DDRAM_CLK(ram_clk),
 	.DDRAM_ADDR(ram_address),

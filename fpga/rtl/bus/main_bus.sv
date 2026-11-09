@@ -68,7 +68,7 @@ module main_bus (
 	input      [8:0] touch_x,
 	input      [7:0] touch_y,
 	input            touch_down,
-	input            mic_in,
+	input     [11:0] mic_in,       // microphone level: Off / R3 / board ADC
 	input            hinge_closed,   // EXTKEYIN bit 7
 
 	// ---- ARM9 master ----

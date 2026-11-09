@@ -38,6 +38,9 @@ module ltc2308 #(parameter NUM_CH = 2, ADC_RATE = 96000, CLK_RATE = 50000000)
 
 localparam TCONV = CLK_RATE/625000;
 
+reg   [5:0] cfg;      // declared before the buses that read them; iverilog
+reg         convst;   // elaborates in source order, Quartus does not care
+
 reg  sck;
 wire sdo = cfg[5];
 
@@ -45,9 +48,6 @@ assign ADC_BUS[3] = sck;
 wire   sdi = ADC_BUS[2];
 assign ADC_BUS[1] = sdo;
 assign ADC_BUS[0] = convst;
-
-reg         convst;
-reg   [5:0] cfg;
 
 reg  [31:0] sum;
 wire [31:0] next_sum = sum + ADC_RATE;
@@ -69,6 +69,7 @@ always @(posedge clk) begin
 		sck    <= 0;
 		cfg    <= 0;
 		dout   <= 0;
+		dout_sync <= 0;   // without this it stays x: ~x never edges
 		pin    <= NUM_CH[2:0]-1'd1;
 	end
 	else begin
@@ -142,9 +143,9 @@ always @(posedge clk) begin
 	end
 end
 
-assign active = |act;
-
 reg [1:0] act;
+
+assign active = |act;
 always @(posedge clk) begin
 	reg [31:0] onesec;
 	reg old_dout;

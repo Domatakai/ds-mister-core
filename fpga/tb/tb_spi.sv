@@ -20,7 +20,7 @@ module tb_spi;
 	reg [8:0]  touch_x = 9'd0;
 	reg [7:0]  touch_y = 8'd0;
 	reg        touch_down = 0;
-	reg        mic_in = 0;
+	reg [11:0] mic_in = 12'h400;
 	reg [2:0]  lang = 3'd0;
 	wire       irq;
 	integer    li;
@@ -363,14 +363,21 @@ module tb_spi;
 		xfer(8'h00, b0); xfer(8'h00, b1);
 		check("and FFFh for Y", ({b0[6:0], b1[7:3]}) === 12'hFFF);
 
-		mic_in = 1'b1;
+		mic_in = 12'hC00;
 		repeat (2) @(posedge clk);
 		select_dev(2'd2);
 		xfer(8'hE5, rx);                       // AUX / microphone
 		xfer(8'h00, b0); xfer(8'h00, b1);
 		check("the microphone channel follows its input",
 		      ({b0[6:0], b1[7:3]}) === 12'hC00);
-		mic_in = 1'b0;
+		mic_in = 12'h123;
+		repeat (2) @(posedge clk);
+		select_dev(2'd2);
+		xfer(8'hE5, rx);
+		xfer(8'h00, b0); xfer(8'h00, b1);
+		check("and carries the whole 12-bit level",
+		      ({b0[6:0], b1[7:3]}) === 12'h123);
+		mic_in = 12'h400;
 
 		//=============================================================
 		// 6. power management

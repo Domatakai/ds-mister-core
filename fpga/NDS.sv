@@ -86,7 +86,7 @@ module emu
 );
 
 ///////// Default values for ports not used in this core /////////
-assign ADC_BUS = 'Z;
+// ADC_BUS is driven by the microphone front end (u_mic_adc, below).
 // USER_IN/USER_OUT carry MT-32-pi (MIDI out on bit 1, I2S audio back); the
 // instance in the audio section drives the whole port.
 assign {UART_RTS, UART_TXD, UART_DTR} = 0;
@@ -981,8 +981,27 @@ wire [11:0] ds_keys;
 wire  [8:0] touch_x;
 wire  [7:0] touch_y;
 wire        touch_down;
-wire        mic_pressed;
+wire [11:0] mic_lvl;      // 12-bit microphone level: Off / R3 / board ADC
+wire [11:0] mic_adc_lvl;  // the board converter's sample, clk_sys domain
 wire        hinge_j;      // EXTKEYIN bit 7 / the shell's magnetic hinge
+
+//------------------------------------------------------------------
+// Microphone: the board's LTC2308, one channel at 48 kHz
+//
+// The HPS gives a core no audio capture, so an external microphone can only
+// arrive through the analog converter the framework already carries (the
+// part paddles use). It runs on CLK_50M because ltc2308 derives its timing
+// from that clock; mic_adc moves the sample into clk_sys. OSD
+// "Microphone: Host device" selects it; Button keeps R3.
+//------------------------------------------------------------------
+mic_adc u_mic_adc (
+	.clk_adc(CLK_50M),
+	.reset_adc(pll_rst_sr[3]),
+	.ADC_BUS(ADC_BUS),
+	.clk(clk_sys),
+	.reset(reset),
+	.sample(mic_adc_lvl)
+);
 
 input_mapper input_mapper (
 	.clk(clk_sys),
@@ -996,12 +1015,13 @@ input_mapper input_mapper (
 	.face_swap(face_swap),
 	.shoulder_swap(shoulder_swap),
 	.mic_source(mic_source),
+	.mic_adc(mic_adc_lvl),
 	.lid_sel(lid_sel),
 	.keys(ds_keys),
 	.touch_x(touch_x),
 	.touch_y(touch_y),
 	.touch_down(touch_down),
-	.mic_pressed(mic_pressed),
+	.mic_lvl(mic_lvl),
 	.hinge_closed(hinge_j)
 );
 
@@ -1069,7 +1089,7 @@ main_bus main_bus (
 	.touch_x(touch_x),
 	.touch_y(touch_y),
 	.touch_down(touch_down),
-	.mic_in(mic_pressed),
+	.mic_in(mic_lvl),
 	.m9_addr(m9_addr),
 	.m9_wdata(m9_wdata),
 	.m9_be(m9_be),
