@@ -887,7 +887,10 @@ is set). A build with the ten macros above fits with
 from the fitter and the assembler, and setup short on the 67.03 MHz `emu`
 domain (-8.325 ns), with `pll_hdmi` closing at +0.022 ns in this run. A
 clean rebuild of the same commit fits at 4,157 LABs and leaves `pll_hdmi`
-0.515 ns short, so the fit figures move by run; AREA.md records the spread.
+0.515 ns short. The build stamp used to come from the clock, so every day's
+build was a different netlist; `sys/build_id.txt` pins it, and a rebuild of
+the same tree then reproduces its own LAB count and slacks. AREA.md records
+both runs.
 At the 4.0 effort the tree used
 before the ARM9 decode fixes it places but abandons routing (`16618`,
 `188026`, `11802`, in two runs); those fixes cost 490 ALUTs inside

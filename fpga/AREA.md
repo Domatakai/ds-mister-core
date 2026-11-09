@@ -516,16 +516,31 @@ fails, and `pll_hdmi` now closes at 0.022 ns.
 The configuration is in the project: seed 2,
 `PLACEMENT_EFFORT_MULTIPLIER 8.0` and the ten macros, so a clean checkout
 builds the design this document describes. It reproduces the mapped design --
-28,155 registers and 127 warnings, as above -- but not the fit exactly.
-`git archive HEAD` into an empty directory followed by `quartus_sh --flow
-compile NDS` fits at 4,157 of 4,191 LABs with setup -8.210 ns and TNS
--49,244.967, leaves `pll_hdmi` short by 0.515 ns and writes a 3,764,100-byte
-`NDS.rbf`. On a 99%-full device the fitter duplicates registers to close
-timing (34,005 against 32,510 in the quoted run), so the LAB count and the
-slacks move with placement: the figures above are the run recorded here, not
-a bit-exact rebuild.
+28,155 registers and 127 warnings, as above -- and the fit too, once the build
+stamp is pinned. `git archive HEAD` into an empty directory followed by
+`quartus_sh --flow compile NDS` fits at 4,157 of 4,191 LABs with setup -8.210
+ns and TNS -49,244.967, leaves `pll_hdmi` short by 0.515 ns and writes a
+3,764,100-byte `NDS.rbf`. A second flow on that same tree reproduced every
+figure: 4,157 LABs, 38,881 ALMs, 34,005 fitted registers, interconnect
+87.2/85.9/91.1, 18 warnings, the same bitstream size and the same setup, TNS
+and hold slacks. The fitter is deterministic given the same inputs.
 
-In this run only the 67.03 MHz core fails: the emu domain -8.325 with
+The inputs used to differ. `sys/build_id.tcl` wrote `BUILD_DATE` from the
+clock, so each day's build carried a different constant into the netlist: the
+2026-11-08 run held `"261031"`, this one `"261108"`. Mapped registers, settings
+and duplication are the same either way -- both runs log `Created 222 register
+duplicates`, not the thousand that comparing fitted register counts suggests.
+What changes is the fit: 4,138 LABs and 32,510 fitted registers in the older
+run, 4,157 and 34,005 here, setup -8.325 against -8.210 and TNS -53,336.764
+against -49,244.967. The extra registers are retiming done differently on a
+different netlist, priced by the logs at 2,859 ps there against 1,770 ps here:
+one constant is worth 19 LABs and 1,495 fitted registers.
+
+`sys/build_id.txt` now pins the stamp the flow writes -- 261108, the build
+recorded above -- so a rebuild of this tree reproduces its own fit; edit that
+file when the displayed date should move.
+
+In that microphone build only the 67.03 MHz core fails: the emu domain -8.325 with
 -53,336.764, and every other domain closes.
 `pll_hdmi` is 0.022 ns with 0.000 of TNS. `h2f_user0_clk` is +3.400,
 `FPGA_CLK1_50` +7.205, `FPGA_CLK2_50` +9.791, `pll_audio` +14.324 and

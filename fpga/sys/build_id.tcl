@@ -4,8 +4,28 @@
 # Sorgelig - 02/11/2019
 proc generateBuildID_Verilog {} {
 
-	# Get the timestamp (see: http://www.altera.com/support/examples/tcl/tcl-date-time-stamp.html)
-	set buildDate "`define BUILD_DATE \"[clock format [ clock seconds ] -format %y%m%d]\""
+	# The stamp can be pinned in sys/build_id.txt so that a rebuild of the
+	# same tree produces the same netlist, and therefore the same fit.
+	# Without the file, or with no stamp in it, the build date is used.
+	# Blank lines and lines beginning with # are ignored.
+	set pinned ""
+	if { [file exists "sys/build_id.txt"] } {
+		set pinFile [open "sys/build_id.txt" "r"]
+		foreach line [split [read $pinFile] "
+"] {
+			set line [string trim $line]
+			if { [string equal "" $line] || [string index $line 0] eq "#" } {
+				continue
+			}
+			set pinned $line
+			break
+		}
+		close $pinFile
+	}
+	if { [string equal "" $pinned] } {
+		set pinned [clock format [ clock seconds ] -format %y%m%d]
+	}
+	set buildDate "`define BUILD_DATE \"$pinned\""
 
 	# Create a Verilog file for output
 	set outputFileName "build_id.v"
