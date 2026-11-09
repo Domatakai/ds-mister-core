@@ -482,8 +482,8 @@ The effort changes no mapped logic: `quartus_map` puts this database at
 seed 2, the same ten macros and the same aggressive routability -- it fits.
 Placement takes 13:54 and routing 08:33, the fit ends at 00:53:59 with 0
 errors and 18 warnings, the assembler adds 0 errors and 0 warnings, TimeQuest
-0 errors, and the build uses 4,138 of 4,191 LABs (53 spare), 38,654 ALMs, 32,510
-registers, peak interconnect 83.0/82.3/89.7,
+0 errors, and the build uses 4,138 of 4,191 LABs (53 spare), 38,654 ALMs,
+32,510 registers, peak interconnect 83.0/82.3/89.7,
 and writes a 3,783,032-byte `NDS.rbf`.
 
 | ten-macro build | LABs | spare | setup (`emu`) | setup TNS | hold | rbf |
