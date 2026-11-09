@@ -29,6 +29,11 @@ written; the same line is available on its own:
 
   python fpga/tools/bump_build_id.py --age
 
+`--max-age DAYS` fails the check when the record is older than that many
+days, so a stale bitstream cannot pass a release:
+
+  python fpga/tools/bump_build_id.py --verify --max-age 7
+
 Comments in the stamp file are kept.
 """
 
@@ -134,7 +139,7 @@ def record(rbf, stamp):
     return 0
 
 
-def verify(rbf, stamp, strict=False):
+def verify(rbf, stamp, strict=False, max_age=None):
     rbf = bitstream_path(rbf)
     side = rbf + ".stamp"
     name = os.path.basename(side)
@@ -167,6 +172,12 @@ def verify(rbf, stamp, strict=False):
         problems.append("record holds sha256 %s, the bitstream hashes %s"
                         % ((fields.get("sha256") or "none")[:12],
                            digest[:12]))
+    if max_age is not None:
+        when, written = written_time(side)
+        seconds = int(time.time() - written)
+        if seconds > max_age * 86400:
+            problems.append("record is older than --max-age %d (%s)"
+                            % (max_age, age_text(seconds)))
     if problems:
         for problem in problems:
             print(problem)
@@ -188,17 +199,22 @@ def age_text(seconds):
     return "less than a minute ago"
 
 
-def show_age(rbf):
-    side = bitstream_path(rbf) + ".stamp"
-    if not os.path.exists(side):
-        print("no record at %s" % side)
-        return 1
+def written_time(side):
     when = read_record(side).get("recorded") or ""
     try:
         written = time.mktime(time.strptime(when, "%Y-%m-%d %H:%M:%S"))
     except ValueError:
         written = os.path.getmtime(side)
         when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(written))
+    return when, written
+
+
+def show_age(rbf):
+    side = bitstream_path(rbf) + ".stamp"
+    if not os.path.exists(side):
+        print("no record at %s" % side)
+        return 1
+    when, written = written_time(side)
     seconds = int(time.time() - written)
     print("recorded: %s (%s)" % (when, age_text(seconds)))
     return 0
@@ -220,11 +236,17 @@ def main(argv=None):
     mode.add_argument("--age", nargs="?", const="output_files/NDS.rbf",
                       metavar="RBF",
                       help="say how long ago the record was written")
+    parser.add_argument("--max-age", type=int, metavar="DAYS",
+                        help="fail when the record is older than DAYS")
     parser.add_argument("--strict", action="store_true",
                         help="fail when the record predates the pin")
     args = parser.parse_args(argv)
     if args.strict and not args.verify:
         parser.error("--strict only applies to --verify")
+    if args.max_age is not None and not args.verify:
+        parser.error("--max-age only applies to --verify")
+    if args.max_age is not None and args.max_age < 0:
+        parser.error("--max-age must not be negative")
     if args.age:
         return show_age(args.age)
 
@@ -246,7 +268,7 @@ def main(argv=None):
         return 2
     if args.record:
         return record(args.record, stamp)
-    return verify(args.verify, stamp, args.strict)
+    return verify(args.verify, stamp, args.strict, args.max_age)
 
 
 if __name__ == "__main__":

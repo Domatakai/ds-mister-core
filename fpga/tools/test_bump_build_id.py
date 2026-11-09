@@ -82,6 +82,18 @@ def sidecar(root):
     return os.path.join(root, "output_files", "NDS.rbf.stamp")
 
 
+def age_record(root, days):
+    text = io.open(sidecar(root), "rb").read().decode("utf-8")
+    when = time.strftime("%Y-%m-%d %H:%M:%S",
+                         time.localtime(time.time() - days * 86400))
+    out = []
+    for line in text.split(chr(13) + chr(10)):
+        if line.startswith("recorded:"):
+            line = "recorded: " + when
+        out.append(line)
+    write(sidecar(root), (chr(13) + chr(10)).join(out).encode("utf-8"))
+
+
 def fields(root):
     found = {}
     if os.path.exists(sidecar(root)):
@@ -465,6 +477,53 @@ def main():
         root = new()
         rc, out = run(root, "--age")
         check("--age needs a record", rc == 1 and "no record at" in out, out)
+
+        root = new()
+        run(root, "--record")
+        rc, out = run(root, "--verify", "--max-age", "1")
+        check("--max-age accepts a fresh record",
+              rc == 0 and "matches NDS.rbf" in out, out)
+
+        root = new()
+        run(root, "--record")
+        age_record(root, 10)
+        rc, out = run(root, "--verify", "--max-age", "5")
+        check("--max-age fails an old record",
+              rc == 1 and "older than --max-age 5 (10 days ago)" in out
+              and "does not describe" in out, out)
+
+        root = new()
+        run(root, "--record")
+        age_record(root, 10)
+        rc, out = run(root, "--verify", "--max-age", "30")
+        check("--max-age passes within the limit",
+              rc == 0 and "matches NDS.rbf" in out, out)
+
+        root = new()
+        run(root, "--record")
+        got = fields(root)
+        text = ("build stamp: %s" % got["build stamp"]
+                + chr(13) + chr(10)
+                + "bytes: %s" % got["bytes"]
+                + chr(13) + chr(10)
+                + "sha256: %s" % got["sha256"])
+        write(sidecar(root), text.encode("utf-8"))
+        os.utime(sidecar(root), (time.time() - 10 * 86400,) * 2)
+        rc, out = run(root, "--verify", "--max-age", "5")
+        check("--max-age falls back to the file time",
+              rc == 1 and "older than --max-age 5" in out, out)
+
+        root = new()
+        run(root, "--record")
+        rc, out = run(root, "--max-age", "5")
+        check("--max-age needs --verify",
+              rc == 2 and "--max-age only applies" in out, out)
+
+        root = new()
+        run(root, "--record")
+        rc, out = run(root, "--verify", "--max-age", "-1")
+        check("--max-age rejects a negative limit",
+              rc == 2 and "must not be negative" in out, out)
 
         root = new()
         rc, out = run(root, "--verify")
