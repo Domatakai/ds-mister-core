@@ -34,8 +34,8 @@ is written down rather than left to be discovered:
   only input path there is: the HPS has no audio capture, so a USB microphone
   (including one on a controller's headset jack) cannot reach the core — the
   microphone has to be wired to the ADC pins. The rumble pak answers its
-  open-bus pattern and drives the pad's motors from the slot-2 latch; the lid is
-  a chord on `EXTKEYIN`. Missing: local DS-to-DS wireless.
+  open-bus pattern and drives the pad's motors from the slot-2 latch; the lid
+  is a chord on `EXTKEYIN`. Missing: local DS-to-DS wireless.
 - **M6, the front end** — the cheat engine and the DS-native menu are in; save
   states, rewind and replay are rows in that menu whose hardware does not
   exist yet.
@@ -778,11 +778,12 @@ Seven were real and are fixed:
   condition), 0 with this one. Block memory is unchanged (1,873,331 bits), so the
   tables are still in M10K, and the warning fixes together come out 76 ALMs and
   103 ALUTs smaller than before them.
-- **15610 twice, and 21074** — `SD_SPI_MISO` and `ADC_SDO` were top-level inputs
-  that nothing in the core read. `SD_SPI_MISO` is still gone, because there is
-  no secondary SD card. `ADC_SDO` is back: `mic_adc` samples the LTC2308 for the
-  OSD's Host-device microphone, so `sys_top` feeds the converter's data line
-  into `ADC_BUS[2]` again and the pin keeps its `PIN_AD4` assignment.
+- **15610 twice, and 21074** — `SD_SPI_MISO` and `ADC_SDO` were top-level
+  inputs that nothing in the core read. `SD_SPI_MISO` is still gone, because
+  there is no secondary SD card. `ADC_SDO` is back: `mic_adc` samples the
+  LTC2308 for the OSD's Host-device microphone, so `sys_top` feeds the
+  converter's data line into `ADC_BUS[2]` again and the pin keeps its
+  `PIN_AD4` assignment.
 
 What is left is the tool describing its own implementation, plus the framework:
 
