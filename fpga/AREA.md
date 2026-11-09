@@ -511,7 +511,21 @@ from 41:21 to 08:33 with interconnect 89.7 against 94.2 on the H channel. TNS
 is 1,264 worse, so the domain that already failed still does; nothing new
 fails, and `pll_hdmi` now closes at 0.022 ns.
 
-Only the 67.03 MHz core fails now: the emu domain -8.325 with -53,336.764,
+### Reproducing these figures (2026-11-09)
+
+The configuration is in the project: seed 2,
+`PLACEMENT_EFFORT_MULTIPLIER 8.0` and the ten macros, so a clean checkout
+builds the design this document describes. It reproduces the mapped design --
+28,155 registers and 127 warnings, as above -- but not the fit exactly.
+`git archive HEAD` into an empty directory followed by `quartus_sh --flow
+compile NDS` fits at 4,157 of 4,191 LABs with setup -8.210 ns and TNS
+-49,244.967, leaves `pll_hdmi` short by 0.515 ns and writes a 3,764,100-byte
+`NDS.rbf`. On a 99%-full device the fitter duplicates registers to close
+timing (34,005 against 32,510 in the quoted run), so the LAB count and the
+slacks move with placement: the figures above are the run recorded here, not
+a bit-exact rebuild.
+
+In this run only the 67.03 MHz core fails: the emu domain -8.325 with -53,336.764,
 and every other domain closes. `pll_hdmi` is 0.022 ns with 0.000 of TNS.
 `h2f_user0_clk` is +3.400, `FPGA_CLK1_50` +7.205, `FPGA_CLK2_50` +9.791,
 `pll_audio` +14.324 and `FPGA_CLK3_50` +18.641. Hold is positive in every

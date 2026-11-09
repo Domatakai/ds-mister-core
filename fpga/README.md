@@ -884,8 +884,10 @@ First full compile (analysis + fit + ASM + timing) takes roughly
 is set). A build with the ten macros above fits with
 `PLACEMENT_EFFORT_MULTIPLIER 8.0` (seed 2, as committed): **4,138 of
 4,191 LABs**, a 3,783,032-byte `NDS.rbf`, 18 fitter warnings, 0 errors
-from the fitter and the assembler, and setup short only on the
-67.03 MHz `emu` domain (-8.325 ns). At the 4.0 effort the tree used
+from the fitter and the assembler, and setup short on the 67.03 MHz `emu`
+domain (-8.325 ns), with `pll_hdmi` closing at +0.022 ns in this run. A
+clean rebuild of the same commit fits at 4,157 LABs and leaves `pll_hdmi`
+0.515 ns short, so the fit figures move by run; AREA.md records the spread. At the 4.0 effort the tree used
 before the ARM9 decode fixes it places but abandons routing (`16618`,
 `188026`, `11802`, in two runs); those fixes cost 490 ALUTs inside
 `arm9_core` and 599 in the design, both measured in `AREA.md`. Without
