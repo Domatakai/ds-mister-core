@@ -305,7 +305,7 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1), .VDNUM(1)) hps_io
 	.ps2_mouse_clk_in(1'b1),
 	.ps2_mouse_data_in(1'b1),
 
-	.joystick_0_rumble(16'd0),
+	.joystick_0_rumble(rumble_lvl ? 16'hFFFF : 16'h0000),
 	.joystick_1_rumble(16'd0),
 	.joystick_2_rumble(16'd0),
 	.joystick_3_rumble(16'd0),
@@ -1052,11 +1052,17 @@ wire [15:0] spu_reg_addr, spu_reg_wdata, spu_reg_rdata;
 // DS those are all a divider of the same 33.513982 MHz clock the ARM7 runs on.
 wire        ce9, ce7;
 
+// Slot-2 rumble pak: the actuator state from main_bus, sent to the pad's
+// motors through hps_io while the OSD row has a pak fitted.
+wire        rumble_lvl;
+
 main_bus main_bus (
 	.clk(clk_sys),
 	.reset(reset),
 	.ce7(ce7),
 	.ram_exp(ram_exp),
+	.rumble_pak(rumble),
+	.rumble_lvl(rumble_lvl),
 	.ds_keys(ds_keys),
 	.lang(lang_sel),
 	.hinge_closed(hinge_j),
@@ -1706,7 +1712,7 @@ assign LED_USER = bus_leds ? led_cnt[22] : (ioctl_download ? led_cnt[20] : led_c
 
 // Unused-in-skeleton outputs
 wire _unused = &{1'b0, aspect, bios_real, bios9_real, fw_dump, auto_start,
-                 region, rumble, pad_profile, core_speed, frameskip,
+                 region, pad_profile, core_speed, frameskip,
                  autoskip, rewind_buf, show_fps, frame_graph, log_level,
                  i2s_latency,
                  spu_sync, ps2_key, img_mounted, img_size, cart_loaded,

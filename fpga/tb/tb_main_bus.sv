@@ -23,6 +23,8 @@ reg reset = 1;
 
 reg [11:0] ds_keys = 12'hFFF;
 reg         ram_exp = 1'b0;      // OSD row: Slot-2 RAM expansion pak
+reg         rumble_pak = 1'b0;   // OSD row: Slot-2 rumble pak
+wire        rumble_lvl;
 reg        hinge = 1'b0;
 reg  [2:0] lang = 3'd0;
 
@@ -111,6 +113,7 @@ main_bus dut (
 	// timers are not under test here; the ARM7's enable held high makes them
 	// advance on every clock, which is the pre-retiming behaviour
 	.ce7(1'b1), .ram_exp(ram_exp),
+	.rumble_pak(rumble_pak), .rumble_lvl(rumble_lvl),
 	.ds_keys(ds_keys), .lang(lang), .hinge_closed(hinge),
 	.touch_x(9'd0), .touch_y(8'd0), .touch_down(1'b0), .mic_in(1'b0),
 	.m9_addr(m9_addr), .m9_wdata(m9_wdata), .m9_be(m9_be),
@@ -564,6 +567,29 @@ initial begin
 	spu_hit = 0;
 	m9_write(32'h0400_0404, 32'h0000_0003, 4'b0011);
 	check("the ARM9 sees the geometry window, not sound", !spu_hit);
+
+	// ---- Slot-2 rumble pak: the cart-port latch at 0x08000000 ----
+	// with the row off the window stays cart space and nothing rumbles
+	rumble_pak = 1'b0;
+	m9_read(32'h0800_0000, r1);
+	check("row off: the pak is not in the cart window", rumble_lvl === 1'b0);
+
+	rumble_pak = 1'b1;
+	repeat (2) @(posedge clk);
+	m9_read(32'h0800_0000, r1);
+	check("rumble open bus at 0x08000000", r1 === 32'h0001_0000);
+	m9_read(32'h0800_0010, r1);
+	check("open bus follows the halfword index", r1 === 32'h0009_0008);
+	m9_write(32'h0800_0000, 32'h0000_0002, 4'h3);
+	repeat (2) @(posedge clk);
+	check("writing AD1 = 1 turns the actuator on", rumble_lvl === 1'b1);
+	m9_write(32'h0800_0000, 32'h0000_0000, 4'h3);
+	repeat (2) @(posedge clk);
+	check("writing AD1 = 0 turns it back off", rumble_lvl === 1'b0);
+	m9_write(32'h0800_1000, 32'h0000_0002, 4'h3);
+	repeat (2) @(posedge clk);
+	check("0x08001000 is the same latch", rumble_lvl === 1'b1);
+	rumble_pak = 1'b0;
 
 	if (errors == 0) $display("tb_main_bus: PASS");
 	else             $display("tb_main_bus: FAIL (%0d errors)", errors);

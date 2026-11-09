@@ -59,6 +59,8 @@ module main_bus (
 	input            ce7,          // ARM7 clock enable (cpu_ce): the timers
 	                               // count it, not clk_sys
 	input            ram_exp,      // Slot-2 RAM expansion pak, from the OSD
+	input            rumble_pak,   // Slot-2 rumble pak, from the OSD
+	output reg       rumble_lvl,   // its actuator state, for the pad motors
 
 	// input state from input_mapper
 	input     [11:0] ds_keys,
@@ -379,6 +381,15 @@ wire is_pal    = (a[31:24] == 8'h05);
 wire is_vram   = (a[31:24] == 8'h06);
 wire is_oam    = (a[31:24] == 8'h07);
 wire is_cart   = (a[31:24] == 8'h08);
+// Slot-2 rumble pak: a latch on the cart port's /WR and AD1 that takes the
+// first 64 KB of the cart window away from the ROM and answers reads with the
+// pak's own open-bus pattern (GBATEK: halfword[i] = i and FFFDh). With the OSD
+// row off, 0x08000000 is cart space again, as on a DS with no pak fitted.
+wire is_rumble  = rumble_pak && (a[31:16] == 16'h0800);
+wire [11:0] rmb_i = a[12:1];                        // halfword index
+wire [15:0] rmb_lo = {4'd0, rmb_i} & 16'hFFFD;
+wire [15:0] rmb_hi = {4'd0, rmb_i + 12'd1} & 16'hFFFD;
+wire [31:0] rumble_word = {rmb_hi, rmb_lo};
 // Slot-2 RAM expansion pak: the 8 MB the DS maps at 0x09000000..0x097FFFFF
 // when one is in the slot. With the OSD row off nothing decodes here, which
 // is exactly what a DS with an empty slot does.
@@ -565,6 +576,7 @@ wire [31:0] resp_word = is_vram    ? {hi_half, lo_half} :
                         is_ram     ? {cheat_hit && cheat_patch_hi_en ? cheat_patch_hi : hi_half,
                                       cheat_hit ? cheat_patch : lo_half} :
                         is_exp     ? {hi_half, lo_half} :
+                        is_rumble  ? rumble_word :
                         is_cart    ? {hi_half, lo_half} : 32'h0;
 
 //------------------------------------------------------------------
@@ -633,7 +645,8 @@ always @(posedge clk) begin
 		is_read  <= m_rd;
 		need_b   <= (m_wr ? (be[3:2] != 2'b00 && be[1:0] != 2'b00)
 		                   : (be[3:2] != 2'b00)) &&
-		             (is_ram || is_exp || is_cart || is_shared || is_a7wram ||
+		             (is_ram || is_exp || (is_cart && !is_rumble) ||
+			 is_shared || is_a7wram ||
 		              is_pal || is_oam || is_io || is_vram);
 		lo_half  <= 16'h0000;
 		hi_half  <= 16'h0000;
@@ -652,6 +665,10 @@ always @(posedge clk) begin
 			ram_wdata <= beat_hi ? w_lane_hi : w_lane_lo;
 			ram_be    <= beat_hi ? be[3:2]   : be[1:0];
 			state     <= S_WAIT_A;
+		end else if (is_rumble) begin
+			// the whole device: one latch bit, taken from the written halfword
+			if (m_wr) rumble_lvl <= w_lane_lo[1];
+			state <= S_RESP;
 		end else if (is_cart && m_rd) begin
 			cart_req  <= 1;
 			cart_addr <= {a[25:2], 2'b00};
@@ -869,6 +886,7 @@ always @(posedge clk) begin
 		pal_we <= 0; oam_we <= 0; pal2_we <= 0; oam2_we <= 0;
 		dispcnt_a   <= 0;
 		dispcnt_b   <= 0;
+		rumble_lvl  <= 0;
 	end
 end
 
