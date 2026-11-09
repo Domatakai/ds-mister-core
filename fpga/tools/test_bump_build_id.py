@@ -124,12 +124,20 @@ def fake_quartus(root):
     return path
 
 
-def batch_full(root, quartus_rc, bin_path=None):
+def batch_full(root, quartus_rc, bin_path=None,
+               selftest_rc=0, selftest_python=None):
     """Run build.bat from its first line, with Quartus stubbed out."""
     body = []
     for line in script_lines():
         if line.startswith('"%QUARTUS_BIN%'):
             line = "cmd /c exit %d" % quartus_rc
+        elif "test_bump_build_id" in line:
+            if selftest_python:
+                line = selftest_python + line[6:]
+            else:
+                line = "cmd /c exit %d" % selftest_rc
+        elif line.startswith('python "tools'):
+            line = '"%s"' % sys.executable + line[6:]
         body.append(line)
     path = os.path.join(root, "build_all.bat")
     write(path, os.linesep.join(body + [""]).encode("utf-8"))
@@ -235,6 +243,18 @@ def batch_cases(new):
     check("build.bat fails without quartus_sh.exe",
           rc == 1 and "quartus_sh.exe not found" in out
           and "Using:" not in out, out)
+
+    root = new()
+    rc, out = batch_full(root, 0, selftest_rc=1)
+    check("build.bat fails when the self-test fails",
+          rc == 1 and "self-test failed" in out
+          and "Compiling NDS" not in out, out)
+
+    root = new()
+    rc, out = batch_full(root, 0, selftest_python="nosuchpython")
+    check("build.bat skips the self-test without python",
+          rc == 0 and "skipping the tool self-test" in out
+          and "SUCCESS" in out, out)
 
 
 def main():

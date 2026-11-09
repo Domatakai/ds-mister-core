@@ -900,8 +900,8 @@ Release checklist:
    and fails if it no longer matches the bitstream or the pin.
 4. `python fpga/tools/bump_build_id.py --verify` -- confirm the
    record matches the bitstream and the pin before copying the rbf.
-5. `python fpga/tools/test_bump_build_id.py` -- its cases cover
-   the stamp tool and `build.bat`; all of them must pass.
+5. `build.bat` runs the tool self-test first; its cases cover the
+   stamp tool and the build.bat branches, and all must pass.
 
 The tool keeps its own cases: `python fpga/tools/test_bump_build_id.py` checks
 the bump, record and verify paths and the `build.bat` branches - its install

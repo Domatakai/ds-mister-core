@@ -33,6 +33,19 @@ if defined BUILD_STAMP (
   echo Build stamp: none pinned - the flow uses today's date.
 )
 echo.
+echo Checking the build-stamp tool...
+python "tools\test_bump_build_id.py"
+if errorlevel 9009 goto :notest
+if errorlevel 1 goto :testfailed
+goto :testdone
+:notest
+echo python was not found - skipping the tool self-test.
+goto :testdone
+:testfailed
+echo.
+echo ERROR: the build-stamp self-test failed; fix it before building.
+exit /b 1
+:testdone
 echo Compiling NDS - first full compile takes roughly 10-20 minutes...
 echo.
 
