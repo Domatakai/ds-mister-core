@@ -172,7 +172,12 @@ def batch(root, answer, python=None):
             line = (python or '"%s"' % sys.executable) + line[6:]
         body.append(line)
     script = ["@echo off", 'cd /d "%s"' % root,
-              'set "BUILD_STAMP=261108"'] + body + [""]
+              'set "BUILD_STAMP=261108"',
+              # build.bat --record sets these in the environment; a case that
+              # answered N must not inherit them and record anyway.
+              'set "SKIP_TEST="', 'set "RECORD_FLAG="',
+              'set "VERIFY_FLAG="', 'set "STRICT_FLAG="',
+              'set "MAX_AGE="'] + body + [""]
     path = os.path.join(root, "build_tail.bat")
     write(path, os.linesep.join(script).encode("utf-8"))
     done = subprocess.run(["cmd", "/c", path], cwd=root,
@@ -421,6 +426,18 @@ def batch_cases(new):
     check("build.bat --max-age 0 rejects an older record",
           rc == 1 and "older than --max-age 0 (10 days ago)" in out
           and "wants a whole number" not in out
+          and "Deploy to the" not in out, out)
+
+    root = new()
+    run(root, "--record")
+    move_pin(root, "261109")
+    os.environ["RECORD_FLAG"] = "1"
+    try:
+        rc, out = batch(root, 2)
+    finally:
+        del os.environ["RECORD_FLAG"]
+    check("build.bat ignores ambient flags",
+          rc == 1 and "ERROR: the recorded stamp" in out
           and "Deploy to the" not in out, out)
 
 
