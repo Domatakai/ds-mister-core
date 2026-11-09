@@ -889,6 +889,18 @@ SHA-256; it refuses when the bitstream is older than the stamp or when
 bitstream and the current pin, so a record left behind by an earlier build
 cannot vouch for the file you are about to copy.
 
+Release checklist:
+
+1. `python fpga/tools/bump_build_id.py` -- set the stamp for this
+   release.
+2. `build.bat` -- compile; it prints that stamp before and after
+   the fit.
+3. Press `Y` at its record prompt (or run `--record` later) to
+   write `output_files/NDS.rbf.stamp`.
+4. `python fpga/tools/bump_build_id.py --verify` -- confirm the
+   record matches the bitstream and the pin before copying the rbf.
+
+
 First full compile (analysis + fit + ASM + timing) takes roughly
 10–20 min on a modern multicore machine (`NUM_PARALLEL_PROCESSORS ALL`
 is set). A build with the ten macros above fits with

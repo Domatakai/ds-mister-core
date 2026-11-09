@@ -58,6 +58,12 @@ if defined BUILD_STAMP (
   echo Build stamp: none pinned - the build used today's date.
 )
 echo.
+choice /c YN /n /m "Record output_files\NDS.rbf.stamp for this build? [Y/N] "
+if errorlevel 2 goto :deploy
+python "tools\bump_build_id.py" --record
+if errorlevel 9009 echo python was not found - record it later with tools\bump_build_id.py --record
+:deploy
+echo.
 echo Deploy to the DE10-Nano SD card ^(adjust the drive letter^):
 echo   copy output_files\NDS.rbf  E:\games\NDS\NDS.rbf
 echo.
