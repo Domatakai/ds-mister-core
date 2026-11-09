@@ -52,6 +52,11 @@ if not exist "output_files\NDS.rbf" (
 
 echo.
 echo SUCCESS: output_files\NDS.rbf is ready.
+if defined BUILD_STAMP (
+  echo Build stamp: %BUILD_STAMP%  from sys\build_id.txt
+) else (
+  echo Build stamp: none pinned - the build used today's date.
+)
 echo.
 echo Deploy to the DE10-Nano SD card ^(adjust the drive letter^):
 echo   copy output_files\NDS.rbf  E:\games\NDS\NDS.rbf
