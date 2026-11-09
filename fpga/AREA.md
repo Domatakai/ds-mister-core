@@ -525,12 +525,12 @@ timing (34,005 against 32,510 in the quoted run), so the LAB count and the
 slacks move with placement: the figures above are the run recorded here, not
 a bit-exact rebuild.
 
-In this run only the 67.03 MHz core fails: the emu domain -8.325 with -53,336.764,
-and every other domain closes. `pll_hdmi` is 0.022 ns with 0.000 of TNS.
-`h2f_user0_clk` is +3.400, `FPGA_CLK1_50` +7.205, `FPGA_CLK2_50` +9.791,
-`pll_audio` +14.324 and `FPGA_CLK3_50` +18.641. Hold is positive in every
-domain (worst +0.238), recovery +3.373, removal +1.019 and minimum
-pulse width +1.065.
+In this run only the 67.03 MHz core fails: the emu domain -8.325 with
+-53,336.764, and every other domain closes.
+`pll_hdmi` is 0.022 ns with 0.000 of TNS. `h2f_user0_clk` is +3.400,
+`FPGA_CLK1_50` +7.205, `FPGA_CLK2_50` +9.791, `pll_audio` +14.324 and
+`FPGA_CLK3_50` +18.641. Hold is positive in every domain (worst +0.238),
+recovery +3.373, removal +1.019 and minimum pulse width +1.065.
 
 `tb_arm9` reports 161 checks with 0 failures and `tb_cpu_clk` 23 with 0. The
 bench is directed, not merely passing: pointing Thumb format 4's `t32b` at
