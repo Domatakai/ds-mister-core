@@ -124,7 +124,7 @@ def fake_quartus(root):
     return path
 
 
-def batch_full(root, quartus_rc):
+def batch_full(root, quartus_rc, bin_path=None):
     """Run build.bat from its first line, with Quartus stubbed out."""
     body = []
     for line in script_lines():
@@ -133,7 +133,9 @@ def batch_full(root, quartus_rc):
         body.append(line)
     path = os.path.join(root, "build_all.bat")
     write(path, os.linesep.join(body + [""]).encode("utf-8"))
-    done = subprocess.run(["cmd", "/c", path, fake_quartus(root)],
+    if bin_path is None:
+        bin_path = fake_quartus(root)
+    done = subprocess.run(["cmd", "/c", path, bin_path],
                           cwd=root, stdin=subprocess.DEVNULL,
                           stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT)
@@ -226,6 +228,13 @@ def batch_cases(new):
           rc == 0 and "SUCCESS" in out
           and "Build stamp: 261108" in out
           and "Deploy to the" in out, out)
+
+    root = new()
+    missing = os.path.join(root, "no-quartus-here")
+    rc, out = batch_full(root, 0, bin_path=missing)
+    check("build.bat fails without quartus_sh.exe",
+          rc == 1 and "quartus_sh.exe not found" in out
+          and "Using:" not in out, out)
 
 
 def main():
