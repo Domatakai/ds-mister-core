@@ -2,5 +2,5 @@
 # writes it instead of the build date, so a rebuild of the same tree
 # produces the same netlist and the same fit. 261108 is the stamp of the
 # clean rebuild the figures in AREA.md describe; update it when the date
-# shown in the core should change.
+# shown in the core should change; tools/bump_build_id.py moves it.
 261108

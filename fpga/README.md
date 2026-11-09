@@ -879,6 +879,11 @@ non-default install location). It defaults to
 `C:\intelFPGA_lite\17.0\quartus\bin64`, runs the same flow, and prints
 where `NDS.rbf` landed and how to copy it to the SD card.
 
+When cutting a bitstream for release, run `python fpga  oolsump_build_id.py`
+first. It moves the pinned build stamp -- today's date unless you pass YYMMDD
+-- so the bitstream you publish and its rebuilds carry the same date and the
+same fit.
+
 First full compile (analysis + fit + ASM + timing) takes roughly
 10–20 min on a modern multicore machine (`NUM_PARALLEL_PROCESSORS ALL`
 is set). A build with the ten macros above fits with

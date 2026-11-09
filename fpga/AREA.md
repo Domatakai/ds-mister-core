@@ -537,11 +537,11 @@ different netlist, priced by the logs at 2,859 ps there against 1,770 ps here:
 one constant is worth 19 LABs and 1,495 fitted registers.
 
 `sys/build_id.txt` now pins the stamp the flow writes -- 261108, the build
-recorded above -- so a rebuild of this tree reproduces its own fit; edit that
-file when the displayed date should move, and a clean checkout confirms it:
-`git archive HEAD` into an empty directory wrote that stamp, fitted at 4,157
-LABs with setup -8.210 ns, and produced a bitstream byte-identical to the one
-above (sha256 `a4adcf373ee886867621bf9a...`).
+recorded above -- so a rebuild of this tree reproduces its own fit;
+`tools/bump_build_id.py` moves it for a release, and a clean checkout confirms
+it: `git archive HEAD` into an empty directory wrote that stamp, fitted at
+4,157 LABs with setup -8.210 ns, and produced a bitstream byte-identical to the
+one above (sha256 `a4adcf373ee886867621bf9a...`).
 
 In that microphone build only the 67.03 MHz core fails: the emu domain -8.325 with
 -53,336.764, and every other domain closes.
