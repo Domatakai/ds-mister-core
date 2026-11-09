@@ -272,6 +272,27 @@ def batch_cases(new):
           and "Checking the build-stamp tool" not in out
           and "SUCCESS" in out, out)
 
+    root = new()
+    binp = fake_quartus(root)
+    rc, out = batch_full(root, 0, argv=[binp, "--record"])
+    check("build.bat records on --record without a prompt",
+          rc == 0 and "recorded NDS.rbf" in out
+          and os.path.exists(sidecar(root)) and "SUCCESS" in out, out)
+
+    root = new()
+    binp = fake_quartus(root)
+    rc, out = batch_full(root, 0, argv=["--record", "--verify", binp])
+    check("build.bat records and verifies on the flags",
+          rc == 0 and "recorded NDS.rbf" in out
+          and "matches NDS.rbf" in out and "SUCCESS" in out, out)
+
+    root = new()
+    binp = fake_quartus(root)
+    rc, out = batch_full(root, 0, argv=[binp, "--verify"])
+    check("build.bat fails when --verify has no record",
+          rc == 1 and "--verify asked for a record" in out
+          and "SUCCESS" not in out, out)
+
 
 def main():
     roots = []

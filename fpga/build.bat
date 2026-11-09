@@ -10,14 +10,18 @@ rem
 rem   build.bat                               -> C:\intelFPGA_lite\17.0\quartus\bin64
 rem   build.bat "D:\other\quartus\bin64"      -> custom location
 rem   build.bat --no-test              -> skip the tool self-test
+rem   build.bat --record --verify      -> record and check without
+rem                                       prompting
 rem ---------------------------------------------------------------------------
 cd /d "%~dp0"
 
-set "QUARTUS_BIN=%~1"
+set "QUARTUS_BIN="
 set "SKIP_TEST="
-if /i "%~1"=="--no-test" set "QUARTUS_BIN=%~2"
-if /i "%~1"=="--no-test" set "SKIP_TEST=1"
-if /i "%~2"=="--no-test" set "SKIP_TEST=1"
+set "RECORD_FLAG="
+set "VERIFY_FLAG="
+call :want_arg %1
+call :want_arg %2
+call :want_arg %3
 if "%QUARTUS_BIN%"=="" set "QUARTUS_BIN=C:\intelFPGA_lite\17.0\quartus\bin64"
 
 if not exist "%QUARTUS_BIN%\quartus_sh.exe" (
@@ -78,14 +82,21 @@ if defined BUILD_STAMP (
   echo Build stamp: none pinned - the build used today's date.
 )
 echo.
+if defined RECORD_FLAG goto :dorecord
 choice /c YN /n /m "Record output_files\NDS.rbf.stamp for this build? [Y/N] "
 if errorlevel 2 goto :checkstamp
+:dorecord
 python "tools\bump_build_id.py" --record
 if errorlevel 9009 echo python was not found - record it later with tools\bump_build_id.py --record
 :checkstamp
 if exist "output_files\NDS.rbf.stamp" goto :verifystamp
+if defined VERIFY_FLAG goto :norecord
 echo No record for this bitstream - nothing to check.
 goto :deploy
+:norecord
+echo ERROR: --verify asked for a record and there is none for this
+echo bitstream - build with --record, or answer Y at the prompt.
+exit /b 1
 :verifystamp
 python "tools\bump_build_id.py" --verify
 if errorlevel 9009 goto :deploy
@@ -102,4 +113,12 @@ echo Deploy to the DE10-Nano SD card ^(adjust the drive letter^):
 echo   copy output_files\NDS.rbf  E:\games\NDS\NDS.rbf
 echo.
 echo Optional BIOS files go to E:\BIOS\ (bios7.bin + bios9.bin).
+exit /b 0
+
+:want_arg
+if "%~1"=="" exit /b 0
+if /i "%~1"=="--no-test" (set "SKIP_TEST=1" & exit /b 0)
+if /i "%~1"=="--record" (set "RECORD_FLAG=1" & exit /b 0)
+if /i "%~1"=="--verify" (set "VERIFY_FLAG=1" & exit /b 0)
+set "QUARTUS_BIN=%~1"
 exit /b 0
