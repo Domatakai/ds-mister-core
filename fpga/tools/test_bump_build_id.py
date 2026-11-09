@@ -291,7 +291,7 @@ def batch_cases(new):
     rc, out = batch_full(root, 0, argv=[binp, "--verify"])
     check("build.bat fails when --verify has no record",
           rc == 1 and "--verify asked for a record" in out
-          and "SUCCESS" not in out, out)
+          and "Deploy to the" not in out, out)
 
 
 def main():
