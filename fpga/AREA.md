@@ -290,7 +290,7 @@ routability.
 |---|---|---|---|---|---|---|
 | before | -19.413 (emu) | -96,426.996 | -53.667 (audio) | 4,177 | 88.8/87.6/93.1 | 01:50:47 |
 | after (t11) | -8.339 (emu) | -45,936.820 | +0.203 (hdmi) | 4,160 | 84.2/83.1/91.3 | 00:45:25 |
-| current | -8.403 (emu) | -46,613.591 | +0.256 (hdmi) | 4,126 | 81.7/79.1/89.9 | 00:53:48 |
+| current | -9.006 (emu) | -52,072.394 | +0.245 (emu) | 4,122 | 88.5/87.7/94.2 | 01:32:33 |
 
 Routing fell from 01:20:34 to 00:21:25 because the router no longer tries to
 make unrelated clocks meet, the assembler still reports 0 errors and 0 warnings
@@ -477,32 +477,38 @@ phase, critical warning `188026` says the design did not route, and `11802`
 ends the fit with 2 errors and 22 warnings. No `NDS.rbf` and no timing report
 come out of that configuration.
 
-The fitter's own remedy costs no mapped logic: `quartus_map`'s output is
-identical (38,680 ALMs, 56,002 ALUTs, 28,049 registers) and only the placement
-effort changes. At `PLACEMENT_EFFORT_MULTIPLIER 8.0` --
-seed 2, the same ten macros, the same aggressive routability -- the same
-database fits. Placement takes 14:51 and routing 7:21, the fit ends at 00:53:48
-with 0 errors and 18 warnings, the assembler adds 0 errors and 0 warnings,
-TimeQuest 0 errors, and the build uses 4,126 of 4,191 LABs (65 spare), 38,707
-ALMs, 32,290 registers, peak interconnect 81.7/79.1/89.9, and
-writes a 3,761,748-byte `NDS.rbf`.
+The fitter's own remedy costs no mapped logic: `quartus_map` reports 55,919
+ALUTs, 38,546 ALMs and 28,056 registers for this database, and only the
+placement effort changes. At `PLACEMENT_EFFORT_MULTIPLIER 8.0` -- seed 2, the
+same ten macros, the same aggressive routability -- it fits. Placement takes
+15:41 and routing 41:21, the fit ends at 01:32:33 with 0 errors and 18
+warnings, the assembler adds 0 errors and 0 warnings, TimeQuest 0 errors, and
+the build uses 4,122 of 4,191 LABs (69 spare), 38,610 ALMs, 32,592 registers,
+peak interconnect 88.5/87.7/94.2, and writes a 3,745,296-byte `NDS.rbf`.
 
 | ten-macro build | LABs | spare | setup (`emu`) | setup TNS | hold | rbf |
 |---|---|---|---|---|---|---|
 | 2026-11-06, effort 4.0 (the `current` row above) | 4,143 | 48 | -8.313 | -47,647.790 | +0.250 | 3,718,564 |
 | 2026-11-07, effort 8.0 | 4,126 | 65 | -8.403 | -46,613.591 | +0.256 | 3,761,748 |
+| 2026-11-08, effort 8.0, rumble pak | 4,122 | 69 | -9.006 | -52,072.394 | +0.245 | 3,745,296 |
 
 That is 0.090 ns of setup for a build that exists, and it is the only change:
-`NDS.qsf` now asks for 8.0 with the reason beside
-it. The margin it buys is 65 LABs, the same order as the 48 the previous build
-had, so the next feature still has to find its own area. A different seed was
-not tried -- the fitter suggests one, but the effort alone was enough.
+`NDS.qsf` asks for 8.0 with the reason beside it. The margin it buys is 65
+LABs, the same order as the 48 the previous build had, so the next feature
+still has to find its own area. A different seed was not tried -- the fitter
+suggests one, but the effort alone was enough.
 
-Only setup fails, as before: `pll_hdmi` is -0.146 ns with -0.310 of TNS.
-Inside the 67.03 MHz core: the emu domain -8.403 with -46,613.591.
-`h2f_user0_clk` is +2.951, `FPGA_CLK1_50` +5.929, `FPGA_CLK2_50` +10.116,
-`pll_audio` +14.615 and `FPGA_CLK3_50` +18.804. Hold is positive in every
-domain (worst +0.256), recovery +3.262, removal +1.000 and minimum
+The rumble pak lands without growing the netlist: `quartus_map` gives 55,919
+ALUTs against 56,002 and 28,056 registers against 28,049. The fit still pays
+0.603 ns of setup and 5,459 of TNS for it, at 94.2 against 89.9 on the H
+channel, and it uses 4 LABs fewer: at 98% full it is repacking, not size, that
+moves the margin.
+
+Only setup fails, as before: `pll_hdmi` is -0.143 ns with -1.253 of TNS.
+Inside the 67.03 MHz core: the emu domain -9.006 with -52,072.394.
+`h2f_user0_clk` is +3.053, `FPGA_CLK1_50` +7.436, `FPGA_CLK2_50` +12.104,
+`pll_audio` +14.199 and `FPGA_CLK3_50` +18.869. Hold is positive in every
+domain (worst +0.245), recovery +3.451, removal +0.944 and minimum
 pulse width +1.065.
 
 `tb_arm9` reports 161 checks with 0 failures and `tb_cpu_clk` 23 with 0. The
@@ -527,9 +533,9 @@ gives 38,416 ALMs and 55,637 ALUTs against 38,680 and 56,002, so 365 of the 599
 come back, with 28,049 registers (still unchanged) and `arm9_core` at 17,795
 against 18,012.
 
-Fitted at seed 2 and effort 8.0 it routes with 0 errors, and it is a worse
-build than the one the tree ships: 4,158 of 4,191 LABs (33 spare, against 65),
-38,520 ALMs, 33,548 registers (up 1,258 from 32,290), peak interconnect
+Fitted at seed 2 and effort 8.0 it routes with 0 errors, and against the
+2026-11-07 build it was a worse one: 4,158 of 4,191 LABs (33 spare, against
+65), 38,520 ALMs, 33,548 registers (up 1,258 from 32,290), peak interconnect
 89.1/87.8/93.2 (against 81.7/79.1/89.9), and setup short by 8.574 ns with
 -49,692.260 of TNS (against 8.403 and -46,613.591). Routing alone took 52:29 of
 the 01:40:26 fit -- the router logged `16684` on the way -- and the fitter
@@ -543,10 +549,14 @@ ns, TNS -56,577.958, and `pll_hdmi` misses by 0.224 ns (-0.443 of TNS), both
 worse than seed 2.
 
 So the 365 ALUTs of mapped logic do not survive packing at either seed: seed 2
-spends 32 more LABs than the shipped build and 3,079 ns of TNS, seed 3 spends
-18 more LABs and 9,964 ns of TNS. The change is reverted and the 2026-11-07
-build stays the one to quote; the measurement is kept because it says where the
-decode cost lives.
+spends 32 more LABs than the 2026-11-07 build and 3,079 ns of TNS, seed 3
+spends 18 more LABs and 9,964 ns of TNS. The change is reverted and the
+2026-11-08 build stays the one to quote; the measurement is kept because it
+says where the decode cost lives.
+
+Against the rumble build the comparison is no longer one-sided: 4,158 LABs
+against 4,122 and 33,548 registers against 32,592, but setup -8.574 against
+-9.006 and TNS -49,692.260 against -52,072.394. The revert rests on area.
 
 ### Why micro-optimising one path does not close it (2026-11-01)
 
