@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Move the pinned build stamp, and record it against a built bitstream.
+"""Move the pinned build stamp, and record or check it against a bitstream.
 
 `sys/build_id.tcl` writes BUILD_DATE from `sys/build_id.txt` when that file
 carries a stamp, so rebuilds of the same tree produce the same netlist. The
@@ -12,9 +12,14 @@ After the build, record which stamp the bitstream carries:
 
   python fpga/tools/bump_build_id.py --record
 
-That writes output_files/NDS.rbf.stamp with the stamp, its size and SHA-256,
-and refuses when the bitstream is older than the stamp or when build_id.v
-disagrees with it. Comments in the stamp file are kept.
+That writes output_files/NDS.rbf.stamp with the stamp, its size and SHA-256.
+It refuses when the bitstream is older than the stamp or when build_id.v
+disagrees with it. Before copying a bitstream to a card, check a record
+that is already there against the file and the current pin:
+
+  python fpga/tools/bump_build_id.py --verify
+
+Comments in the stamp file are kept.
 """
 
 import argparse
@@ -34,6 +39,12 @@ def project_dir():
 
 def stamp_file():
     return os.path.join(project_dir(), "sys", "build_id.txt")
+
+
+def bitstream_path(rbf):
+    if not os.path.isabs(rbf):
+        rbf = os.path.join(project_dir(), rbf)
+    return rbf
 
 
 def read_stamp():
@@ -67,9 +78,20 @@ def write_stamp(stamp):
     return 0
 
 
+def read_record(side):
+    fields = {}
+    if not os.path.exists(side):
+        return fields
+    text = io.open(side, "rb").read().decode("utf-8", "replace")
+    for line in text.replace("\r\n", "\n").split("\n"):
+        if ":" in line:
+            key, value = line.split(":", 1)
+            fields[key.strip()] = value.strip()
+    return fields
+
+
 def record(rbf, stamp):
-    if not os.path.isabs(rbf):
-        rbf = os.path.join(project_dir(), rbf)
+    rbf = bitstream_path(rbf)
     if not os.path.exists(rbf):
         print("no bitstream at %s - build it first" % rbf)
         return 1
@@ -86,7 +108,6 @@ def record(rbf, stamp):
                   % os.path.basename(rbf))
             return 1
     data = io.open(rbf, "rb").read()
-    side = rbf + ".stamp"
     lines = [
         "build stamp: %s" % stamp,
         "bitstream: %s" % os.path.basename(rbf),
@@ -94,11 +115,47 @@ def record(rbf, stamp):
         "sha256: %s" % hashlib.sha256(data).hexdigest(),
         "recorded: %s" % time.strftime("%Y-%m-%d %H:%M:%S"),
     ]
-    io.open(side, "wb").write(("\r\n".join(lines) + "\r\n").encode("utf-8"))
+    payload = "\r\n".join(lines) + "\r\n"
+    io.open(rbf + ".stamp", "wb").write(payload.encode("utf-8"))
     print("recorded %s -> %s"
-          % (os.path.basename(rbf), os.path.basename(side)))
+          % (os.path.basename(rbf), os.path.basename(rbf) + ".stamp"))
     for line in lines:
         print("  " + line)
+    return 0
+
+
+def verify(rbf, stamp):
+    rbf = bitstream_path(rbf)
+    side = rbf + ".stamp"
+    name = os.path.basename(side)
+    if not os.path.exists(side):
+        print("no record at %s - run --record after a build" % side)
+        return 1
+    if not os.path.exists(rbf):
+        print("no bitstream at %s" % rbf)
+        return 1
+    fields = read_record(side)
+    data = io.open(rbf, "rb").read()
+    digest = hashlib.sha256(data).hexdigest()
+    problems = []
+    if fields.get("build stamp") != stamp:
+        problems.append("record holds stamp %s, the pin is %s"
+                        % (fields.get("build stamp"), stamp))
+    if fields.get("bytes") != str(len(data)):
+        problems.append("record holds %s bytes, the bitstream has %d"
+                        % (fields.get("bytes"), len(data)))
+    if fields.get("sha256") != digest:
+        problems.append("record holds sha256 %s, the bitstream hashes %s"
+                        % ((fields.get("sha256") or "none")[:12],
+                           digest[:12]))
+    if problems:
+        for problem in problems:
+            print(problem)
+        print("%s does not describe %s"
+              % (name, os.path.basename(rbf)))
+        return 1
+    print("%s matches %s: stamp %s, %d bytes"
+          % (name, os.path.basename(rbf), stamp, len(data)))
     return 0
 
 
@@ -108,32 +165,34 @@ def main(argv=None):
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("stamp", nargs="?",
                         help="six digits, YYMMDD (default: today)")
-    parser.add_argument("--record", nargs="?", const="output_files/NDS.rbf",
-                        metavar="RBF",
-                        help="record the stamp against a built bitstream")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--record", nargs="?", const="output_files/NDS.rbf",
+                      metavar="RBF",
+                      help="record the stamp against a built bitstream")
+    mode.add_argument("--verify", nargs="?", const="output_files/NDS.rbf",
+                      metavar="RBF",
+                      help="check an existing record against the bitstream")
     args = parser.parse_args(argv)
 
     if args.stamp is not None:
         if not STAMP.match(args.stamp):
             parser.error("stamp must be six digits, YYMMDD: %r" % args.stamp)
-        code, stamp = write_stamp(args.stamp), args.stamp
-    elif args.record:
-        stamp = read_stamp()
-        if stamp is None:
-            print("no pinned stamp in %s" % stamp_file())
-            return 2
-        code = 0
-    else:
+        return write_stamp(args.stamp)
+
+    if not (args.record or args.verify):
         today = time.strftime("%y%m%d")
-        code, stamp = write_stamp(today), today
+        code = write_stamp(today)
         if code == 0:
             print("rebuild so the bitstream carries it")
-
-    if code:
         return code
+
+    stamp = read_stamp()
+    if stamp is None:
+        print("no pinned stamp in %s" % stamp_file())
+        return 2
     if args.record:
         return record(args.record, stamp)
-    return 0
+    return verify(args.verify, stamp)
 
 
 if __name__ == "__main__":

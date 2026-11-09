@@ -885,7 +885,9 @@ first. It moves the pinned build stamp -- today's date unless you pass YYMMDD
 same fit. After the build, `python fpga/tools/bump_build_id.py --record` writes
 `output_files/NDS.rbf.stamp` beside the bitstream with the stamp, its size and
 SHA-256; it refuses when the bitstream is older than the stamp or when
-`build_id.v` disagrees with it.
+`build_id.v` disagrees with it. `--verify` re-reads that record against the
+bitstream and the current pin, so a record left behind by an earlier build
+cannot vouch for the file you are about to copy.
 
 First full compile (analysis + fit + ASM + timing) takes roughly
 10–20 min on a modern multicore machine (`NUM_PARALLEL_PROCESSORS ALL`
