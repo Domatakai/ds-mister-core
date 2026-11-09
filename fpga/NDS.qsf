@@ -79,6 +79,17 @@ set_global_assignment -name PLACEMENT_EFFORT_MULTIPLIER 8.0
 set_global_assignment -name AUTO_RAM_RECOGNITION OFF -entity arm9_core
 #set_global_assignment -name VERILOG_MACRO "MISTER_FB=1"
 #set_global_assignment -name VERILOG_MACRO "MISTER_DEBUG_NOHDMI=1"
+# The ten-macro build the AREA.md and README figures describe.
+set_global_assignment -name VERILOG_MACRO "NDS_NO_3D=1"
+set_global_assignment -name VERILOG_MACRO "NDS_NO_CHEAT=1"
+set_global_assignment -name VERILOG_MACRO "NDS_NO_SPU=1"
+set_global_assignment -name VERILOG_MACRO "NDS_ONE_SCREEN=1"
+set_global_assignment -name VERILOG_MACRO "NDS_NO_SWI_HLE=1"
+set_global_assignment -name VERILOG_MACRO "MISTER_DISABLE_YC=1"
+set_global_assignment -name VERILOG_MACRO "MISTER_DISABLE_ALSA=1"
+set_global_assignment -name VERILOG_MACRO "MISTER_DISABLE_SHADOWMASK=1"
+set_global_assignment -name VERILOG_MACRO "MISTER_DISABLE_SCANLINES=1"
+set_global_assignment -name VERILOG_MACRO "MISTER_DISABLE_OSD_VGA=1"
 source sys/sys.tcl
 source sys/sys_analog.tcl
 source files.qip
