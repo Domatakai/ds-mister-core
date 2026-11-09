@@ -59,9 +59,23 @@ if defined BUILD_STAMP (
 )
 echo.
 choice /c YN /n /m "Record output_files\NDS.rbf.stamp for this build? [Y/N] "
-if errorlevel 2 goto :deploy
+if errorlevel 2 goto :checkstamp
 python "tools\bump_build_id.py" --record
 if errorlevel 9009 echo python was not found - record it later with tools\bump_build_id.py --record
+:checkstamp
+if exist "output_files\NDS.rbf.stamp" goto :verifystamp
+echo No record for this bitstream - nothing to check.
+goto :deploy
+:verifystamp
+python "tools\bump_build_id.py" --verify
+if errorlevel 9009 goto :deploy
+if errorlevel 1 goto :stalestamp
+goto :deploy
+:stalestamp
+echo.
+echo ERROR: the recorded stamp does not match this bitstream or the pin.
+echo Rebuild, or record the current bitstream with --record.
+exit /b 1
 :deploy
 echo.
 echo Deploy to the DE10-Nano SD card ^(adjust the drive letter^):
