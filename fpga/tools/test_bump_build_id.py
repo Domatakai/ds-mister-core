@@ -568,6 +568,34 @@ def main():
               rc == 2 and "must not be negative" in out, out)
 
         root = new()
+        run(root, "--record")
+        age_record(root, 10)
+        rc, out = run(root, "--verify", "--max-age", "5",
+                      "output_files/NDS.rbf")
+        check("verify takes the path after --max-age",
+              rc == 1 and "older than --max-age 5" in out, out)
+
+        root = new()
+        run(root, "--record")
+        os.utime(sidecar(root), (1000, 1000))
+        rc, out = run(root, "--verify", "--strict", "output_files/NDS.rbf")
+        check("verify takes the path after --strict",
+              rc == 1 and "older than sys/build_id.txt" in out, out)
+
+        root = new()
+        run(root, "--record")
+        rc, out = run(root, "--verify", "--max-age", "1", "--strict",
+                      "output_files/NDS.rbf")
+        check("verify takes the path last",
+              rc == 0 and "matches NDS.rbf" in out, out)
+
+        root = new()
+        run(root, "--record")
+        rc, out = run(root, "--verify", "--max-age", "5", "261108")
+        check("a mode rejects a stamp where a bitstream goes",
+              rc == 2 and "a mode takes a bitstream" in out, out)
+
+        root = new()
         rc, out = run(root, "--verify")
         check("verify reports a missing record",
               rc == 1 and "no record at" in out, out)

@@ -34,6 +34,10 @@ days, so a stale bitstream cannot pass a release:
 
   python fpga/tools/bump_build_id.py --verify --max-age 7
 
+The bitstream may follow the options rather than sit right after the flag:
+
+  python fpga/tools/bump_build_id.py --verify --max-age 7 output_files/NDS.rbf
+
 Comments in the stamp file are kept.
 """
 
@@ -251,9 +255,24 @@ def main(argv=None):
         return show_age(args.age)
 
     if args.stamp is not None:
-        if not STAMP.match(args.stamp):
-            parser.error("stamp must be six digits, YYMMDD: %r" % args.stamp)
-        return write_stamp(args.stamp)
+        chosen = args.record or args.verify or args.age
+        if chosen and not STAMP.match(args.stamp):
+            # The bitstream is allowed after the options, not just directly
+            # after the flag: --verify --max-age 7 path/to/NDS.rbf
+            if args.record:
+                args.record = args.stamp
+            elif args.verify:
+                args.verify = args.stamp
+            else:
+                args.age = args.stamp
+        elif chosen:
+            parser.error("a mode takes a bitstream, not a stamp: %r"
+                         % args.stamp)
+        else:
+            if not STAMP.match(args.stamp):
+                parser.error("stamp must be six digits, YYMMDD: %r"
+                             % args.stamp)
+            return write_stamp(args.stamp)
 
     if not (args.record or args.verify):
         today = time.strftime("%y%m%d")

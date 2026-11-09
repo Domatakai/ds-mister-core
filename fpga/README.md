@@ -915,7 +915,8 @@ SHA-256 and how long ago it was recorded, below the deploy steps. `--verify`
 also warns when the record predates the pin file. `--strict` makes that a
 failure instead, which is what an unattended release wants. `--max-age DAYS`
 fails the check when the record is older than that many days, and `build.bat
---max-age DAYS` forwards it.
+--max-age DAYS` forwards it. A bitstream given after the options is understood
+too, as in `--verify --max-age 30 output_files/NDS.rbf`.
 
 First full compile (analysis + fit + ASM + timing) takes roughly
 10–20 min on a modern multicore machine (`NUM_PARALLEL_PROCESSORS ALL`
