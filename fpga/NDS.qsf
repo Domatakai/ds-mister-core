@@ -79,6 +79,10 @@ set_global_assignment -name PLACEMENT_EFFORT_MULTIPLIER 8.0
 set_global_assignment -name AUTO_RAM_RECOGNITION OFF -entity arm9_core
 #set_global_assignment -name VERILOG_MACRO "MISTER_FB=1"
 #set_global_assignment -name VERILOG_MACRO "MISTER_DEBUG_NOHDMI=1"
+# build_id.v is generated (and gitignored), so a clean checkout has no
+# copy: make the flow create it before analysis.
+set_global_assignment -name PRE_FLOW_SCRIPT_FILE "quartus_sh:sys/build_id.tcl"
+
 # The ten-macro build the AREA.md and README figures describe.
 set_global_assignment -name VERILOG_MACRO "NDS_NO_3D=1"
 set_global_assignment -name VERILOG_MACRO "NDS_NO_CHEAT=1"
