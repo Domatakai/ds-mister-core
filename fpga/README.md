@@ -898,8 +898,9 @@ Release checklist:
 3. Press `Y` at its record prompt (or run `--record` later) to
    write `output_files/NDS.rbf.stamp`; the build then checks it
    and fails if it no longer matches the bitstream or the pin.
-4. `python fpga/tools/bump_build_id.py --verify` -- confirm the
-   record matches the bitstream and the pin before copying the rbf.
+4. `python fpga/tools/bump_build_id.py --verify --max-age 30` --
+   confirm the record matches the bitstream and the pin, and that
+   it was written within the last 30 days, before copying the rbf.
 5. `build.bat` runs the tool self-test first; its cases cover the
    stamp tool and the build.bat branches, and all must pass.
 
