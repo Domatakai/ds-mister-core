@@ -22,7 +22,8 @@ STAMP = re.compile(r"^\d{6}$")
 
 def stamp_file():
     here = os.path.dirname(os.path.abspath(__file__))
-    return os.path.normpath(os.path.join(here, os.pardir, "sys", "build_id.txt"))
+    return os.path.normpath(
+        os.path.join(here, os.pardir, "sys", "build_id.txt"))
 
 
 def main(argv=None):
