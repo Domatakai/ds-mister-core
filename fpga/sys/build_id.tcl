@@ -11,8 +11,7 @@ proc generateBuildID_Verilog {} {
 	set pinned ""
 	if { [file exists "sys/build_id.txt"] } {
 		set pinFile [open "sys/build_id.txt" "r"]
-		foreach line [split [read $pinFile] "
-"] {
+		foreach line [split [read $pinFile] "\n"] {
 			set line [string trim $line]
 			if { [string equal "" $line] || [string index $line 0] eq "#" } {
 				continue
