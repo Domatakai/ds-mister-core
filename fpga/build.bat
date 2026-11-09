@@ -113,6 +113,11 @@ echo Deploy to the DE10-Nano SD card ^(adjust the drive letter^):
 echo   copy output_files\NDS.rbf  E:\games\NDS\NDS.rbf
 echo.
 echo Optional BIOS files go to E:\BIOS\ (bios7.bin + bios9.bin).
+echo.
+if not exist "output_files\NDS.rbf.stamp" goto :finished
+echo Record for output_files\NDS.rbf:
+findstr /b /c:"build stamp:" /c:"sha256:" "output_files\NDS.rbf.stamp"
+:finished
 exit /b 0
 
 :want_arg

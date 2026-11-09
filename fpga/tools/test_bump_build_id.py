@@ -293,6 +293,25 @@ def batch_cases(new):
           rc == 1 and "--verify asked for a record" in out
           and "Deploy to the" not in out, out)
 
+    root = new()
+    binp = fake_quartus(root)
+    rc, out = batch_full(root, 0, argv=[binp, "--record"])
+    block = out[out.find("Deploy to the"):]
+    check("build.bat prints the record after the deploy block",
+          rc == 0 and "Record for output_files" in block
+          and "sha256:" in block and "build stamp: 261108" in block,
+          out)
+
+    root = new()
+    move_pin(root, "261109")
+    binp = fake_quartus(root)
+    rc, out = batch_full(root, 0, argv=["--record", "--verify", binp])
+    check("release chain bumps, builds, records, verifies",
+          rc == 0 and "Build stamp: 261109" in out
+          and "recorded NDS.rbf" in out
+          and "stamp 261109" in out
+          and "build stamp: 261109" in out, out)
+
 
 def main():
     roots = []
