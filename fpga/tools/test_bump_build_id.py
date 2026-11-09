@@ -337,6 +337,14 @@ def batch_cases(new):
     check("build.bat takes --strict before --verify",
           rc == 1 and "older than sys/build_id.txt" in out, out)
 
+    root = new()
+    run(root, "--record")
+    rc, out = batch(root, 2)
+    block = out[out.find("Deploy to the"):]
+    check("build.bat prints the record age without flags",
+          rc == 0 and "Record for output_files" in block
+          and "less than a minute ago" in block, out)
+
 
 def main():
     roots = []
@@ -419,6 +427,44 @@ def main():
         rc, out = run(root, "--strict")
         check("--strict needs --verify",
               rc == 2 and "--strict only applies" in out, out)
+
+        root = new()
+        run(root, "--record")
+        rc, out = run(root, "--age")
+        check("--age reads a fresh record",
+              rc == 0 and "recorded:" in out
+              and "less than a minute ago" in out, out)
+
+        root = new()
+        when = time.strftime("%Y-%m-%d %H:%M:%S",
+                             time.localtime(time.time() - 3 * 3600 - 600))
+        write(sidecar(root),
+              ("build stamp: 261108" + chr(13) + chr(10)
+              + "recorded: " + when + chr(13) + chr(10)).encode("utf-8"))
+        rc, out = run(root, "--age")
+        check("--age counts hours", rc == 0 and "3 hours ago" in out, out)
+
+        root = new()
+        text = "build stamp: 261108" + chr(13) + chr(10)
+        write(sidecar(root), text.encode("utf-8"))
+        os.utime(sidecar(root), (time.time() - 2 * 86400,) * 2)
+        rc, out = run(root, "--age")
+        check("--age falls back to the file time",
+              rc == 0 and "2 days ago" in out, out)
+
+        root = new()
+        when = time.strftime("%Y-%m-%d %H:%M:%S",
+                             time.localtime(time.time() + 3600))
+        write(sidecar(root),
+              ("build stamp: 261108" + chr(13) + chr(10)
+              + "recorded: " + when + chr(13) + chr(10)).encode("utf-8"))
+        rc, out = run(root, "--age")
+        check("--age reports a future timestamp",
+              rc == 0 and "in the future" in out, out)
+
+        root = new()
+        rc, out = run(root, "--age")
+        check("--age needs a record", rc == 1 and "no record at" in out, out)
 
         root = new()
         rc, out = run(root, "--verify")

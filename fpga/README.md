@@ -909,10 +909,10 @@ check, its prompt, its compile failure and its missing rbf - against throwaway
 copies of this layout, needs no Quartus, and exits nonzero if any case fails.
 `build.bat --no-test` skips that check for a quick local build. `build.bat
 --record --verify` writes and checks the record without prompting, so a release
-can run unattended. A build that has a record closes with its stamp and
-SHA-256, below the deploy steps. `--verify` also warns when the record predates
-the pin file. `--strict` makes that a failure instead, which is what an
-unattended release wants.
+can run unattended. A build that has a record closes with its stamp, its
+SHA-256 and how long ago it was recorded, below the deploy steps. `--verify`
+also warns when the record predates the pin file. `--strict` makes that a
+failure instead, which is what an unattended release wants.
 
 First full compile (analysis + fit + ASM + timing) takes roughly
 10–20 min on a modern multicore machine (`NUM_PARALLEL_PROCESSORS ALL`

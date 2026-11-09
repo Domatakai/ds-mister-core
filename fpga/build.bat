@@ -14,6 +14,8 @@ rem   build.bat --record --verify      -> record and check without
 rem                                       prompting
 rem   build.bat --strict              -> fail when the record predates
 rem                                       the pin
+rem The summary below the deploy steps prints the record's stamp, its
+rem SHA-256 and how long ago it was written.
 rem ---------------------------------------------------------------------------
 cd /d "%~dp0"
 
@@ -126,6 +128,8 @@ echo.
 if not exist "output_files\NDS.rbf.stamp" goto :finished
 echo Record for output_files\NDS.rbf:
 findstr /b /c:"build stamp:" /c:"sha256:" "output_files\NDS.rbf.stamp"
+python "tools\bump_build_id.py" --age
+if errorlevel 9009 findstr /b /c:"recorded:" "output_files\NDS.rbf.stamp"
 :finished
 exit /b 0
 

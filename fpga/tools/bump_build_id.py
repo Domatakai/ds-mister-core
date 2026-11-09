@@ -24,6 +24,11 @@ rather than a warning:
 
   python fpga/tools/bump_build_id.py --verify --strict
 
+The build summary prints the record's own timestamp and how long ago it was
+written; the same line is available on its own:
+
+  python fpga/tools/bump_build_id.py --age
+
 Comments in the stamp file are kept.
 """
 
@@ -173,6 +178,32 @@ def verify(rbf, stamp, strict=False):
     return 0
 
 
+def age_text(seconds):
+    if seconds < 0:
+        return "timestamp is in the future"
+    for size, name in ((86400, "day"), (3600, "hour"), (60, "minute")):
+        if seconds >= size:
+            count = seconds // size
+            return "%d %s%s ago" % (count, name, "" if count == 1 else "s")
+    return "less than a minute ago"
+
+
+def show_age(rbf):
+    side = bitstream_path(rbf) + ".stamp"
+    if not os.path.exists(side):
+        print("no record at %s" % side)
+        return 1
+    when = read_record(side).get("recorded") or ""
+    try:
+        written = time.mktime(time.strptime(when, "%Y-%m-%d %H:%M:%S"))
+    except ValueError:
+        written = os.path.getmtime(side)
+        when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(written))
+    seconds = int(time.time() - written)
+    print("recorded: %s (%s)" % (when, age_text(seconds)))
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -186,11 +217,16 @@ def main(argv=None):
     mode.add_argument("--verify", nargs="?", const="output_files/NDS.rbf",
                       metavar="RBF",
                       help="check an existing record against the bitstream")
+    mode.add_argument("--age", nargs="?", const="output_files/NDS.rbf",
+                      metavar="RBF",
+                      help="say how long ago the record was written")
     parser.add_argument("--strict", action="store_true",
                         help="fail when the record predates the pin")
     args = parser.parse_args(argv)
     if args.strict and not args.verify:
         parser.error("--strict only applies to --verify")
+    if args.age:
+        return show_age(args.age)
 
     if args.stamp is not None:
         if not STAMP.match(args.stamp):
