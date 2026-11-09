@@ -882,10 +882,10 @@ where `NDS.rbf` landed and how to copy it to the SD card.
 First full compile (analysis + fit + ASM + timing) takes roughly
 10–20 min on a modern multicore machine (`NUM_PARALLEL_PROCESSORS ALL`
 is set). A build with the ten macros above fits with
-`PLACEMENT_EFFORT_MULTIPLIER 8.0` (seed 2, as committed): **4,122 of
-4,191 LABs**, a 3,745,296-byte `NDS.rbf`, 18 fitter warnings, 0 errors
+`PLACEMENT_EFFORT_MULTIPLIER 8.0` (seed 2, as committed): **4,138 of
+4,191 LABs**, a 3,783,032-byte `NDS.rbf`, 18 fitter warnings, 0 errors
 from the fitter and the assembler, and setup short only on the
-67.03 MHz `emu` domain (-9.006 ns). At the 4.0 effort the tree used
+67.03 MHz `emu` domain (-8.325 ns). At the 4.0 effort the tree used
 before the ARM9 decode fixes it places but abandons routing (`16618`,
 `188026`, `11802`, in two runs); those fixes cost 490 ALUTs inside
 `arm9_core` and 599 in the design, both measured in `AREA.md`. Without
