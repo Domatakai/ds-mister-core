@@ -474,8 +474,11 @@ costs 490 of the 604 ALUTs the four-port read change saved; against the build
 before the ports the core sits at 18,012 against 18,126. The register count
 does not move at all (2,471 in the entity, 28,049 in the design), which is what
 a decode fix should look like: no state was added, so the extra logic is the
-terms the old predicates had folded away. The 127 mapper warnings are the same
-23 messages in the same counts as before the fixes, and the map has 0 errors.
+terms the old predicates had folded away.
+The 127 mapper warnings are 17 distinct message ids, and the map has 0 errors.
+The fixes add none: the commits either side of them, `a36480b` and `291b41f`,
+both report 54 warnings from the same 16 ids in the same counts, on the
+pre-cut design rather than this table's.
 
 Fitted at `PLACEMENT_EFFORT_MULTIPLIER 4.0`, the same ten macros no longer
 close. Two runs of `quartus_fit` on the same mapped database (38:47 and 46:19)
