@@ -27,12 +27,13 @@ far it has come.
 
 41,910 ALMs each give two combinational nodes and two registers, so the LUT and
 register limits are the same 83,820. The node count is now *under* that limit —
-82,280, 1,540 spare — so the mapper's `170011` check passes and the fitter reaches
-placement. What it runs out of there is LABs: 57,207 ALMs is 5,721 LABs' worth
-against the device's 4,191, and the last full compile of this configuration, made
-before the ARM9 read-port and decode changes, had its fitter count 5,883 after
-placement. A LAB holds ten ALMs, so those are the same statement, and the gap at
-the mapper's count is 15,297 ALMs — 27% of the design.
+82,280, 1,540 spare — so the mapper's `170011` check passes and the fitter
+reaches placement. What it runs out of there is LABs: 57,207 ALMs is 5,721
+LABs' worth against the device's 4,191, and the last full compile of this
+configuration, made before the ARM9 read-port and decode changes, had its
+fitter count 5,883 after placement. A LAB holds ten ALMs, so those are the same
+statement, and the gap at the mapper's count is 15,297 ALMs — 27% of the
+design.
 
 Those mapper rows were re-measured on 2026-11-07 with no macros: 57,207 ALMs,
 82,280 ALUTs, 53,431 registers, 1,877,683 memory bits and 143 pins. The numbers
@@ -47,8 +48,8 @@ Error (170012): Fitter requires 5883 LABs to implement the design, but the devic
 Error (11802): Can't fit design in device.
 ```
 
-That is 26:26 into the flow and it comes after placement, so the number in it is
-the fitter's own post-placement count, not a pre-flight estimate. The timing
+That is 26:26 into the flow and it comes after placement, so the number in it
+is the fitter's own post-placement count, not a pre-flight estimate. The timing
 analyzer still never runs: there is no Fmax for this build, only the mapper's
 numbers above.
 
