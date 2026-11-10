@@ -9,7 +9,7 @@ rem location; pass a different bin64 directory as the first argument if needed:
 rem
 rem   build.bat                               -> C:\intelFPGA_lite\17.0\quartus\bin64
 rem   build.bat "D:\other\quartus\bin64"      -> custom location
-rem   build.bat --no-test              -> skip the tool self-test
+rem   build.bat --no-test              -> skip the self-tests
 rem   build.bat --record --verify      -> record and check without
 rem                                       prompting
 rem   build.bat --strict              -> fail when the record predates
@@ -72,19 +72,27 @@ if defined BUILD_STAMP (
   echo Build stamp: none pinned - the flow uses today's date.
 )
 echo.
-if defined SKIP_TEST echo Skipping the tool self-test on request.
+if defined SKIP_TEST echo Skipping the self-tests on request.
 if defined SKIP_TEST goto :testdone
 echo Checking the build-stamp tool...
 python "tools\test_bump_build_id.py"
 if errorlevel 9009 goto :notest
 if errorlevel 1 goto :testfailed
+echo Checking the documents...
+python "tools\check_docs.py"
+if errorlevel 1 goto :docfailed
 goto :testdone
 :notest
-echo python was not found - skipping the tool self-test.
+echo python was not found - skipping the self-tests.
 goto :testdone
 :testfailed
 echo.
 echo ERROR: the build-stamp self-test failed; fix it before building.
+exit /b 1
+:docfailed
+echo.
+echo ERROR: the documents failed tools\check_docs.py;
+echo fix them before building.
 exit /b 1
 :testdone
 echo Compiling NDS - first full compile takes roughly 10-20 minutes...

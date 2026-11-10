@@ -24,6 +24,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOL = os.path.join(HERE, "bump_build_id.py")
+DOCS_TOOL = os.path.join(HERE, "check_docs.py")
 BUILD_BAT = os.path.join(HERE, os.pardir, "build.bat")
 RBF = bytes(range(256))
 
@@ -55,6 +56,10 @@ def tree(stamp="261108", build_date="261108"):
     for name in ("tools", "sys", "output_files"):
         os.makedirs(os.path.join(root, name))
     shutil.copy2(TOOL, os.path.join(root, "tools", "bump_build_id.py"))
+    shutil.copy2(DOCS_TOOL, os.path.join(root, "tools",
+                            "check_docs.py"))
+    write(os.path.join(root, "README.md"),
+          b"A clean document." + bytes([10]))
     set_pin(root, stamp)
     write(os.path.join(root, "build_id.v"),
           ('`define BUILD_DATE "%s"\n' % build_date).encode("utf-8"))
@@ -137,7 +142,7 @@ def fake_quartus(root):
 
 
 def batch_full(root, quartus_rc, argv=None,
-               selftest_rc=0, selftest_python=None):
+               selftest_rc=0, selftest_python=None, docs_rc=None):
     """Run build.bat from its first line, with Quartus stubbed out."""
     body = []
     for line in script_lines():
@@ -148,6 +153,9 @@ def batch_full(root, quartus_rc, argv=None,
                 line = selftest_python + line[6:]
             else:
                 line = "cmd /c exit %d" % selftest_rc
+        elif (docs_rc is not None and "check_docs.py" in line
+              and line.lstrip().startswith("python")):
+            line = "cmd /c exit %d" % docs_rc
         elif line.startswith('python "tools'):
             line = '"%s"' % sys.executable + line[6:]
         body.append(line)
@@ -270,14 +278,41 @@ def batch_cases(new):
     root = new()
     rc, out = batch_full(root, 0, selftest_python="nosuchpython")
     check("build.bat skips the self-test without python",
-          rc == 0 and "skipping the tool self-test" in out
+          rc == 0 and "skipping the self-tests" in out
           and "SUCCESS" in out, out)
+
+    root = new()
+    rc, out = batch_full(root, 0)
+    check("build.bat runs the docs check",
+          rc == 0 and "Checking the documents" in out
+          and "SUCCESS" in out, out)
+
+    root = new()
+    rc, out = batch_full(root, 0, docs_rc=1)
+    check("build.bat fails when the docs check fails",
+          rc == 1 and "tools\check_docs.py" in out
+          and "Compiling NDS" not in out, out)
+
+    root = new()
+    write(os.path.join(root, "README.md"), b"x" * 80 + bytes([10]))
+    rc, out = batch_full(root, 0)
+    check("build.bat reports a long prose line",
+          rc == 1 and "prose is 80 columns" in out
+          and "Compiling NDS" not in out, out)
+
+    root = new()
+    write(os.path.join(root, "README.md"),
+          b"| a | b |" + bytes([10]) + b"|---|---|" + bytes([10])
+          + b"| 1 | 2 |" + bytes([10]) + b"tail |" + bytes([10]))
+    rc, out = batch_full(root, 0)
+    check("build.bat reports a split table row",
+          rc == 1 and "continues without a leading pipe" in out, out)
 
     root = new()
     binp = fake_quartus(root)
     rc, out = batch_full(root, 0, argv=[binp, "--no-test"])
     check("build.bat skips the test after --no-test",
-          rc == 0 and "Skipping the tool self-test" in out
+          rc == 0 and "Skipping the self-tests" in out
           and "Checking the build-stamp tool" not in out
           and "SUCCESS" in out, out)
 
@@ -285,7 +320,7 @@ def batch_cases(new):
     binp = fake_quartus(root)
     rc, out = batch_full(root, 0, argv=["--no-test", binp])
     check("build.bat takes --no-test before the path",
-          rc == 0 and "Skipping the tool self-test" in out
+          rc == 0 and "Skipping the self-tests" in out
           and "Checking the build-stamp tool" not in out
           and "SUCCESS" in out, out)
 
