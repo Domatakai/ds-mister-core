@@ -443,7 +443,8 @@ So the remaining deficit is inside the 67.03 MHz domain, which no constraint
 can fix: it is design work in the core, and the -53.667 ns hold figure that
 looked impossible was the same constraint mistake seen from the other side.
 
-### The operand-form bench's decoder fixes, measured (2026-11-07)
+### The operand-form bench's decoder fixes, measured (2026-11-07,
+rebuilt 2026-11-09)
 
 `tb_arm9`'s program E drives every Thumb and ARM operand-encoding form with a
 different register in every field, so a read port that decodes the wrong field
@@ -460,25 +461,29 @@ RTL rather than worked around in the bench:
 - single data transfer gained `sdt_sh`, so a shifted register offset
   (`ldr r12,[r8,r9,lsl #1]`) is no longer treated as an immediate offset.
 
-Measured on the same ten macros, seed 2 and aggressive routability as every
-other row here, with `quartus_map` before and after:
+The committed design makes this reproducible: the after row is `HEAD`, the
+before row is `HEAD` with the same hunk from `arm9_core.sv` applied in
+reverse (`git show 291b41f -- rtl/cpu/arm9_core.sv | git apply -R -p2`),
+and both ran `quartus_map` with the pinned stamp 261108:
 
 | build | ALMs needed | ALUTs | registers | DSP | M10K bits | warnings |
 |---|---|---|---|---|---|---|
-| before the fixes | 38,365 | 55,403 | 28,049 | 63 | 1,800,523 | 127 |
-| after the fixes | 38,680 | 56,002 | 28,049 | 63 | 1,800,523 | 127 |
-| delta | +315 | +599 | 0 | 0 | 0 | none new |
+| before the fixes | 38,439 | 55,624 | 28,156 | 63 | 1,800,523 | 127 |
+| after the fixes | 38,732 | 56,043 | 28,155 | 63 | 1,800,523 | 127 |
+| delta | +293 | +419 | -1 | 0 | 0 | none new |
 
-The `arm9_core` entity carries 18,012 ALUTs against 17,522, so the decoder
-costs 490 of the 604 ALUTs the four-port read change saved; against the build
-before the ports the core sits at 18,012 against 18,126. The register count
-does not move at all (2,471 in the entity, 28,049 in the design), which is what
-a decode fix should look like: no state was added, so the extra logic is the
-terms the old predicates had folded away.
-The 127 mapper warnings are 17 distinct message ids, and the map has 0 errors.
-The fixes add none: the commits either side of them, `a36480b` and `291b41f`,
-both report 54 warnings from the same 16 ids in the same counts, on the
-pre-cut design rather than this table's.
+The `arm9_core` entity carries 18,001 ALUTs against 17,594, so the decoder
+costs 407 of the 419 ALUTs the fixes add design-wide. The register count does
+not move: 2,471 in the entity and 28,155 in the design against 28,156, which
+is what a decode fix should look like -- no state was added, so the extra
+logic is the terms the old predicates had folded away. The 127 mapper
+warnings are 17 distinct message ids in the same counts on both sides, and
+the map has 0 errors.
+
+The surrounding sections still quote the working tree the fixes were first
+measured on -- 56,002 ALUTs and 28,049 registers after them -- so their
+deltas compare among themselves; the committed design measures 221 ALUTs
+higher before the fixes and 41 higher after.
 
 Fitted at `PLACEMENT_EFFORT_MULTIPLIER 4.0`, the same ten macros no longer
 close. Two runs of `quartus_fit` on the same mapped database (38:47 and 46:19)
