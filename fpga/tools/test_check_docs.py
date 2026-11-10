@@ -194,6 +194,34 @@ def main():
     rc, out = run(root, "docs")
     check("a heading-like comment in a fence passes", rc == 0, out)
 
+    root = new()
+    write(root, "docs/hd7.md",
+          "### Fixing the fitter" + chr(10) + "and the report" + chr(10)
+          + chr(10) + "Prose." + chr(10))
+    rc, out = run(root, "docs")
+    check("short heading wrapped onto a fragment fails",
+          rc == 1 and "hd7.md:1: heading continues" in out, out)
+
+    root = new()
+    write(root, "docs/hd8.md",
+          "## Notes" + chr(10) + "first line of the paragraph" + chr(10)
+          + "which runs on." + chr(10))
+    rc, out = run(root, "docs")
+    check("a lowercase paragraph after a heading passes", rc == 0, out)
+
+    root = new()
+    write(root, "docs/hd9.md",
+          "## Notes" + chr(10) + "see the table." + chr(10))
+    rc, out = run(root, "docs")
+    check("a lowercase sentence after a heading passes", rc == 0, out)
+
+    root = new()
+    write(root, "docs/hd10.md",
+          "## Usage" + chr(10) + "run the tool with the path" + chr(10)
+          + chr(10) + "More prose." + chr(10))
+    rc, out = run(root, "docs")
+    check("a lowercase imperative after a heading passes", rc == 0, out)
+
     print()
     if failures:
         print("%d of %d cases failed" % (len(failures), count))

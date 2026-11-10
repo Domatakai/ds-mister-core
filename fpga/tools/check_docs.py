@@ -24,6 +24,12 @@ import sys
 
 LIMIT = 79
 CONTINUED = 60
+JOINERS = {
+    "a", "an", "and", "as", "at", "but", "by", "for",
+    "from", "if", "in", "nor", "of", "on", "or", "per", "so",
+    "than", "that", "the", "to", "when", "which", "while",
+    "with",
+}
 SKIP = {".git", "node_modules", ".freebuff", "dist", "build", ".next",
         "__pycache__"}
 
@@ -43,14 +49,15 @@ def is_heading(line):
     return hashes <= 6 and (rest == "" or rest.startswith(" "))
 
 
-def heading_continues(line, nxt):
+def heading_continues(line, lines, n):
     """True when a heading looks like a title that was wrapped.
 
     Markdown has no continued heading: the second line becomes body
-    text, so the title a reader sees stops at the newline. The remains
-    are a bracket the heading never closes, a trailing comma, or a next
-    line that carries the sentence on -- a lowercase word or a closing
-    bracket -- under a heading already most of the width.
+    text, so the title a reader sees stops at the newline. A bracket the
+    heading never closes, or a trailing comma, gives it away. So does a
+    next line that opens with a lowercase joining word, which no sentence
+    starts with, or a lowercase fragment under a heading wide enough that
+    wrapping was needed.
     """
     body = line.strip()
     if (body.count("(") != body.count(")")
@@ -58,10 +65,16 @@ def heading_continues(line, nxt):
         return True
     if body.endswith(","):
         return True
-    nxt = nxt.strip()
-    if not nxt or len(body) < CONTINUED:
+    nxt = lines[n + 1].strip() if n + 1 < len(lines) else ""
+    if not nxt or not nxt[0].islower():
         return False
-    return nxt[0].islower() or nxt[0] in "),;"
+    word = nxt.split()[0].lower().rstrip(",.;:!?)]")
+    if word in JOINERS:
+        return True
+    if len(body) < CONTINUED:
+        return False
+    after = lines[n + 2] if n + 2 < len(lines) else ""
+    return not nxt.endswith((".", "!", "?")) and not after.strip()
 
 
 def markdown_files(paths):
@@ -94,8 +107,7 @@ def check(path):
             continue
         if fenced:
             continue
-        if is_heading(line) and heading_continues(
-                line, lines[n + 1] if n + 1 < len(lines) else ""):
+        if is_heading(line) and heading_continues(line, lines, n):
             problems.append(
                 (n + 1, "heading continues onto the next line"))
             continue

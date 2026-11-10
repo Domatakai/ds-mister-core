@@ -929,7 +929,10 @@ table row that continues onto a line without a leading pipe is
 reported, so is any prose line past 79 columns (table rows and quoted
 output are exempt), and so is a heading whose title runs onto the next
 line -- Markdown ends a heading at the newline, so the rest turns into
-body text. It prints each offending `file:line` and exits nonzero;
+body text. A wrapped title is caught by an unclosed bracket, a trailing
+comma, or a next line that opens with a lowercase joining word; a long
+heading whose next line is a lowercase fragment is caught too. It
+prints each offending `file:line` and exits nonzero;
 `python fpga/tools/test_check_docs.py` holds its cases.
 
 First full compile (analysis + fit + ASM + timing) is a Quartus job of
