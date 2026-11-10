@@ -292,6 +292,15 @@ def batch_cases(new):
     check("build.bat fails when the docs check fails",
           rc == 1 and "tools\\check_docs.py" in out
           and "Compiling NDS" not in out, out)
+    root = new()
+    rc, out = batch_full(root, 0, argv=["--no-test"], docs_rc=1)
+    check("build.bat checks the documents after --no-test",
+          rc == 1 and "Compiling NDS" not in out, out)
+
+    root = new()
+    rc, out = batch_full(root, 0, docs_rc=9009)
+    check("build.bat warns when python is missing for the documents",
+          rc == 0 and "the documents were not checked" in out, out)
 
     root = new()
     write(os.path.join(root, "README.md"), b"x" * 80 + bytes([10]))

@@ -912,17 +912,16 @@ The tool keeps its own cases: `python fpga/tools/test_bump_build_id.py` checks
 the bump, record and verify paths and the `build.bat` branches - its install
 check, its prompt, its compile failure and its missing rbf - against throwaway
 copies of this layout, needs no Quartus, and exits nonzero if any case fails.
-`build.bat` runs both checks -- the stamp cases and the document check
-described below -- before it compiles; `--no-test` skips them for a quick
-local build. `build.bat --record --verify` writes and checks the record
-without prompting, so a release can run unattended. A build that has a
-record closes with its stamp, its SHA-256 and how long ago it was
-recorded, below the deploy steps. `--verify`
-also warns when the record predates the pin file. `--strict` makes that a
-failure instead, which is what an unattended release wants. `--max-age DAYS`
-fails the check when the record is older than that many days, and `build.bat
---max-age DAYS` forwards it. A bitstream given after the options is understood
-too, as in `--verify --max-age 30 output_files/NDS.rbf`.
+`build.bat` runs the stamp cases, and the document check described below on
+every build: `--no-test` skips only the stamp cases, so no build slips past the
+documents. `build.bat --record --verify` writes and checks the record without
+prompting, so a release can run unattended. A build that has a record closes
+with its stamp, its SHA-256 and how long ago it was recorded, below the deploy
+steps. `--verify` also warns when the record predates the pin file. `--strict`
+makes that a failure instead, which is what an unattended release wants.
+`--max-age DAYS` fails the check when the record is older than that many days,
+and `build.bat --max-age DAYS` forwards it. A bitstream given after the options
+is understood too, as in `--verify --max-age 30 output_files/NDS.rbf`.
 
 `python fpga/tools/check_docs.py` checks the documents themselves: a
 table row that continues onto a line without a leading pipe is

@@ -16,6 +16,7 @@ rem   build.bat --strict              -> fail when the record predates
 rem                                       the pin
 rem   build.bat --max-age 7           -> fail when the record is older
 rem                                       than 7 days
+rem The documents are checked on every build, --no-test included.
 rem The summary below the deploy steps prints the record's stamp, its
 rem SHA-256 and how long ago it was written.
 rem ---------------------------------------------------------------------------
@@ -78,9 +79,6 @@ echo Checking the build-stamp tool...
 python "tools\test_bump_build_id.py"
 if errorlevel 9009 goto :notest
 if errorlevel 1 goto :testfailed
-echo Checking the documents...
-python "tools\check_docs.py"
-if errorlevel 1 goto :docfailed
 goto :testdone
 :notest
 echo python was not found - skipping the self-tests.
@@ -95,6 +93,17 @@ echo ERROR: the documents failed tools\check_docs.py;
 echo fix them before building.
 exit /b 1
 :testdone
+rem The documents are checked on every build, --no-test included: a
+rem wrapped heading or a wide line is cheap to fix now and costly to
+rem find after the flow has run.
+echo Checking the documents...
+python "tools\check_docs.py"
+if errorlevel 9009 goto :nodocs
+if errorlevel 1 goto :docfailed
+goto :compile
+:nodocs
+echo python was not found - the documents were not checked.
+:compile
 echo Compiling NDS - first full compile takes roughly 10-20 minutes...
 echo.
 
