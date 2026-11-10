@@ -290,7 +290,7 @@ def batch_cases(new):
     root = new()
     rc, out = batch_full(root, 0, docs_rc=1)
     check("build.bat fails when the docs check fails",
-          rc == 1 and "tools\check_docs.py" in out
+          rc == 1 and "tools\\check_docs.py" in out
           and "Compiling NDS" not in out, out)
 
     root = new()
