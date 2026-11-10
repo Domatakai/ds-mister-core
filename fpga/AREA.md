@@ -96,15 +96,16 @@ LABs, which is the wall this file has been describing all along.
 Quartus 17.0, which is why the register packing comes from
 `ALM_REGISTER_PACKING_EFFORT` alone.
 
-Two further levers were measured and rejected. `ALLOW_ANY_RAM_SIZE_FOR_RECOGNITION`
-and `ALLOW_ANY_ROM_SIZE_FOR_RECOGNITION` both on map to **83,608 nodes and
-58,539 ALMs** — worse than the area build by 363 nodes and 155 ALMs — so no
-small memory is hiding in this design. Switching off the other two speed-only
-features, `PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION` and
+Two further levers were measured and rejected.
+`ALLOW_ANY_RAM_SIZE_FOR_RECOGNITION` and `ALLOW_ANY_ROM_SIZE_FOR_RECOGNITION`
+both on map to **83,608 nodes and 58,539 ALMs** — worse than the area build by
+363 nodes and 155 ALMs — so no small memory is hiding in this design. Switching
+off the other two speed-only features,
+`PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION` and
 `ROUTER_LCELL_INSERTION_AND_LOGIC_DUPLICATION`, changes nothing that matters:
 fitted on its own the design still needs **5,883 LABs**, exactly the count it
-needs with them on, and placement preparation stretches from under 18 minutes to
-21:51. Neither setting is in the qsf.
+needs with them on, and placement preparation stretches from under 18 minutes
+to 21:51. Neither setting is in the qsf.
 
 A third lever was measured and rejected. The two engine-facing palette copies
 are 16 bits wide, but an engine reads BGR555 and never looks at bit 15, so the
@@ -138,8 +139,8 @@ lookup; the default row above is the current measurement of all of it.
 Two more switches price the coarse cuts the ranked list could not deliver:
 `NDS_ONE_SCREEN` compiles engine B out (one renderer answers both screens, the
 bottom pixel coming back blank) and `NDS_NO_SWI_HLE` compiles the shared BIOS
-SWI bank out (every BIOS call then vectors to the absent BIOS, so that rung is a
-measurement only, never a product). Each row is one clean `quartus_map` on
+SWI bank out (every BIOS call then vectors to the absent BIOS, so that rung is
+a measurement only, never a product). Each row is one clean `quartus_map` on
 `5CSEBA6U23I7` with the committed area settings and the macros in a scratch
 `.qsf`; the first two rows re-measure the older table above on today's tree.
 
@@ -209,8 +210,8 @@ set; a larger device or a cut in the core is the decision.
 
 Three more switches, all in `sys/sys_top.v` and all default-off, put the
 framework's cosmetic and overlay blocks behind bypasses that carry the module's
-own latency -- 5 clocks for the shadowmask, 3 for the scanline filter, 4 for the
-VGA OSD -- so the picture keeps its alignment instead of shifting by a few
+own latency -- 5 clocks for the shadowmask, 3 for the scanline filter, 4 for
+the VGA OSD -- so the picture keeps its alignment instead of shifting by a few
 pixels:
 
 | switch | what stops being built | entity cost in the t6 report (ALUTs / regs) |
@@ -237,61 +238,63 @@ All three switches on top of t6:
 
 The netlist says the 815 ALMs came from exactly those three modules and nothing
 else: in the t9 report `shadowmask:HDMI_shadowmask` falls from 77 references to
-0, `scanlines:VGA_scanlines` from 21 to 0 and `osd:vga_osd` from 179 to 0, while
-`osd:hdmi_osd` stays at 159 and `ascal` keeps every one of its logic blocks, with
-only its mention count in the report moving (800 to 863) as the hierarchy around
-it shifts. The warning count is 126 against t6's 124, and not because anything
-was suppressed: `Warning (10036)` appears three times for `io_osd_vga`,
-`shadowmask_data` and `shadowmask_wr` (assigned, never read, now that their
-consumers are gone), and one `Warning (276027)` inferred-RAM notice drops out.
+0, `scanlines:VGA_scanlines` from 21 to 0 and `osd:vga_osd` from 179 to 0,
+while `osd:hdmi_osd` stays at 159 and `ascal` keeps every one of its logic
+blocks, with only its mention count in the report moving (800 to 863) as the
+hierarchy around it shifts. The warning count is 126 against t6's 124, and not
+because anything was suppressed: `Warning (10036)` appears three times for
+`io_osd_vga`, `shadowmask_data` and `shadowmask_wr` (assigned, never read, now
+that their consumers are gone), and one `Warning (276027)` inferred-RAM notice
+drops out.
 
-At default settings the fitter places but does not route: peak interconnect 93.1%
-overall and 99.0% on the horizontal channels, `Warning (16684)` then
-`Warning (16618)` with the routing phase terminated and `Critical Warning (188026)`
-after 3h13m, and no bitstream. Eighteen free LABs were enough to place and not
-enough to route.
+At default settings the fitter places but does not route: peak interconnect
+93.1% overall and 99.0% on the horizontal channels, `Warning (16684)` then
+`Warning (16618)` with the routing phase terminated and `Critical Warning
+(188026)` after 3h13m, and no bitstream. Eighteen free LABs were enough to
+place and not enough to route.
 
-The fitter's own remedy fixes it. With `FITTER_AGGRESSIVE_ROUTABILITY_OPTIMIZATION
-Always` and `SEED 2`, placement still clears the gate at 4,173 LABs, routing then
-completes in 01:20:34 and the fit succeeds in 01:50:47 at **4,177 of 4,191 LABs** with
-peak interconnect 88.8% overall / 87.6% horizontal / 93.1% vertical --
-`Quartus Prime Fitter was successful. 0 errors, 20 warnings`.
-The assembler produces a 3,813,556-byte `NDS.rbf` with 0 errors and 0 warnings: the
-first bitstream this ladder has produced.
+The fitter's own remedy fixes it. With
+`FITTER_AGGRESSIVE_ROUTABILITY_OPTIMIZATION Always` and `SEED 2`, placement
+still clears the gate at 4,173 LABs, routing then completes in 01:20:34 and the
+fit succeeds in 01:50:47 at **4,177 of 4,191 LABs** with peak interconnect
+88.8% overall / 87.6% horizontal / 93.1% vertical -- `Quartus Prime Fitter was
+successful. 0 errors, 20 warnings`. The assembler produces a 3,813,556-byte
+`NDS.rbf` with 0 errors and 0 warnings: the first bitstream this ladder has
+produced.
 
 It does not close timing at these constraints, and that is the honest state of
 that build; the section below measures what fixing the clock groups does to
-those numbers. Setup is
-short in five domains, worst the `emu` clock (67.03 MHz) at **-19.413 ns** with
--96.4 us of TNS; `FPGA_CLK1_50` is -14.203, `FPGA_CLK2_50` -11.573, `h2f_user0_clk`
-(100 MHz) -8.310 and the 148.54 MHz HDMI clock -7.973, all short as well. Hold is
-reported at -53.667 ns on the 24.58 MHz audio clock, which is too large to be a
-real hold violation at that period: that number means unrelated clocks are being
-analysed together, and it needs its own investigation before it is trusted in
-either direction. Recovery is -1.700 on `emu`; removal and minimum pulse width
-are clean.
+those numbers. Setup is short in five domains, worst the `emu` clock (67.03
+MHz) at **-19.413 ns** with -96.4 us of TNS; `FPGA_CLK1_50` is -14.203,
+`FPGA_CLK2_50` -11.573, `h2f_user0_clk` (100 MHz) -8.310 and the 148.54 MHz
+HDMI clock -7.973, all short as well. Hold is reported at -53.667 ns on the
+24.58 MHz audio clock, which is too large to be a real hold violation at that
+period: that number means unrelated clocks are being analysed together, and it
+needs its own investigation before it is trusted in either direction. Recovery
+is -1.700 on `emu`; removal and minimum pulse width are clean.
 
 No earlier rung produced a timing report, so none of this is a known regression
--- it is simply the first measurement of the design's timing at all, and it says
-the next problem is closing timing on a 99.7%-full device, not finding more LABs.
+-- it is simply the first measurement of the design's timing at all, and it
+says the next problem is closing timing on a 99.7%-full device, not finding
+more LABs.
 
 The guards are also inert where it counts. Mapped with no macro defined, the
 design produces 83,296 ALUTs, 58,325 ALMs, 53,805 registers, 96 DSP blocks and
-53 warnings -- identical to the baseline recorded before these switches existed,
-so the three guards change nothing about the shipped build.
+53 warnings -- identical to the baseline recorded before these switches
+existed, so the three guards change nothing about the shipped build.
 
 ### Decoupling the core's clock, measured (2026-11-01)
 
 The framework SDC already decouples each PLL's `divclk` from the 50/100 MHz
 clocks with `set_clock_groups -exclusive`, but its glob expected an instance
-named `pll`; this core's is `emu|u_pll`, so its 67.03 MHz clock was left out and
-TimeQuest timed about 120k HPS-bridge paths as synchronous -- 101,956
-emu-to-`FPGA_CLK1_50` paths alone, while the other PLLs sat on "false path" rows.
-`hps_io` runs on `clk_sys` and the bridge it talks to runs on `FPGA_CLK2_50`, so
-the crossing is asynchronous by construction, which is why the framework cuts it
-on its own side. Widening the glob to `*|*pll|pll_inst|` makes the existing intent
-cover this core. Nothing else changed: same macros, same seed 2, same aggressive
-routability.
+named `pll`; this core's is `emu|u_pll`, so its 67.03 MHz clock was left out
+and TimeQuest timed about 120k HPS-bridge paths as synchronous -- 101,956
+emu-to-`FPGA_CLK1_50` paths alone, while the other PLLs sat on "false path"
+rows. `hps_io` runs on `clk_sys` and the bridge it talks to runs on
+`FPGA_CLK2_50`, so the crossing is asynchronous by construction, which is why
+the framework cuts it on its own side. Widening the glob to `*|*pll|pll_inst|`
+makes the existing intent cover this core. Nothing else changed: same macros,
+same seed 2, same aggressive routability.
 
 | build | setup worst | setup TNS | hold worst | LABs | interconnect | fit |
 |---|---|---|---|---|---|---|
@@ -302,18 +305,16 @@ routability.
 Routing fell from 01:20:34 to 00:21:25 because the router no longer tries to
 make unrelated clocks meet, the assembler still reports 0 errors and 0 warnings
 and wrote a 3,718,564-byte `NDS.rbf`, and the fitter's warning count drops from
-20 to 18. The
-`current` row is that build plus two measured changes: the save file's load path,
-which costs 8 LABs and 0.816 ns on its own, and `PLACEMENT_EFFORT_MULTIPLIER 4.0`,
-which gives back 9 LABs and 0.680 ns. That build fitted at 4,159 of 4,191 LABs.
-The CRT video modes then cost 27 LABs and 0.039 ns -- four output timings in
-`video_timing` plus the 240p placements in `screen_composer` -- so the tree now
-fits at **4,186 of 4,191 LABs**, 5 spare. The Slot-2 RAM expansion pak
-built at **4,181 of 4,191 LABs**, 10 spare — five fewer than the CRT tree,
-which is placement luck rather than a saving — with setup at -8.354 ns
-(0.160 ns better), TNS
--44,563.505, hold +0.226, peak interconnect 86.8/85.9/91.6 and a
-3,730,440-byte `NDS.rbf`.
+20 to 18. The `current` row is that build plus two measured changes: the save
+file's load path, which costs 8 LABs and 0.816 ns on its own, and
+`PLACEMENT_EFFORT_MULTIPLIER 4.0`, which gives back 9 LABs and 0.680 ns. That
+build fitted at 4,159 of 4,191 LABs. The CRT video modes then cost 27 LABs and
+0.039 ns -- four output timings in `video_timing` plus the 240p placements in
+`screen_composer` -- so the tree now fits at **4,186 of 4,191 LABs**, 5 spare.
+The Slot-2 RAM expansion pak built at **4,181 of 4,191 LABs**, 10 spare — five
+fewer than the CRT tree, which is placement luck rather than a saving — with
+setup at -8.354 ns (0.160 ns better), TNS -44,563.505, hold +0.226, peak
+interconnect 86.8/85.9/91.6 and a 3,730,440-byte `NDS.rbf`.
 
 Removing the adder from the pak address does not pay. The pak sits at
 0xA00000, one 25-bit add above `{3'd0, a[22:1]}`; since 8 MB is exactly a
@@ -424,22 +425,23 @@ Fitted for real, the tree lands at **4,143 of 4,191 LABs**, 48 spare: setup
 3,718,564-byte `NDS.rbf`, and the same 18 fitter warnings with 0 errors from
 both the fitter and the assembler. The LAB count moves less than the ALUT count
 suggests, and the reports say why: total registers rise from 30,691 to 31,996,
-because the fitter duplicates register bits to keep the four shared muxes' fanout
-down, and peak interconnect rises from 79.8/78.8/83.8 to 87.9/86.7/91.5. So the
-ports do take the reads from eleven mux trees to four, but synthesis spends most
-of the saved logic on that duplication and the router, and the net is 11 LABs,
-0.063 ns and a 46 KB smaller bitstream for a fit that takes 18 minutes longer.
+because the fitter duplicates register bits to keep the four shared muxes'
+fanout down, and peak interconnect rises from 79.8/78.8/83.8 to 87.9/86.7/91.5.
+So the ports do take the reads from eleven mux trees to four, but synthesis
+spends most of the saved logic on that duplication and the router, and the net
+is 11 LABs, 0.063 ns and a 46 KB smaller bitstream for a fit that takes 18
+minutes longer.
 
 Every domain passed except setup, and the failing set had shrunk to the core
-itself: `pll_hdmi` was -0.061 ns with -0.061 of TNS and the emu domain at -8.313
-with -41,728.820, while `h2f_user0_clk` was +3.793, `FPGA_CLK1_50` at +7.062,
-`FPGA_CLK2_50` at +9.728, `pll_audio` at +14.082 and `FPGA_CLK3_50` at +18.801.
-Hold was positive in every domain (worst +0.251), recovery at +3.439, removal at
-+0.917 and minimum pulse width at +1.065.
+itself: `pll_hdmi` was -0.061 ns with -0.061 of TNS and the emu domain at
+-8.313 with -41,728.820, while `h2f_user0_clk` was +3.793, `FPGA_CLK1_50` at
++7.062, `FPGA_CLK2_50` at +9.728, `pll_audio` at +14.082 and `FPGA_CLK3_50` at
++18.801. Hold was positive in every domain (worst +0.251), recovery at +3.439,
+removal at +0.917 and minimum pulse width at +1.065.
 
-So the remaining deficit is inside the 67.03 MHz domain, which no constraint can
-fix: it is design work in the core, and the -53.667 ns hold figure that looked
-impossible was the same constraint mistake seen from the other side.
+So the remaining deficit is inside the 67.03 MHz domain, which no constraint
+can fix: it is design work in the core, and the -53.667 ns hold figure that
+looked impossible was the same constraint mistake seen from the other side.
 
 ### The operand-form bench's decoder fixes, measured (2026-11-07)
 
@@ -467,13 +469,13 @@ other row here, with `quartus_map` before and after:
 | after the fixes | 38,680 | 56,002 | 28,049 | 63 | 1,800,523 | 127 |
 | delta | +315 | +599 | 0 | 0 | 0 | none new |
 
-The `arm9_core` entity carries 18,012 ALUTs against 17,522, so the decoder costs
-490 of the 604 ALUTs the four-port read change saved; against the build before
-the ports the core sits at 18,012 against 18,126. The register count does not
-move at all (2,471 in the entity, 28,049 in the design), which is what a decode
-fix should look like: no state was added, so the extra logic is the terms the
-old predicates had folded away. The 127 mapper warnings are the same 23 messages
-in the same counts as before the fixes, and the map has 0 errors.
+The `arm9_core` entity carries 18,012 ALUTs against 17,522, so the decoder
+costs 490 of the 604 ALUTs the four-port read change saved; against the build
+before the ports the core sits at 18,012 against 18,126. The register count
+does not move at all (2,471 in the entity, 28,049 in the design), which is what
+a decode fix should look like: no state was added, so the extra logic is the
+terms the old predicates had folded away. The 127 mapper warnings are the same
+23 messages in the same counts as before the fixes, and the map has 0 errors.
 
 Fitted at `PLACEMENT_EFFORT_MULTIPLIER 4.0`, the same ten macros no longer
 close. Two runs of `quartus_fit` on the same mapped database (38:47 and 46:19)
@@ -550,12 +552,12 @@ it: `git archive HEAD` into an empty directory wrote that stamp, fitted at
 4,157 LABs with setup -8.210 ns, and produced a bitstream byte-identical to the
 one above (sha256 `a4adcf373ee886867621bf9a...`).
 
-In that microphone build only the 67.03 MHz core fails: the emu domain -8.325 with
--53,336.764, and every other domain closes.
-`pll_hdmi` is 0.022 ns with 0.000 of TNS. `h2f_user0_clk` is +3.400,
-`FPGA_CLK1_50` +7.205, `FPGA_CLK2_50` +9.791, `pll_audio` +14.324 and
-`FPGA_CLK3_50` +18.641. Hold is positive in every domain (worst +0.238),
-recovery +3.373, removal +1.019 and minimum pulse width +1.065.
+In that microphone build only the 67.03 MHz core fails: the emu domain -8.325
+with -53,336.764, and every other domain closes. `pll_hdmi` is 0.022 ns with
+0.000 of TNS. `h2f_user0_clk` is +3.400, `FPGA_CLK1_50` +7.205, `FPGA_CLK2_50`
++9.791, `pll_audio` +14.324 and `FPGA_CLK3_50` +18.641. Hold is positive in
+every domain (worst +0.238), recovery +3.373, removal +1.019 and minimum pulse
+width +1.065.
 
 `tb_arm9` reports 161 checks with 0 failures and `tb_cpu_clk` 23 with 0. The
 bench is directed, not merely passing: pointing Thumb format 4's `t32b` at
@@ -622,24 +624,24 @@ result register `t64`. Measured, it is a loss:
 
 The attribute did what it advertises: `arm9_core` goes from 11 to 15 DSP blocks
 and the multiply leaves the failing set -- the worst t12 path is no longer the
-multiplier but `insn[10]` into the register-read mux. But the extra ALMs cost 23
-of the 31 free LABs, interconnect rises to 87.7%, and the worst slack is
+multiplier but `insn[10]` into the register-read mux. But the extra ALMs cost
+23 of the 31 free LABs, interconnect rises to 87.7%, and the worst slack is
 marginally worse. The change is reverted; t11 remains the build to quote.
 
 That is the useful measurement. Those paths spend 1-2 ns per hop in
-interconnect, and at 99.3% LAB occupancy (99.8% in t12) the router has no room to
-shorten them. The remaining gap is an occupancy problem: it needs more logic
-gone, which from here means real features, or a slower core clock -- not another
-micro-optimisation of a single path.
+interconnect, and at 99.3% LAB occupancy (99.8% in t12) the router has no room
+to shorten them. The remaining gap is an occupancy problem: it needs more logic
+gone, which from here means real features, or a slower core clock -- not
+another micro-optimisation of a single path.
 
 ### Verified from the repository state (2026-11-01)
 
-The fitter settings that make this build possible used to live only in a scratch
-copy of the project. They are now in `NDS.qsf` -- `SEED 2` and
+The fitter settings that make this build possible used to live only in a
+scratch copy of the project. They are now in `NDS.qsf` -- `SEED 2` and
 `FITTER_AGGRESSIVE_ROUTABILITY_OPTIMIZATION Always`, with the reason written
-beside them -- and a build made from a **fresh copy of the repository**, with no
-hand edits and only the ten macros added, reproduces the earlier result in every
-figure:
+beside them -- and a build made from a **fresh copy of the repository**, with
+no hand edits and only the ten macros added, reproduces the earlier result in
+every figure:
 
 | metric | fresh tree from the repo | earlier t11 build |
 |---|---|---|
@@ -649,8 +651,9 @@ figure:
 | setup worst / hold worst | -8.339 ns / +0.203 ns | same |
 | `NDS.rbf` | 3,749,124 bytes | same |
 
-The two `.rbf` files are **bit-identical** (sha256 `fa4ee336f277009a...`), so the
-written figures and the bitstream both come out of the committed tree exactly.
+The two `.rbf` files are **bit-identical** (sha256 `fa4ee336f277009a...`), so
+the written figures and the bitstream both come out of the committed tree
+exactly.
 
 One trap, because it cost two runs here: several macros in a single
 `--verilog_macro` value, or in one `set_global_assignment -name VERILOG_MACRO`
@@ -658,20 +661,20 @@ line, apply only the **first** one and silently drop the rest. The build then
 looks untouched and the rung measures nothing. One assignment per macro.
 
 So the 3D pipeline is worth **4,164 ALMs, 5,150 ALUTs, 7,256 registers and 22
-DSP blocks**, and the cheat engine plus the SPU together are worth **5,793 ALMs,
-7,897 ALUTs and 7,697 registers**. Both are less than the standalone-ALUT projections this file
-carried before, because mapping the whole design shares logic that mapping a
-block alone counts twice: the real conversion is 1.24 nodes per ALM for the 3D
-cut and 1.36 for cheat plus SPU, not the 1.42 the renderer probe suggested.
-Item-level numbers in the ranked list are therefore upper bounds, useful for
-ordering work and not for promising savings.
+DSP blocks**, and the cheat engine plus the SPU together are worth **5,793
+ALMs, 7,897 ALUTs and 7,697 registers**. Both are less than the standalone-ALUT
+projections this file carried before, because mapping the whole design shares
+logic that mapping a block alone counts twice: the real conversion is 1.24
+nodes per ALM for the 3D cut and 1.36 for cheat plus SPU, not the 1.42 the
+renderer probe suggested. Item-level numbers in the ranked list are therefore
+upper bounds, useful for ordering work and not for promising savings.
 
-That leaves the merged renderer as the last lossless lever, ~8,550 ALUTs (~6,030
-ALMs by the probe's ratio). On top of the lean build that is **~42,400 ALMs,
-101%** — about 500 ALMs over. Measured, no combination of the four cuts fits: a
-fit also needs one more item of roughly 1,000 ALMs (an OSD, the scanline filter
-or the shadowmask) *and* the merged renderer, which is the one item that
-currently fails the line budget at 109%.
+That leaves the merged renderer as the last lossless lever, ~8,550 ALUTs
+(~6,030 ALMs by the probe's ratio). On top of the lean build that is **~42,400
+ALMs, 101%** — about 500 ALMs over. Measured, no combination of the four cuts
+fits: a fit also needs one more item of roughly 1,000 ALMs (an OSD, the
+scanline filter or the shadowmask) *and* the merged renderer, which is the one
+item that currently fails the line budget at 109%.
 
 So a fit remains a scope decision, not a setting. 3D, cheats and sound are each
 worth having, and all three together are still not enough on their own.
@@ -721,17 +724,16 @@ device, so it is an ALUT count, not an estimate:
 
 ## Ranked trims
 
-**1. Serialise the geometry engine's composite matrix — done: 18,114 ALUTs, 100 DSP measured.**
-(15,577 sat in the multiplier leaves; the replacement multiplier and its FSM take
-about 180 back.)
-`comp[0:15]` is 16 outputs × 4 products, evaluated combinationally, and the
-viewport transform adds 8 more: 72 multiplies of 32×32 in one clock. Each costs
-3 DSPs (216 for all of them) against 112 available, so 37 of them landed in LUTs
-at 271 ALUTs each. One time-multiplexed multiplier is 46 ALUTs and 3 DSPs, and
-the 16 accumulators go to a 16×64-bit BRAM. *Accuracy: none lost* — same integer
-widths, same 4.12 truncation, same results. Throughput falls from 1
-vertex/clock to 10 clocks: 6.7 M vertices/s against the 369 k/s that 6144
-vertices at 60 Hz needs.
+**1. Serialise the geometry engine's composite matrix — done: 18,114 ALUTs, 100
+DSP measured.** (15,577 sat in the multiplier leaves; the replacement
+multiplier and its FSM take about 180 back.) `comp[0:15]` is 16 outputs × 4
+products, evaluated combinationally, and the viewport transform adds 8 more: 72
+multiplies of 32×32 in one clock. Each costs 3 DSPs (216 for all of them)
+against 112 available, so 37 of them landed in LUTs at 271 ALUTs each. One
+time-multiplexed multiplier is 46 ALUTs and 3 DSPs, and the 16 accumulators go
+to a 16×64-bit BRAM. *Accuracy: none lost* — same integer widths, same 4.12
+truncation, same results. Throughput falls from 1 vertex/clock to 10 clocks:
+6.7 M vertices/s against the 369 k/s that 6144 vertices at 60 Hz needs.
 
 Measured after the rewrite, mapped alone on the same device: `geometry_engine`
 **22,433 → 4,319 ALUTs and 106 → 6 DSP**. The 24 combinational 32×32 multiplies
@@ -760,16 +762,16 @@ the module already gates the result behind a 34/66-cycle busy window, which a
 32/64-step divider fits inside.
 
 **3. Line buffers into block RAM — done: 3,218 ALUTs and 8,738 registers per
-renderer, measured.**
-Both renderers used to hold `buf_a`/`buf_b` as 2×128×42 flops with a bank mux on
-the read path: 3,342 ALUTs each, measured. A 256×42 dual-port M10K is 0 ALUTs and 0
-registers, and only ~4 of the 372 spare M10Ks. *Accuracy: none lost*; the read
-becomes registered, which costs one pixel-CE of latency on the composer
-contract. This also matters because registers are at 82%: it takes the design
-to 56%. As built the word is 68 bits rather than 84 (the display only reads
-`{opaque, rgb}` of each pixel), so the array is 128 x 68 = 8,704 bits -- exactly
-what the pair form held as 256 x 34; the working bank
-stays in registers because its read-modify-write must land in the write cycle.
+renderer, measured.** Both renderers used to hold `buf_a`/`buf_b` as 2×128×42
+flops with a bank mux on the read path: 3,342 ALUTs each, measured. A 256×42
+dual-port M10K is 0 ALUTs and 0 registers, and only ~4 of the 372 spare M10Ks.
+*Accuracy: none lost*; the read becomes registered, which costs one pixel-CE of
+latency on the composer contract. This also matters because registers are at
+82%: it takes the design to 56%. As built the word is 68 bits rather than 84
+(the display only reads `{opaque, rgb}` of each pixel), so the array is 128 x
+68 = 8,704 bits -- exactly what the pair form held as 256 x 34; the working
+bank stays in registers because its read-modify-write must land in the write
+cycle.
 
 **4. Cheat walk, 32 entries → 8 per cycle — 3,625 ALUTs.**
 The walk is a 32-deep combinational chain (entry j's guard update feeds entry
@@ -783,16 +785,15 @@ protocol change.
 Subtotal of the four above: **≈36,900 ALUTs measured, no accuracy loss.**
 141,879 → 105,000. Still 21,180 over the limit.
 
-**5. Serialise the SPU mixer — done: 90 ALUTs measured, and the 1,176 the earlier
-estimate rested on was an artefact.**
-The mixer summed sixteen channels in one tree, costed at "1,176 ALUTs (4,188 →
-3,012 with the tree stubbed out)". Stubbing the sum to zero constant-folds
-everything downstream of it — master volume, OSD volume, the clamp — so that
-1,176 measured the whole mix path, not the tree. Mapping the same source twice,
-once with the tree and once with one channel per clock, gives **4,188 → 4,098
-ALUTs and 4,717 → 4,767 registers, 8 DSP either way**: the tree's fifteen 22-bit
-adds are worth ~90, because the serial version pays most of it back in the 16:1
-mux on `c_l`/`c_r`.
+**5. Serialise the SPU mixer — done: 90 ALUTs measured, and the 1,176 the
+earlier estimate rested on was an artefact.** The mixer summed sixteen channels
+in one tree, costed at "1,176 ALUTs (4,188 → 3,012 with the tree stubbed out)".
+Stubbing the sum to zero constant-folds everything downstream of it — master
+volume, OSD volume, the clamp — so that 1,176 measured the whole mix path, not
+the tree. Mapping the same source twice, once with the tree and once with one
+channel per clock, gives **4,188 → 4,098 ALUTs and 4,717 → 4,767 registers, 8
+DSP either way**: the tree's fifteen 22-bit adds are worth ~90, because the
+serial version pays most of it back in the 16:1 mux on `c_l`/`c_r`.
 
 The pass is still the right shape: sixteen of the ~1,396 clocks between two
 48 kHz samples, and it takes the sixteen-way fanout off the master-volume
@@ -805,18 +806,19 @@ instant from its neighbours.
 *Lesson, same as item 6:* a "stub it out" measurement includes everything the
 stub lets the tools constant-fold away.
 
-**6. Per-row rotation/layout remap in the composer — measured: nothing to gain.**
-The estimate here said ~2,000 ALUTs. Mapping `screen_composer` alone on the same
-device gives **73 ALUTs, 0 registers, 3 DSP** (97 ALUTs in context, the 3 DSP
-being the brightness multiplies), so there is no 2,000 to find: the layout case
-is one 8-bit subtract plus two range compares, `sy`/`box_hit`/the `use_top` base
-are already shared by the whole pixel datapath, and the rotation remap is two
-subtracts and two 4:1 byte muxes. Registering the row terms would also put the
-first pixel of every line one cycle behind the engines, because the engines
-sample `na_x`/`na_y` combinationally through their line-buffer RAM.
+**6. Per-row rotation/layout remap in the composer — measured: nothing to
+gain.** The estimate here said ~2,000 ALUTs. Mapping `screen_composer` alone on
+the same device gives **73 ALUTs, 0 registers, 3 DSP** (97 ALUTs in context,
+the 3 DSP being the brightness multiplies), so there is no 2,000 to find: the
+layout case is one 8-bit subtract plus two range compares, `sy`/`box_hit`/the
+`use_top` base are already shared by the whole pixel datapath, and the rotation
+remap is two subtracts and two 4:1 byte muxes. Registering the row terms would
+also put the first pixel of every line one cycle behind the engines, because
+the engines sample `na_x`/`na_y` combinationally through their line-buffer RAM.
 
-*Lesson for the rest of this list:* every remaining number in it is an estimate,
-and this one was 25× high. Measure a block before planning work on it.
+*Lesson for the rest of this list:* every remaining number in it is an
+estimate, and this one was 25× high. Measure a block before planning work on
+it.
 
 **7. One 2D renderer shared by both engines — measured: does not fit the line
 budget, so not landed.** The saving is real: the two instances are 9,255 and
@@ -872,7 +874,10 @@ address so Quartus sees a block RAM, staged into the tile buffer beside the
 composite, and dropped whenever a BGxCNT/HOFS/VOFS write moves the tiles.
 
 It works, and it is not worth having. Measured in `tb_renderer_2d`, 4bpp with
-one BG layer, two sprites and the 3D merge. The `before` rows are the design as it stands; the refill and cached rows were measured before the state fold and the quad fill landed, so they are a snapshot from that tree rather than a re-run against it:
+one BG layer, two sprites and the 3D merge. The `before` rows are the design as
+it stands; the refill and cached rows were measured before the state fold and
+the quad fill landed, so they are a snapshot from that tree rather than a
+re-run against it:
 
 | line | clocks | BG | grants | beats |
 |---|---|---|---|---|
@@ -921,21 +926,23 @@ clocks of the 1,650-clock line.
 estimate is stale. Nearest/integer scaling instead of the polyphase path is
 a visible quality loss on HDMI. *Accuracy: softens or blocks the upscale.*
 
-**9. CPU datapath sharing — ~2,000 ALUTs** (estimate, high risk).
-18,012 + 10,192 ALUTs of decode, shifter and ALU. Sharing the barrel shifter and
-address adder across states is the only real saving and it must keep `tb_arm7`
-and `tb_arm9` green. Not worth doing before the items above.
+**9. CPU datapath sharing — ~2,000 ALUTs** (estimate, high risk). 18,012 +
+10,192 ALUTs of decode, shifter and ALU. Sharing the barrel shifter and address
+adder across states is the only real saving and it must keep `tb_arm7` and
+`tb_arm9` green. Not worth doing before the items above.
 
-**10. Registers → BRAM in cart_slot — done: 2,452 ALUTs and 6,150 registers,\nmeasured.** (The estimate was ~1,500 ALUTs; it was low.)
-`cart_slot`'s download FIFO was three register arrays — 64 x 64-bit data,
-64 x 29-bit line, 64 x 8-bit byte enables, 6,464 flops — written once and read
-once in order, which is exactly a simple dual-port RAM. They are now one
-64 x 101-bit array (`{be, line, data}`) in one M10K, with the drain fetching the
+**10. Registers → BRAM in cart_slot — done: 2,452 ALUTs and 6,150
+registers,\nmeasured.** (The estimate was ~1,500 ALUTs; it was low.)
+`cart_slot`'s download FIFO was three register arrays — 64 x 64-bit data, 64 x
+29-bit line, 64 x 8-bit byte enables, 6,464 flops — written once and read once
+in order, which is exactly a simple dual-port RAM. They are now one 64 x
+101-bit array (`{be, line, data}`) in one M10K, with the drain fetching the
 head entry and issuing it on the next cycle to absorb the registered read.
 Measured at design level: `cart_slot` **3,590 → 1,138 ALUTs, 7,640 → 1,490
 registers**, block RAM +7,488 bits, and the design **85,696 → 83,303 ALUTs,
 60,181 → 54,032 registers, 62,271 → 58,791 ALMs**. `tb_cart_slot` 62/62 (tail
-flush, byte enables, hold-across-BUSY), `tb_ddr_bridge` and `tb_main_bus` green.
+flush, byte enables, hold-across-BUSY), `tb_ddr_bridge` and `tb_main_bus`
+green.
 
 This is the first time the design has been *under* the 83,820-node limit at the
 mapper (83,303), so the fitter got past the `170011` check that killed every
@@ -1014,10 +1021,11 @@ registers out of the same 83,820. A build with a sane 10% margin has a ceiling
 of ~75,000, and table stakes for the lossless items alone is ~105,000.
 
 The honest conclusion: **the A6 cannot host this core at full feature set.**
-The gap is structural, not a matter of tightening a few blocks. After item 1 the
-3D path is no longer the largest thing in the design — 4,025 ALUTs of geometry
-(4,319 standalone) plus 948 of rasteriser — and what remains around it, the two
-CPUs, the bus and the two renderers, is still over the limit on its own.
+The gap is structural, not a matter of tightening a few blocks. After item 1
+the 3D path is no longer the largest thing in the design — 4,025 ALUTs of
+geometry (4,319 standalone) plus 948 of rasteriser — and what remains around
+it, the two CPUs, the bus and the two renderers, is still over the limit on its
+own.
 
 The "what does fit" rows below are from the pre-item-1 baseline; item 1 moved
 every one of them down by about 18,000.
@@ -1029,13 +1037,12 @@ What does fit, with margin:
 | 2D DS core | drop geometry + raster, then items 2,3,4,5,6,9,10 and 7 | 82,900 | 1.1% |
 | 2D DS core, lean | the same without the shared renderer | 88,400 | does not fit |
 
-Item 7 is out (see above: the shared renderer needs 128% of the line period), so
-the *only* projected build that fit — the 2D core with the merge — is not
+Item 7 is out (see above: the shared renderer needs 128% of the line period),
+so the *only* projected build that fit — the 2D core with the merge — is not
 buildable. The same build with two renderers is the 88,400 row: no fit, and the
 measured design is **82,280 ALUTs / 57,207 ALMs** today (the table at the top),
-so what the A6 actually
-needs before any of this is about 24,000 ALUTs of things this list does not
-contain.
+so what the A6 actually needs before any of this is about 24,000 ALUTs of
+things this list does not contain.
 
 That is: a DS core with the two ARM cores, both 2D engines, sound, cart and
 save support would fit the A6 once the four lossless items are taken *and* the
@@ -1111,10 +1118,10 @@ No new width, index or multiple-driver warnings: the design maps clean.
 
 The 3D engine's throughput after serialisation: a vertex is 10 clocks (6.7 M/s
 against 369 k/s needed), a composite rebuild 64 clocks whenever a matrix
-command changed either matrix (measured on the next vertex, not on the command),
-MTX_SCALE 12 clocks and MTX_TRANS 9. All of that sits inside GXSTAT's busy
-window, which now covers the pipeline, so a game polling `GXSTAT.27`/bit 0 sees
-the engine busy exactly as long as it is.
+command changed either matrix (measured on the next vertex, not on the
+command), MTX_SCALE 12 clocks and MTX_TRANS 9. All of that sits inside GXSTAT's
+busy window, which now covers the pipeline, so a game polling `GXSTAT.27`/bit 0
+sees the engine busy exactly as long as it is.
 
 ## Full compile after item 3
 
@@ -1133,12 +1140,12 @@ virtual memory 4.6 GB:
 | Fitter ALM estimate | 58,131 | 41,910 | 139% |
 
 That is **303 combinational nodes** from fitting, against 58,059 over for the
-first full compile, 42,628 after items 2 and 4, and 26,191 after item 1 alone. The fitter still stops
-before placement (`Error 170011`, then `11802`), and its own ALM count is the
-pessimistic reading of the same design: an ALM holds two 4-input LUTs only when
-they share inputs, so 84,123 nodes that pack badly look like 58,131 ALMs. No
-placement means no routing, no timing analysis and no Fmax report from this
-build.
+first full compile, 42,628 after items 2 and 4, and 26,191 after item 1 alone.
+The fitter still stops before placement (`Error 170011`, then `11802`), and its
+own ALM count is the pessimistic reading of the same design: an ALM holds two
+4-input LUTs only when they share inputs, so 84,123 nodes that pack badly look
+like 58,131 ALMs. No placement means no routing, no timing analysis and no Fmax
+report from this build.
 
 ### Why 303 nodes is not the gap
 
@@ -1149,21 +1156,21 @@ both: `84,123` combinational nodes against `83,820`, and **58,131 ALMs against
 An ALM holds two 4-input LUTs and reports two dedicated registers, so the
 capacity is 41,910 ALMs = 83,820 nodes = 83,820 registers. The design uses
 83,997 nodes and 59,318 registers. With *perfect* co-location — every register
-in the same ALM as the LUT that drives it — that needs
-`max(83,997/2, 59,318/2) = 41,999` ALMs, which is 89 ALMs (0.2%) over. So 303
-nodes is the gap only in the best case, and the fitter's 139% says the placer is
-not going to reach it: at the packing ratio it quotes (1.45 nodes/ALM against
-1.5 for a perfectly packed ALM) the design needs roughly 60,000-65,000 nodes to
-fit, i.e. **20,000 nodes / about a quarter of the logic**, not 0.4%.
+in the same ALM as the LUT that drives it — that needs `max(83,997/2, 59,318/2)
+= 41,999` ALMs, which is 89 ALMs (0.2%) over. So 303 nodes is the gap only in
+the best case, and the fitter's 139% says the placer is not going to reach it:
+at the packing ratio it quotes (1.45 nodes/ALM against 1.5 for a perfectly
+packed ALM) the design needs roughly 60,000-65,000 nodes to fit, i.e. **20,000
+nodes / about a quarter of the logic**, not 0.4%.
 
-That is the sum the ranked list below adds up to, and it is why the next step is
-items 5-10 rather than another few hundred nodes: registers already occupy 71%
-of the device on their own, so there is no LUT headroom left to spend.
+That is the sum the ranked list below adds up to, and it is why the next step
+is items 5-10 rather than another few hundred nodes: registers already occupy
+71% of the device on their own, so there is no LUT headroom left to spend.
 
 Most of the 110,011 → 83,997 drop is not item 3: the line-buffer trim measures
-6,436 ALUTs across the two renderers (3,218 each, A/B above). The rest came from
-the burst-fetch and OAM-scan work that landed between the two builds. Registers
-fell 69,183 → 59,318, of which 2 × 8,738 belongs to item 3.
+6,436 ALUTs across the two renderers (3,218 each, A/B above). The rest came
+from the burst-fetch and OAM-scan work that landed between the two builds.
+Registers fell 69,183 → 59,318, of which 2 × 8,738 belongs to item 3.
 
 There are no warnings on `lbuf`: the RAM infers cleanly, 8,704 bits per
 renderer (128 words x 68 bits, four pixels of `{opaque, rgb}` each). Quartus
@@ -1174,10 +1181,10 @@ that halved the backdrop fill costs one extra M10K per renderer -- four of the
 553 for both. The lane select on the read path is all the logic it adds. The
 `Total RAM Blocks 0 / 553` row in `NDS.fit.summary` is an artefact of the
 aborted placement, not a memory total; the bit count above is the reliable
-figure (33%, ~183 block-equivalents of the 553). There are no critical warnings any
-more: the two `Critical Warning (127005)` lines that used to appear here were the
-SPU MIF depth notes, fixed by padding those tables to the depth the synthesiser
-builds.
+figure (33%, ~183 block-equivalents of the 553). There are no critical warnings
+any more: the two `Critical Warning (127005)` lines that used to appear here
+were the SPU MIF depth notes, fixed by padding those tables to the depth the
+synthesiser builds.
 
 Item 3 first went in as a *single* write-through shadow and came back out: the
 shadow only answers a completed line, while the composite pass for line y+1
@@ -1231,14 +1238,15 @@ alone because of the muxing onto each core's own master: **1,397 + 1,387 =
 2,784 combinational ALUTs and 1,574 registers** (the per-entity table in
 `NDS.map.rpt`). Neither instance raises a synthesis warning.
 
-Where it goes: the byte-lane generator and the variable shift in BIT_UNPACK
-and RL are one 32-bit shifter; Div/Sqrt share a 32-bit subtract-compare adder
-and the 22-bit count; CpuSet/CpuFastSet reuse the same address incrementer as
-the LZ77/RL copy loops. Nothing here is a table — the LZ77/RL windows live in
+Where it goes: the byte-lane generator and the variable shift in BIT_UNPACK and
+RL are one 32-bit shifter; Div/Sqrt share a 32-bit subtract-compare adder and
+the 22-bit count; CpuSet/CpuFastSet reuse the same address incrementer as the
+LZ77/RL copy loops. Nothing here is a table — the LZ77/RL windows live in
 memory, not in flops — so there is no cheap second trim: the shifter is the
 only candidate (it is the largest single piece, shared by three calls), and
-removing it would cost bit-packed BIOS formats that games do use. If the fit margin disappears, this module is the first
-thing to look at with `quartus_map` before touching the renderers again.
+removing it would cost bit-packed BIOS formats that games do use. If the fit
+margin disappears, this module is the first thing to look at with `quartus_map`
+before touching the renderers again.
 
 ## Full compile with the BIOS SWI bank
 
@@ -1320,10 +1328,11 @@ ARM7/ARM9 benches still pass unchanged (43 and 109 checks).
 
 ## The capacity settings, measured (2026-11-03)
 
-The shipping build at the time was 4,168 of 4,191 LABs (99%) while the same fit used 39,254
-of 41,910 ALMs (94%), and that gap is the question: ten ALMs to a LAB means
-4,168 LABs *are* 41,680 ALM slots, and 2,426 of them sat empty. Three settings
-were tried against it. Two move nothing, and the third is worth 9 LABs.
+The shipping build at the time was 4,168 of 4,191 LABs (99%) while the same fit
+used 39,254 of 41,910 ALMs (94%), and that gap is the question: ten ALMs to a
+LAB means 4,168 LABs *are* 41,680 ALM slots, and 2,426 of them sat empty. Three
+settings were tried against it. Two move nothing, and the third is worth 9
+LABs.
 
 | build | ALMs | registers | LABs | peak interconnect | setup worst | fit |
 |---|---|---|---|---|---|---|
@@ -1333,35 +1342,36 @@ were tried against it. Two move nothing, and the third is worth 9 LABs.
 | that setting + the CRT video modes + the RAM expansion pak (the pak tree) | 39,729 | 31,179 | 4,181 | 91.6% | -8.354 | 00:50:53 |
 | that + the firmware shadow's flag in its block RAM (today's tree) | 39,083 | 30,691 | 4,154 | 79.8% | -8.376 | 00:46:36 |
 
-**Duplication off.** `PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION OFF` removed 1,637
-duplicate registers -- 31,129 to 29,492 -- and changed the ALM count by zero and
-the LAB count by zero. The fitter's own breakdown says why: `[c] ALMs used for
-registers` is 3,452 of the 40,132 placed, so the duplicates were sharing ALMs the
-logic had already paid for. Registers were never the wall (29,492 of 83,820 is
-35%); the LAB is. Both switches, this one and
+**Duplication off.** `PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION OFF` removed
+1,637 duplicate registers -- 31,129 to 29,492 -- and changed the ALM count by
+zero and the LAB count by zero. The fitter's own breakdown says why: `[c] ALMs
+used for registers` is 3,452 of the 40,132 placed, so the duplicates were
+sharing ALMs the logic had already paid for. Registers were never the wall
+(29,492 of 83,820 is 35%); the LAB is. Both switches, this one and
 `ROUTER_LCELL_INSERTION_AND_LOGIC_DUPLICATION`, are reverted. They are
-fitter-stage, so the map before them is byte-identical either way and only a fit
-can price them -- which is why that row cost 49 minutes rather than 12.
+fitter-stage, so the map before them is byte-identical either way and only a
+fit can price them -- which is why that row cost 49 minutes rather than 12.
 
 **`OPTIMIZATION_MODE`.** It is still `BALANCED` in `NDS.qsf` while
-`OPTIMIZATION_TECHNIQUE` is `AREA`, so it looked like a lever that had never been
-pulled. Mapped with `AGGRESSIVE AREA` it produces **39,896 ALMs, 57,080 ALUTs and
-28,538 registers -- every digit identical to the balanced map**, with the same 46
-warnings: the technique assignment wins and the mode has nothing left to decide.
+`OPTIMIZATION_TECHNIQUE` is `AREA`, so it looked like a lever that had never
+been pulled. Mapped with `AGGRESSIVE AREA` it produces **39,896 ALMs, 57,080
+ALUTs and 28,538 registers -- every digit identical to the balanced map**, with
+the same 46 warnings: the technique assignment wins and the mode has nothing
+left to decide.
 
 **Placement effort.** `PLACEMENT_EFFORT_MULTIPLIER 4.0` is the one that pays:
-**4,159 LABs, 32 spare**, and setup 0.680 ns better at -8.475. It also costs 265
-registers, raises the interconnect peak from 89.3% to 90.0%, and gives up 0.118 ns
-of hold -- still +0.130, positive in every domain -- and it shortens the fit from
-00:56:15 to 00:44:53, the placer spending its time once instead of the router
-paying for a placement it did not like. The setting is in `NDS.qsf` and is part of
-the shipping build.
+**4,159 LABs, 32 spare**, and setup 0.680 ns better at -8.475. It also costs
+265 registers, raises the interconnect peak from 89.3% to 90.0%, and gives up
+0.118 ns of hold -- still +0.130, positive in every domain -- and it shortens
+the fit from 00:56:15 to 00:44:53, the placer spending its time once instead of
+the router paying for a placement it did not like. The setting is in `NDS.qsf`
+and is part of the shipping build.
 
-Rebuilt from the committed tree, with nothing but the ten macros added and no hand
-edits, the build reproduces every figure above and writes a **bit-identical
-`NDS.rbf`** (sha256 `f227095515d0b4df...`). Only the wall-clock minutes move
-between runs -- 45:00 here, 6:32 of it routing -- so the figures quoted in this
-file are from that clean run.
+Rebuilt from the committed tree, with nothing but the ten macros added and no
+hand edits, the build reproduces every figure above and writes a
+**bit-identical `NDS.rbf`** (sha256 `f227095515d0b4df...`). Only the wall-clock
+minutes move between runs -- 45:00 here, 6:32 of it routing -- so the figures
+quoted in this file are from that clean run.
 
 The rest of the gap is packing, and the fitter prices its own shortfall:
 
@@ -1373,13 +1383,13 @@ The rest of the gap is packing, and the fitter prices its own shortfall:
       LAB input limits                                   742
 ```
 
-Nine LABs is 90 ALMs, about 5% of what that hint holds, so effort recovers a real
-but small slice of it. There is no dense-packing assignment in 17.0 to ask for the
-rest (`FITTER_EFFORT` is `Standard Fit` and `ALM_REGISTER_PACKING_EFFORT` is
-already `HIGH`). The 838 is structural: 742 ALMs are lost to how many distinct
-inputs a LAB can take, which follows the shape of the logic rather than the effort
-the placer spends.
+Nine LABs is 90 ALMs, about 5% of what that hint holds, so effort recovers a
+real but small slice of it. There is no dense-packing assignment in 17.0 to ask
+for the rest (`FITTER_EFFORT` is `Standard Fit` and
+`ALM_REGISTER_PACKING_EFFORT` is already `HIGH`). The 838 is structural: 742
+ALMs are lost to how many distinct inputs a LAB can take, which follows the
+shape of the logic rather than the effort the placer spends.
 
-So the LAB count still follows the LUT volume -- 25,803 of the 40,132 placed ALMs
-hold LUT logic alone -- and a setting can recover the packing slack around it, not
-the logic itself.
+So the LAB count still follows the LUT volume -- 25,803 of the 40,132 placed
+ALMs hold LUT logic alone -- and a setting can recover the packing slack around
+it, not the logic itself.
