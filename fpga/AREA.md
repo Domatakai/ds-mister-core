@@ -525,8 +525,8 @@ fails, and `pll_hdmi` now closes at 0.022 ns.
 The configuration is in the project: seed 2,
 `PLACEMENT_EFFORT_MULTIPLIER 8.0` and the ten macros, so a clean checkout
 builds the design this document describes. It reproduces the mapped design --
-28,155 registers and 127 warnings, as above -- and the fit too, once the build
-stamp is pinned. `git archive HEAD` into an empty directory followed by
+28,155 registers and the mapper's own `0 errors, 127 warnings`, as
+above -- and the fit too, once the build stamp is pinned. `git archive HEAD` into an empty directory followed by
 `quartus_sh --flow compile NDS` fits at 4,157 of 4,191 LABs with setup -8.210
 ns and TNS -49,244.967, leaves `pll_hdmi` short by 0.515 ns and writes a
 3,764,100-byte `NDS.rbf`. A second flow on that same tree reproduced every
