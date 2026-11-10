@@ -935,6 +935,17 @@ prints each offending `file:line` and exits nonzero. Its suite,
 `python fpga/tools/test_check_docs.py`, holds the cases and also runs
 this checker over the tree, listing the documents it walked and
 failing when an independent walk counts a different number.
+Both sides of that gate were run for real on 2026-11-10, from a
+tree staged with `git archive HEAD:fpga`. The clean tree built with
+`build.bat --record`: the gate printed `docs ok: 2 file(s)`, the flow
+took 01:07:57 and exited 0, and the recorded bitstream carried the
+same sha256 as the release run above.
+
+A copy with one deliberate 108-column line appended to `README.md`
+stopped the build: `build.bat --no-test`, given a real Quartus bin64
+path, exited 1 with the checker's `README.md:1722` finding and the
+documents error, never printed `Compiling NDS`, left `output_files`
+empty and started no Quartus process.
 
 First full compile (analysis + fit + ASM + timing) is a Quartus job of
 about an hour: 01:02:48 of flow time in the 2026-11-09 rebuild AREA.md
