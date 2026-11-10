@@ -904,8 +904,9 @@ Release checklist:
 4. `python fpga/tools/bump_build_id.py --verify --max-age 30` --
    confirm the record matches the bitstream and the pin, and that
    it was written within the last 30 days, before copying the rbf.
-5. `build.bat` runs the tool self-test first; its cases cover the
-   stamp tool and the build.bat branches, and all must pass.
+5. `build.bat` runs both self-tests first; its cases cover the
+   stamp tool and the build.bat branches, the document check reads
+   this tree, and all must pass.
 
 The tool keeps its own cases: `python fpga/tools/test_bump_build_id.py` checks
 the bump, record and verify paths and the `build.bat` branches - its install
@@ -914,8 +915,9 @@ copies of this layout, needs no Quartus, and exits nonzero if any case fails.
 `build.bat` runs both checks -- the stamp cases and the document check
 described below -- before it compiles; `--no-test` skips them for a quick
 local build. `build.bat --record --verify` writes and checks the record
-without prompting, so a release can run unattended. A build that has a record closes with its stamp, its
-SHA-256 and how long ago it was recorded, below the deploy steps. `--verify`
+without prompting, so a release can run unattended. A build that has a
+record closes with its stamp, its SHA-256 and how long ago it was
+recorded, below the deploy steps. `--verify`
 also warns when the record predates the pin file. `--strict` makes that a
 failure instead, which is what an unattended release wants. `--max-age DAYS`
 fails the check when the record is older than that many days, and `build.bat
