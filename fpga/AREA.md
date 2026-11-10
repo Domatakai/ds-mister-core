@@ -1,13 +1,13 @@
 # Area budget: fitting the NDS core on the DE10-Nano's A6
 
-Measured from a full compile of the current tree (`quartus_sh --flow compile
-NDS`, Quartus 17.0.0, device `5CSEBA6U23I7`, 2026-10-31, run from `/tmp/ndsfull`
-because the fitter needs a path outside OneDrive), from the `quartus_map` pass
-that precedes it, and from standalone `quartus_map` probes of the candidate
-rewrites. Device capacities were read from a trivial fit on the same part, not
-from a datasheet.
+Measured from a full compile of the tree as it stood on 2026-10-31
+(`quartus_sh --flow compile NDS`, Quartus 17.0.0, device `5CSEBA6U23I7`, run
+from `/tmp/ndsfull` because the fitter needs a path outside OneDrive), from
+the `quartus_map` pass that precedes it, and from standalone `quartus_map`
+probes of the candidate rewrites. Device capacities were read from a trivial
+fit on the same part, not from a datasheet.
 
-## The budgets, as the design stands
+## The budgets at the 2026-10-31 baseline
 
 | resource | used | device | headroom |
 |---|---|---|---|
@@ -18,6 +18,12 @@ from a datasheet.
 | DSP blocks | 96 | 112 | 16 (86%) |
 | M10K bits | 1,877,683 | 5,662,720 | 3,785,037 (33%) |
 | I/O pins | 143 | 314 | 171 (46%) |
+
+These rows are the baseline this file was started from, when the design did
+not fit; they are not the current state. The area fits now -- 38,881 ALMs and
+4,157 of 4,191 LABs in the 2026-11-09 rebuild the last section records -- so
+read the table above as where the cut ladder began and the rungs below as how
+far it has come.
 
 41,910 ALMs each give two combinational nodes and two registers, so the LUT and
 register limits are the same 83,820. The node count is now *under* that limit —
