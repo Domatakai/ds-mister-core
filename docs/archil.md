@@ -1,10 +1,11 @@
 # Archil persistent disk
 
-The OSD Lab keeps its profiles in `localStorage` (`nds-mister-test-osd-profiles-v2`):
-one base profile for the console and one snapshot per cartridge. That is the
-browser's SD card — and it dies with the browser. Archil gives the same
-snapshot a real home, so the menu state, cheats and per-game values a player
-configured are still there on the next run, on any machine.
+The OSD Lab keeps its profiles in `localStorage`
+(`nds-mister-test-osd-profiles-v2`): one base profile for the console and one
+snapshot per cartridge. That is the browser's SD card — and it dies with the
+browser. Archil gives the same snapshot a real home, so the menu state, cheats
+and per-game values a player configured are still there on the next run, on any
+machine.
 
 Integration: `src/lib/archil.ts` (disk access) and `src/convex/archil.ts` (the
 server actions). The disk is part of the project's server workflow: the API key
@@ -57,9 +58,9 @@ if (snapshot.ok && snapshot.profiles) {
 }
 ```
 
-With no key configured the actions report `{ ok: false, error: "ARCHIL_API_KEY is not set." }`
-(or `configured: false` from `status`), so the lab keeps working on
-`localStorage` alone.
+With no key configured the actions report `{ ok: false, error: "ARCHIL_API_KEY
+is not set." }` (or `configured: false` from `status`), so the lab keeps
+working on `localStorage` alone.
 
 ## Verify
 

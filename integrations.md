@@ -1,13 +1,16 @@
 # VLY Integrations
 
-First-order integrations for AI, email, and payments with automatic usage billing through VLY integration keys.
+First-order integrations for AI, email, and payments with automatic usage
+billing through VLY integration keys.
 
 ## Environment Variables
 
-The following environment variables are automatically set during project creation:
+The following environment variables are automatically set during project
+creation:
 
 - `VLY_INTEGRATION_KEY`: Your unique integration key (format: `sk_*`)
-- `VLY_INTEGRATION_BASE_URL`: The base URL for the integration gateway (default: `https://integrations.freebuff.com/`)
+- `VLY_INTEGRATION_BASE_URL`: The base URL for the integration gateway
+  (default: `https://integrations.freebuff.com/`)
 
 ## Installation
 
@@ -125,7 +128,8 @@ if (result.success) {
 
 ## Important Notes
 
-1. The integration key (`VLY_INTEGRATION_KEY`) is automatically injected during project creation
+1. The integration key (`VLY_INTEGRATION_KEY`) is automatically injected during
+   project creation
 2. All API calls are automatically billed to your deployment based on usage
 3. Must be used in Convex actions with `"use node"` directive
 4. The integration key should never be exposed to the client
