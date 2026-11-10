@@ -932,8 +932,10 @@ line -- Markdown ends a heading at the newline, so the rest turns into
 body text. A wrapped title is caught by an unclosed bracket, a trailing
 comma, or a next line that opens with a lowercase joining word; a long
 heading whose next line is a lowercase fragment is caught too. It
-prints each offending `file:line` and exits nonzero;
-`python fpga/tools/test_check_docs.py` holds its cases.
+prints each offending `file:line` and exits nonzero. Its suite,
+`python fpga/tools/test_check_docs.py`, holds the cases and also runs
+this checker over the tree, listing the documents it walked and
+failing when an independent walk counts a different number.
 
 First full compile (analysis + fit + ASM + timing) is a Quartus job of
 about an hour: 01:02:48 of flow time in the 2026-11-09 rebuild AREA.md

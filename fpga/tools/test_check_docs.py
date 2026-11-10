@@ -59,6 +59,25 @@ def run(root, *args):
     return done.returncode, done.stdout.decode("utf-8", "replace")
 
 
+SKIP_DIRS = {".git", "node_modules", ".freebuff", "dist", "build",
+             ".next", "__pycache__"}
+
+
+def walk_documents(root):
+    """Every document under root, skipping what the checker skips.
+
+    Deliberately separate from the checker's own walk: if the two
+    disagree on the count, a directory went missing from one of them.
+    """
+    found = []
+    for base, dirs, names in os.walk(root):
+        dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
+        for name in sorted(names):
+            if name.lower().endswith(".md"):
+                path = os.path.join(base, name)
+                found.append(os.path.relpath(path, root))
+    return found
+
 def run_real(*paths):
     """Run the checker over real documents, as a person would."""
     done = subprocess.run(
@@ -236,17 +255,21 @@ def main():
     if os.path.isdir(os.path.join(repo, ".git")):
         targets.append(repo)
     bad = []
-    files = 0
+    report = []
     for target in targets:
+        walked = walk_documents(target)
         rc, out = run_real(target)
         found = re.search(r"docs ok: (\d+) file", out)
-        if rc != 0 or not found or int(found.group(1)) < 1:
+        agreed = bool(found) and int(found.group(1)) == len(walked)
+        if rc != 0 or not agreed:
             bad.append(out)
-            continue
-        files += int(found.group(1))
-    check("the real documents pass",
-          not bad and files >= len(targets),
-          "".join(bad) or "checked %d file(s)" % files)
+        label = os.path.basename(os.path.normpath(target))
+        report.append("  %s: %d file(s)%s" % (
+            label, len(walked),
+            "" if rc == 0 and agreed else " MISMATCH"))
+        report.append("    " + ", ".join(walked))
+    check("the real documents pass", not bad, "".join(report))
+    print("\n".join(report))
     print()
     if failures:
         print("%d of %d cases failed" % (len(failures), count))
