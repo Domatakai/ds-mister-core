@@ -443,8 +443,7 @@ So the remaining deficit is inside the 67.03 MHz domain, which no constraint
 can fix: it is design work in the core, and the -53.667 ns hold figure that
 looked impossible was the same constraint mistake seen from the other side.
 
-### The operand-form bench's decoder fixes, measured (2026-11-07,
-rebuilt 2026-11-09)
+### The operand-form bench's decoder fixes (2026-11-07, rebuilt 2026-11-09)
 
 `tb_arm9`'s program E drives every Thumb and ARM operand-encoding form with a
 different register in every field, so a read port that decodes the wrong field
