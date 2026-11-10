@@ -921,6 +921,12 @@ fails the check when the record is older than that many days, and `build.bat
 --max-age DAYS` forwards it. A bitstream given after the options is understood
 too, as in `--verify --max-age 30 output_files/NDS.rbf`.
 
+`python fpga/tools/check_docs.py` checks the documents themselves: a
+table row that continues onto a line without a leading pipe is
+reported, and so is any prose line past 79 columns (table rows and
+quoted output are exempt). It prints each offending `file:line` and
+exits nonzero; `python fpga/tools/test_check_docs.py` holds its cases.
+
 First full compile (analysis + fit + ASM + timing) is a Quartus job of
 about an hour: 01:02:48 of flow time in the 2026-11-09 rebuild AREA.md
 records, on 5:39:59 of CPU (`NUM_PARALLEL_PROCESSORS ALL` is set). A
