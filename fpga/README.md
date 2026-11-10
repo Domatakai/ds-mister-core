@@ -887,8 +887,8 @@ first. It moves the pinned build stamp -- today's date unless you pass YYMMDD
 -- so the bitstream you publish and its rebuilds carry the same date and the
 same fit. After the build, `python fpga/tools/bump_build_id.py --record` writes
 `output_files/NDS.rbf.stamp` beside the bitstream with the stamp, its size and
-SHA-256; it refuses when the bitstream is older than the stamp or when
-`build_id.v` disagrees with it. `--verify` re-reads that record against the
+SHA-256; it refuses when the bitstream predates `build_id.v` or when
+that file disagrees with the pin. `--verify` re-reads that record against the
 bitstream and the current pin, so a record left behind by an earlier build
 cannot vouch for the file you are about to copy.
 
@@ -904,9 +904,9 @@ Release checklist:
 4. `python fpga/tools/bump_build_id.py --verify --max-age 30` --
    confirm the record matches the bitstream and the pin, and that
    it was written within the last 30 days, before copying the rbf.
-5. `build.bat` runs both self-tests first; its cases cover the
-   stamp tool and the build.bat branches, the document check reads
-   this tree, and all must pass.
+5. `build.bat` checks before it compiles: the stamp cases, which
+   cover the stamp tool and the build.bat branches, then the
+   document check over this tree; all must pass.
 
 The tool keeps its own cases: `python fpga/tools/test_bump_build_id.py` checks
 the bump, record and verify paths and the `build.bat` branches - its install
