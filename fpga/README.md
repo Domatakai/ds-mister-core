@@ -918,9 +918,10 @@ fails the check when the record is older than that many days, and `build.bat
 --max-age DAYS` forwards it. A bitstream given after the options is understood
 too, as in `--verify --max-age 30 output_files/NDS.rbf`.
 
-First full compile (analysis + fit + ASM + timing) takes roughly
-10–20 min on a modern multicore machine (`NUM_PARALLEL_PROCESSORS ALL`
-is set). A build with the ten macros above fits with
+First full compile (analysis + fit + ASM + timing) is a Quartus job of
+about an hour: 01:02:48 of flow time in the 2026-11-09 rebuild AREA.md
+records, on 5:39:59 of CPU across all processors
+(`NUM_PARALLEL_PROCESSORS ALL` is set). A build with the ten macros above fits with
 `PLACEMENT_EFFORT_MULTIPLIER 8.0` (seed 2, as committed): **4,138 of
 4,191 LABs**, a 3,783,032-byte `NDS.rbf`, 18 fitter warnings, 0 errors
 from the fitter and the assembler, and setup short on the 67.03 MHz `emu`

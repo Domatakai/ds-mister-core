@@ -521,7 +521,7 @@ stamp is pinned. `git archive HEAD` into an empty directory followed by
 `quartus_sh --flow compile NDS` fits at 4,157 of 4,191 LABs with setup -8.210
 ns and TNS -49,244.967, leaves `pll_hdmi` short by 0.515 ns and writes a
 3,764,100-byte `NDS.rbf`. A second flow on that same tree reproduced every
-figure: 4,157 LABs, 38,881 ALMs, 34,005 fitted registers, interconnect
+figure: 4,157 LABs, 38,881 ALMs, 34,107 fitted registers, interconnect
 87.2/85.9/91.1, 18 warnings, the same bitstream size and the same setup, TNS
 and hold slacks. The fitter is deterministic given the same inputs.
 
@@ -531,10 +531,10 @@ clock, so each day's build carried a different constant into the netlist: the
 and duplication are the same either way -- both runs log `Created 222 register
 duplicates`, not the thousand that comparing fitted register counts suggests.
 What changes is the fit: 4,138 LABs and 32,510 fitted registers in the older
-run, 4,157 and 34,005 here, setup -8.325 against -8.210 and TNS -53,336.764
+run, 4,157 and 34,107 here, setup -8.325 against -8.210 and TNS -53,336.764
 against -49,244.967. The extra registers are retiming done differently on a
 different netlist, priced by the logs at 2,859 ps there against 1,770 ps here:
-one constant is worth 19 LABs and 1,495 fitted registers.
+one constant is worth 19 LABs and 1,597 fitted registers.
 
 `sys/build_id.txt` now pins the stamp the flow writes -- 261108, the build
 recorded above -- so a rebuild of this tree reproduces its own fit;
