@@ -552,6 +552,17 @@ it: `git archive HEAD` into an empty directory wrote that stamp, fitted at
 4,157 LABs with setup -8.210 ns, and produced a bitstream byte-identical to the
 one above (sha256 `a4adcf373ee886867621bf9a...`).
 
+The release run of 2026-11-09 came through `build.bat --record --verify
+--strict --max-age 30` instead: the stamp and document self-tests
+passed, and the flow took 01:14:57 (13:59 analysis, 58:39 fit, 1:18
+assembly and 1:01 timing) with 03:52:27 of CPU on all processors. It
+fitted at the same 4,157 LABs, 38,881 ALMs and 34,107 registers, with
+setup -8.210 ns and TNS -49,244.967 on the core domain, 18 fitter
+warnings and none from the assembler, and it recorded stamp 261108
+against the bitstream and verified it. That bitstream is the same
+3,764,100 bytes with the same sha256, so the gate costs its own run
+time and changes nothing in the fit.
+
 In that microphone build only the 67.03 MHz core fails: the emu domain -8.325
 with -53,336.764, and every other domain closes. `pll_hdmi` is 0.022 ns with
 0.000 of TNS. `h2f_user0_clk` is +3.400, `FPGA_CLK1_50` +7.205, `FPGA_CLK2_50`

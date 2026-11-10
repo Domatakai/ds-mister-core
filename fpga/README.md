@@ -932,7 +932,8 @@ exits nonzero; `python fpga/tools/test_check_docs.py` holds its cases.
 
 First full compile (analysis + fit + ASM + timing) is a Quartus job of
 about an hour: 01:02:48 of flow time in the 2026-11-09 rebuild AREA.md
-records, on 5:39:59 of CPU (`NUM_PARALLEL_PROCESSORS ALL` is set). A
+records, 01:14:57 in the release run through `build.bat`, on 5:39:59
+and 3:52:27 of CPU (`NUM_PARALLEL_PROCESSORS ALL` is set). A
 build with the ten macros above fits with
 `PLACEMENT_EFFORT_MULTIPLIER 8.0` (seed 2, as committed): **4,138 of
 4,191 LABs**, a 3,783,032-byte `NDS.rbf`, 18 fitter warnings, 0 errors
