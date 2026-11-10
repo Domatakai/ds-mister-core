@@ -189,7 +189,8 @@ def main():
 
     root = new()
     write(root, "docs/hd6.md",
-          "```" + chr(10) + "# a comment (unclosed" + chr(10) + "```" + chr(10))
+          "```" + chr(10) + "# a comment (unclosed"
+          + chr(10) + "```" + chr(10))
     rc, out = run(root, "docs")
     check("a heading-like comment in a fence passes", rc == 0, out)
 
