@@ -935,6 +935,7 @@ prints each offending `file:line` and exits nonzero. Its suite,
 `python fpga/tools/test_check_docs.py`, holds the cases and also runs
 this checker over the tree, listing the documents it walked and
 failing when an independent walk counts a different number.
+
 Both sides of that gate were run for real on 2026-11-10, from a
 tree staged with `git archive HEAD:fpga`. The clean tree built with
 `build.bat --record`: the gate printed `docs ok: 2 file(s)`, the flow
@@ -946,6 +947,7 @@ stopped the build: `build.bat --no-test`, given a real Quartus bin64
 path, exited 1 with the checker's `README.md:1722` finding and the
 documents error, never printed `Compiling NDS`, left `output_files`
 empty and started no Quartus process.
+
 A build with no python prints `python was not found - the documents
 were not checked` and carries on; treat such a build as unchecked, not
 as verified.
