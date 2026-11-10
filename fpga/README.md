@@ -23,12 +23,13 @@ is written down rather than left to be discovered:
   QUAD_STRIP (their vertices are consumed, nothing is drawn), and the span
   fill — the rasteriser walks the bounding box a pixel per cycle, which is
   correct but slower than the hardware's budget for a dense mesh.
-- **M4, sound, saves and the cartridge** — the sixteen SPU channels, the
-  AUXSPI probe with the emulated chip behind it (EEPROM and FRAM read *and*
-  write), the MT-32-pi MIDI link and the system I/O a firmware boot needs are
-  in. Missing: the SPU's two capture units (`0x4000508`), the two FLASH parts'
+- **M4, sound, saves and the cartridge** — the sixteen SPU channels, the AUXSPI
+  probe with the emulated chip behind it (EEPROM and FRAM read *and* write),
+  the MT-32-pi MIDI link and the system I/O a firmware boot needs are in.
+  Missing: the SPU's two capture units (`0x4000508`), the two FLASH parts'
   *upper* address space (they carry data below 64 KB — see `tb_flash_save` —
-  and read `FFh` above it), `.sav` persistence and erase, and the `0x0555`/`0x0AAA` cart unlock sequence.
+  and read `FFh` above it), `.sav` persistence and erase, and the
+  `0x0555`/`0x0AAA` cart unlock sequence.
 - **M5, sensors** — the microphone is Off / R3 button / Host device. Host
   device is the board's LTC2308 converter, one channel at 48 kHz, which is the
   only input path there is: the HPS has no audio capture, so a USB microphone
@@ -221,18 +222,18 @@ each byte is prepared at the end of the previous one, and the chip select
 (the hold bit) genuinely ends a command, so a sequence that forgets to
 hold it behaves as it would on hardware.
 
-* **Firmware, HLE.**  Games read the user settings that live in the wifi
-  flash at `3FE00h`/`3FF00h` — nickname, language, alarm, touch
-  calibration, language. Rather than carry the owner's 256 KB dump, those two
-  blocks are synthesised by a generated table ([`fw_default`](rtl/bus/fw_default.sv),
-  from [tools/gen_fw_default.py](tools/gen_fw_default.py)) in GBATEK's
-  layout *with valid CRC16-CCITT protection*, and writes are shadowed in a
-  512-byte RAM. The OSD **Language** row picks the language halfword and the
-  CRC that covers it, so a game's text language follows the menu. RDID/RDSR/READ/FASTREAD/WREN/WRDI/PP/PW/PE/SE are the
-  part's own commands: programming only clears bits, a page erase walks
-  the shadow a byte per clock, and the write-enable latch and busy bit
-  follow through. Reads outside the two blocks return `FFh`, as an erased
-  part does.
+* **Firmware, HLE.**  Games read the user settings that live in the wifi flash
+  at `3FE00h`/`3FF00h` — nickname, language, alarm, touch calibration,
+  language. Rather than carry the owner's 256 KB dump, those two blocks are
+  synthesised by a generated table ([`fw_default`](rtl/bus/fw_default.sv), from
+  [tools/gen_fw_default.py](tools/gen_fw_default.py)) in GBATEK's layout *with
+  valid CRC16-CCITT protection*, and writes are shadowed in a 512-byte RAM. The
+  OSD **Language** row picks the language halfword and the CRC that covers it,
+  so a game's text language follows the menu.
+  RDID/RDSR/READ/FASTREAD/WREN/WRDI/PP/PW/PE/SE are the part's own commands:
+  programming only clears bits, a page erase walks the shadow a byte per clock,
+  and the write-enable latch and busy bit follow through. Reads outside the two
+  blocks return `FFh`, as an erased part does.
 * **Touchscreen.**  The TSC2046 command byte (start bit, channel, 8/12-bit,
   single/differential) is decoded for X, Y, both pressure channels, the
   battery sensor, the microphone and temperature. X and Y come from
@@ -362,11 +363,11 @@ skipped outright. That took the BG phase from 567 to 504 clocks and the whole
 line from 1196 to 1133. The backdrop fill, which wrote one pixel pair a clock,
 now writes a quad — the line-buffer entries are 84 bits — so its 128 clocks are
 64 and the line is 1069. Both palette-bank fills then stopped paying a
-handshake per entry: the sixteen entries are issued one address a clock and read
-two clocks behind, 17 clocks where it used to be 32, for the 4bpp BG bank and a
-sprite's OBJ bank alike. Another 30 off the line — BG 440 -> 425, OBJ 345 -> 330
-— and it is 1039 (`vvp /tmp/tb_rd +states` prints the per-state histogram the
-figures come from).
+handshake per entry: the sixteen entries are issued one address a clock and
+read two clocks behind, 17 clocks where it used to be 32, for the 4bpp BG bank
+and a sprite's OBJ bank alike. Another 30 off the line — BG 440 -> 425, OBJ 345
+-> 330 — and it is 1039 (`vvp /tmp/tb_rd +states` prints the per-state
+histogram the figures come from).
 
 ### The per-line OAM scan is a pipeline
 
@@ -771,13 +772,13 @@ Seven were real and are fixed:
   read that already exists and synthesises to nothing. Measured on a throwaway
   module with the same shape: 5 such warnings without it, 0 with.
 - **10030, six** — the SPU's ADPCM tables are inferred as memories, and with no
-  write port Quartus reports each port of each table as undriven. Entry 0 is now
-  rewritten with the value it already holds, which defines the ports without
-  changing a table entry. Measured on a throwaway ROM: 3 warnings with no write
-  port, 1 with a never-taken write (that form also earns a 10037 for the constant
-  condition), 0 with this one. Block memory is unchanged (1,873,331 bits), so the
-  tables are still in M10K, and the warning fixes together come out 76 ALMs and
-  103 ALUTs smaller than before them.
+  write port Quartus reports each port of each table as undriven. Entry 0 is
+  now rewritten with the value it already holds, which defines the ports
+  without changing a table entry. Measured on a throwaway ROM: 3 warnings with
+  no write port, 1 with a never-taken write (that form also earns a 10037 for
+  the constant condition), 0 with this one. Block memory is unchanged
+  (1,873,331 bits), so the tables are still in M10K, and the warning fixes
+  together come out 76 ALMs and 103 ALUTs smaller than before them.
 - **15610 twice, and 21074** — `SD_SPI_MISO` and `ADC_SDO` were top-level
   inputs that nothing in the core read. `SD_SPI_MISO` is still gone, because
   there is no secondary SD card. `ADC_SDO` is back: `mic_adc` samples the
@@ -800,14 +801,14 @@ What is left is the tool describing its own implementation, plus the framework:
 
 The read-during-write notes were audited memory by memory rather than accepted.
 `rxq_mem` and `vfifo` cannot collide: both gate their push on `!full`, so the
-write pointer cannot equal the read pointer being read. `comp` is rebuilt by its
-state machine before the transform that consumes it. `q_mem` feeds the transmit
-shift register through a combinational read, and `mem` in the backup chip is
-written only during a WRITE command and read only during a READ command; in both
-the edge a write lands on is after the byte has been used, so the old value is
-the correct value. The rest (`ascal`, `mt32pi`, `shadowmask`) are framework
-files. None of them needs a bypass, and adding one would spend timing for no
-functional gain.
+write pointer cannot equal the read pointer being read. `comp` is rebuilt by
+its state machine before the transform that consumes it. `q_mem` feeds the
+transmit shift register through a combinational read, and `mem` in the backup
+chip is written only during a WRITE command and read only during a READ
+command; in both the edge a write lands on is after the byte has been used, so
+the old value is the correct value. The rest (`ascal`, `mt32pi`, `shadowmask`)
+are framework files. None of them needs a bypass, and adding one would spend
+timing for no functional gain.
 
 None of them changes what the design does, and none is suppressed: the count is
 reported as it is so the next real warning is visible.
@@ -825,19 +826,21 @@ quartus_map NDS --verilog_macro="NDS_ONE_SCREEN=1" # no engine B
 quartus_map NDS --verilog_macro="NDS_NO_SWI_HLE=1" # no BIOS SWI bank
 ```
 
-One macro per option. Several inside a single `--verilog_macro` value, or in one
-`set_global_assignment -name VERILOG_MACRO` line, apply only the first and drop
-the rest without a word, so the rung silently measures the unchanged design.
+One macro per option. Several inside a single `--verilog_macro` value, or in
+one `set_global_assignment -name VERILOG_MACRO` line, apply only the first and
+drop the rest without a word, so the rung silently measures the unchanged
+design.
 
 Pass them through the command line: on a project Quartus has open, a
 `VERILOG_MACRO` written into the `.qsf` can be rewritten out from under you.
 Measured on the A6 with the area settings, the rungs map to 54,170 ALMs
-(`NDS_NO_3D` alone), 48,545 (3D, cheats and sound out), 42,061 (also one screen)
-and 40,905 (also the BIOS bank) — 129%, 116%, 100.4% and 97.6% of the device.
-The last two switches change what the core *is*: one screen at a time, and no
-BIOS calls at all. Even that deepest rung does not fit — fitted for real it
-needs **4,245 LABs against 4,191, 54 over** (`170012`) — so the switches price
-the cuts, they do not deliver a build. `AREA.md` has the ladder and the fit.
+(`NDS_NO_3D` alone), 48,545 (3D, cheats and sound out), 42,061 (also one
+screen) and 40,905 (also the BIOS bank) — 129%, 116%, 100.4% and 97.6% of the
+device. The last two switches change what the core *is*: one screen at a time,
+and no BIOS calls at all. Even that deepest rung does not fit — fitted for real
+it needs **4,245 LABs against 4,191, 54 over** (`170012`) — so the switches
+price the cuts, they do not deliver a build. `AREA.md` has the ladder and the
+fit.
 
 Two framework switches can be stacked on the same deep rung, and they are the
 framework's own: `MISTER_DISABLE_YC` (no YC/S-Video output) and
@@ -1044,20 +1047,20 @@ synth.
 
 The module also returns the Pi's LCD framebuffer as a serial bitstream
 (`mt32_lcd_en` / `mt32_lcd_pix`, 128×64 or 128×32). `rtl/video/lcd_overlay.sv`
-captures it into an 8 Kbit framebuffer (one M10K) and draws it over the
-picture when **MIDI → Pi LCD on screen** is on: the scaler enlarges the
-256×384 frame, so the Pi's own status text ("MT-32: ROM OK") is readable
-while the game runs underneath. **Pi LCD size** picks 1x (128×64, exact
-device pixels, half the picture width) or 2x (256×128, the full width) —
-at 2x two adjacent pixels and two adjacent lines read the same framebuffer
-bit, so the read address is just the coordinate shifted right by one and
-no separate scaler or line buffer is needed for the overlay. **Pi LCD
-corner** puts the box in any of the four corners of the composed frame:
-only the origin moves, and since 2x fills the full width, the left and
-right choices coincide in that size while top and bottom still apply. The box only appears once the Pi answers on I2C
+captures it into an 8 Kbit framebuffer (one M10K) and draws it over the picture
+when **MIDI → Pi LCD on screen** is on: the scaler enlarges the 256×384 frame,
+so the Pi's own status text ("MT-32: ROM OK") is readable while the game runs
+underneath. **Pi LCD size** picks 1x (128×64, exact device pixels, half the
+picture width) or 2x (256×128, the full width) — at 2x two adjacent pixels and
+two adjacent lines read the same framebuffer bit, so the read address is just
+the coordinate shifted right by one and no separate scaler or line buffer is
+needed for the overlay. **Pi LCD corner** puts the box in any of the four
+corners of the composed frame: only the origin moves, and since 2x fills the
+full width, the left and right choices coincide in that size while top and
+bottom still apply. The box only appears once the Pi answers on I2C
 (`mt32_available`), so a board without one never shows an empty black
-rectangle. It costs two pixel-clock enables of latency and nothing else:
-with the option off the picture passes through untouched.
+rectangle. It costs two pixel-clock enables of latency and nothing else: with
+the option off the picture passes through untouched.
 
 Its audio comes back as 48 kHz I2S and is summed with the core's own
 output by `rtl/audio/audio_mix.sv`, which runs in the 24.576 MHz audio
@@ -1543,14 +1546,13 @@ MiSTer virtual gamepad ("Define joystick buttons" order):
 | L2/R2/L3/R3 | Stylus tap / microphone / lid close (configurable) |
 | Left stick | Stylus cursor (alternative mode) |
 
-KEYINPUT follows GBATEK exactly (bit0=A … bit11=Y, 0=Pressed),
-verified in `tb_input_mapper`. Holding the **Lid close** chord (L2+R2 by
-default) shuts the shell: the hinge reads as closed on `EXTKEYIN` bit 7 and
-the screens go dark, the way a real DS behaves with its lid down. The chord
-deliberately avoids Select/Start, which the boot menu already uses. Keyboard users map the keyboard as a
-joystick in the MiSTer menu core and it arrives through the same path.
-Stylus cursors accelerate while held (250 px/s base, 1000 px/s after
-~1 s).
+KEYINPUT follows GBATEK exactly (bit0=A … bit11=Y, 0=Pressed), verified in
+`tb_input_mapper`. Holding the **Lid close** chord (L2+R2 by default) shuts the
+shell: the hinge reads as closed on `EXTKEYIN` bit 7 and the screens go dark,
+the way a real DS behaves with its lid down. The chord deliberately avoids
+Select/Start, which the boot menu already uses. Keyboard users map the keyboard
+as a joystick in the MiSTer menu core and it arrives through the same path.
+Stylus cursors accelerate while held (250 px/s base, 1000 px/s after ~1 s).
 
 ## OSD menu
 
@@ -1624,13 +1626,14 @@ by side, 4:3 single screen, 2:3 for the stacked HDMI and 31 kHz pictures.
 Three of the DS-specific rows are not just labels:
 
 - **Lid close** — holding the chosen chord (L2+R2 by default, L3+R3 the
-alternative) shuts the shell: `input_mapper` reports the hinge closed, which
-is what GBATEK's `EXTKEYIN` bit 7 (`4000136h`, ARM7 only) is for, and
-`screen_composer` blacks the composed frame because both backlights go out on
-a real DS. The chord deliberately avoids Select and Start, which already
-drive the boot menu. The hinge *interrupt* (IRQ 22, NDS7) is raised from the hinge edge, so a
-game that waits on it sees the shell shut; `tb_main_bus` proves it fires on
-close, fires on open, and stays quiet while the lid is held still.
+  alternative) shuts the shell: `input_mapper` reports the hinge closed, which
+  is what GBATEK's `EXTKEYIN` bit 7 (`4000136h`, ARM7 only) is for, and
+  `screen_composer` blacks the composed frame because both backlights go out on
+  a real DS. The chord deliberately avoids Select and Start, which already
+  drive the boot menu. The hinge *interrupt* (IRQ 22, NDS7) is raised from the
+  hinge edge, so a game that waits on it sees the shell shut; `tb_main_bus`
+  proves it fires on close, fires on open, and stays quiet while the lid is
+  held still.
 - **Language** — the language the DS firmware reports to a game, i.e. the
 language its text comes up in. `fw_default` is the synthesised user-settings
 block served over SPI, so the row substitutes the language halfword at
