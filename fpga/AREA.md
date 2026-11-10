@@ -1011,8 +1011,7 @@ together with item 7, or a larger device.
 | 1–4 (measured, no accuracy loss) | 36,900 | 105,000 | 1.25× |
 | + 5–7 | 45,400 | 96,500 | 1.15× |
 | + 8–10 | 52,900 | 89,000 | 1.06× |
-| + capability cuts (~4,850: 3D merge pass, one OSD, scanlines,
-shadowmask, cheat entries 32→8) | 57,750 | 84,120 | 1.004× |
+| + capability cuts (~4,850: 3D merge pass, one OSD, scanlines, shadowmask, cheat entries 32→8) | 57,750 | 84,120 | 1.004× |
 
 So taking *every* item, including the ones that cost accuracy, still leaves the
 design about 300 ALUTs over. That is not a fit: the fitter duplicates logic,
