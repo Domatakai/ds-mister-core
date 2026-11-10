@@ -926,9 +926,11 @@ too, as in `--verify --max-age 30 output_files/NDS.rbf`.
 
 `python fpga/tools/check_docs.py` checks the documents themselves: a
 table row that continues onto a line without a leading pipe is
-reported, and so is any prose line past 79 columns (table rows and
-quoted output are exempt). It prints each offending `file:line` and
-exits nonzero; `python fpga/tools/test_check_docs.py` holds its cases.
+reported, so is any prose line past 79 columns (table rows and quoted
+output are exempt), and so is a heading whose title runs onto the next
+line -- Markdown ends a heading at the newline, so the rest turns into
+body text. It prints each offending `file:line` and exits nonzero;
+`python fpga/tools/test_check_docs.py` holds its cases.
 
 First full compile (analysis + fit + ASM + timing) is a Quartus job of
 about an hour: 01:02:48 of flow time in the 2026-11-09 rebuild AREA.md

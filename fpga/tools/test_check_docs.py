@@ -149,6 +149,50 @@ def main():
     check("no argument checks the project directory",
           rc == 1 and "AREA.md:1: prose" in out, out)
 
+    root = new()
+    write(root, "docs/hd.md",
+          "### Decoder fixes (2026-11-07, rebuilt" + chr(10)
+          + "2026-11-09)" + chr(10))
+    rc, out = run(root, "docs")
+    check("heading with an unclosed bracket fails",
+          rc == 1 and "hd.md:1: heading continues onto the next line" in out,
+          out)
+
+    root = new()
+    write(root, "docs/hd2.md",
+          "## Sizing," + chr(10) + chr(10) + "Prose." + chr(10))
+    rc, out = run(root, "docs")
+    check("heading ending in a comma fails",
+          rc == 1 and "hd2.md:1: heading continues" in out, out)
+
+    root = new()
+    write(root, "docs/hd3.md",
+          "## A long heading that runs most of the width and then stops"
+          + chr(10) + "carries on here" + chr(10))
+    rc, out = run(root, "docs")
+    check("long heading followed by lowercase text fails",
+          rc == 1 and "hd3.md:1: heading continues" in out, out)
+
+    root = new()
+    write(root, "docs/hd4.md",
+          "## A long heading that runs most of the width and then stops"
+          + chr(10) + "A separate sentence follows." + chr(10))
+    rc, out = run(root, "docs")
+    check("long heading followed by a capital passes", rc == 0, out)
+
+    root = new()
+    write(root, "docs/hd5.md",
+          "## Balanced heading (2026-11-07)" + chr(10) + chr(10) + "Prose."
+          + chr(10))
+    rc, out = run(root, "docs")
+    check("a closed heading passes", rc == 0, out)
+
+    root = new()
+    write(root, "docs/hd6.md",
+          "```" + chr(10) + "# a comment (unclosed" + chr(10) + "```" + chr(10))
+    rc, out = run(root, "docs")
+    check("a heading-like comment in a fence passes", rc == 0, out)
+
     print()
     if failures:
         print("%d of %d cases failed" % (len(failures), count))

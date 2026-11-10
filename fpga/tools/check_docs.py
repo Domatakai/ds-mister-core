@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Check the documents for two layout faults.
+"""Check the documents for three layout faults.
 
 A table row that continues onto a line with no leading pipe ends the table
-there for a renderer, and a prose line past 79 columns is hard to read in a
-diff. Both are reported with their `file:line` and the script exits 1 when
-it finds any:
+there for a renderer, a prose line past 79 columns is hard to read in a
+diff, and a heading whose title runs onto the next line loses the rest of
+it, because Markdown ends a heading at the newline. All three are
+reported with their `file:line` and the script exits 1 when it finds any:
 
   python fpga/tools/check_docs.py            # the fpga documents
   python fpga/tools/check_docs.py README.md docs
@@ -13,7 +14,8 @@ Columns are counted as characters, not bytes: an em dash is one column and
 three bytes, and counting bytes once hid four long lines. Table rows and the
 lines inside fenced blocks are exempt from the width limit, because table
 rows cannot be wrapped without breaking the table and quoted tool output has
-to stay as it was printed.
+to stay as it was printed. A heading inside a fence is a comment in the
+quoted code, so only headings outside fences are checked.
 """
 
 import io
@@ -21,6 +23,7 @@ import os
 import sys
 
 LIMIT = 79
+CONTINUED = 60
 SKIP = {".git", "node_modules", ".freebuff", "dist", "build", ".next",
         "__pycache__"}
 
@@ -28,6 +31,37 @@ SKIP = {".git", "node_modules", ".freebuff", "dist", "build", ".next",
 def project_dir():
     here = os.path.dirname(os.path.abspath(__file__))
     return os.path.normpath(os.path.join(here, os.pardir))
+
+
+def is_heading(line):
+    """True for an ATX heading: up to six hashes, then a space or the end."""
+    stripped = line.lstrip()
+    if not stripped.startswith("#"):
+        return False
+    hashes = len(stripped) - len(stripped.lstrip("#"))
+    rest = stripped[hashes:]
+    return hashes <= 6 and (rest == "" or rest.startswith(" "))
+
+
+def heading_continues(line, nxt):
+    """True when a heading looks like a title that was wrapped.
+
+    Markdown has no continued heading: the second line becomes body
+    text, so the title a reader sees stops at the newline. The remains
+    are a bracket the heading never closes, a trailing comma, or a next
+    line that carries the sentence on -- a lowercase word or a closing
+    bracket -- under a heading already most of the width.
+    """
+    body = line.strip()
+    if (body.count("(") != body.count(")")
+            or body.count("[") != body.count("]")):
+        return True
+    if body.endswith(","):
+        return True
+    nxt = nxt.strip()
+    if not nxt or len(body) < CONTINUED:
+        return False
+    return nxt[0].islower() or nxt[0] in "),;"
 
 
 def markdown_files(paths):
@@ -59,6 +93,11 @@ def check(path):
             table = False
             continue
         if fenced:
+            continue
+        if is_heading(line) and heading_continues(
+                line, lines[n + 1] if n + 1 < len(lines) else ""):
+            problems.append(
+                (n + 1, "heading continues onto the next line"))
             continue
         if line.startswith("|"):
             table = True
