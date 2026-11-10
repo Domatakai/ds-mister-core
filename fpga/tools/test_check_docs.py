@@ -13,6 +13,7 @@ the end.
 
 import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -55,6 +56,14 @@ def run(root, *args):
         [sys.executable, os.path.join(root, "tools", "check_docs.py")]
         + list(args),
         cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    return done.returncode, done.stdout.decode("utf-8", "replace")
+
+
+def run_real(*paths):
+    """Run the checker over real documents, as a person would."""
+    done = subprocess.run(
+        [sys.executable, TOOL] + list(paths),
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     return done.returncode, done.stdout.decode("utf-8", "replace")
 
 
@@ -222,6 +231,22 @@ def main():
     rc, out = run(root, "docs")
     check("a lowercase imperative after a heading passes", rc == 0, out)
 
+    targets = [os.path.dirname(HERE)]
+    repo = os.path.dirname(targets[0])
+    if os.path.isdir(os.path.join(repo, ".git")):
+        targets.append(repo)
+    bad = []
+    files = 0
+    for target in targets:
+        rc, out = run_real(target)
+        found = re.search(r"docs ok: (\d+) file", out)
+        if rc != 0 or not found or int(found.group(1)) < 1:
+            bad.append(out)
+            continue
+        files += int(found.group(1))
+    check("the real documents pass",
+          not bad and files >= len(targets),
+          "".join(bad) or "checked %d file(s)" % files)
     print()
     if failures:
         print("%d of %d cases failed" % (len(failures), count))
