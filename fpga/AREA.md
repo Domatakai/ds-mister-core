@@ -530,6 +530,17 @@ than the 4,138 recorded, 1,597 more fitted registers (34,107 against
 smaller -- the same 19 LABs and 1,597 registers this file prices as the
 cost of one build stamp, measured here on a tree that predates the pin.
 
+The rumble row was rebuilt the same way: `17492a1` with the ten macros
+appended as `6f925da` commits them, the later pin mechanism and 261108.
+It fits at 4,118 of 4,191 LABs (73 spare) with setup -8.752, TNS
+-58,562.464, hold +0.250, and a 3,735,040-byte `NDS.rbf` (sha256
+`f747b986...`). The row's 4,122 LABs, -9.006, -52,072.394, +0.245 and
+3,745,296 bytes are not reproduced: 4 LABs fewer, 0.254 ns better setup,
+6,490.070 more TNS, 0.005 better hold and 10,256 bytes smaller. This
+tree is not the committed design -- 143 pins against 144, the microphone
+ADC's line absent -- so unlike the microphone row it lands somewhere of
+its own, and its fit takes 01:25:59.
+
 That is 0.090 ns of setup for a build that exists, and it is the only change:
 `NDS.qsf` asks for 8.0 with the reason beside it. The margin it buys is 65
 LABs, the same order as the 48 the previous build had, so the next feature
