@@ -541,6 +541,19 @@ tree is not the committed design -- 143 pins against 144, the microphone
 ADC's line absent -- so unlike the microphone row it lands somewhere of
 its own, and its fit takes 01:25:59.
 
+The TNS this row reports measures something the worst slack cannot.
+All of it sits in the emu domain: -58,562.464, against -1.239 for
+pll_hdmi and 0 for every other clock. TNS sums the failing endpoints;
+-8.752 is one endpoint's minimum. In the rebuild's report the 10,000
+worst setup paths, all between -8.752 and -7.935, end at 56
+destinations and sum to -458.431, 0.8% of the TNS -- the deepest
+failures are a sliver. The other -58,104.033 comes from endpoints no
+deeper than -7.935, which takes at least 7,323 of them beside those 56,
+so the rebuild carries at least 7,379 failing endpoints. That is how
+setup can improve 0.254 ns while TNS grows 6,490.070 more negative: the
+bulk of the population moved, not its worst path. The row's own report
+is gone, so its endpoint count cannot be recovered.
+
 That is 0.090 ns of setup for a build that exists, and it is the only change:
 `NDS.qsf` asks for 8.0 with the reason beside it. The margin it buys is 65
 LABs, the same order as the 48 the previous build had, so the next feature
