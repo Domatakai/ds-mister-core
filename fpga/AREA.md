@@ -509,6 +509,16 @@ and writes a 3,783,032-byte `NDS.rbf`.
 | 2026-11-08, effort 8.0, rumble pak | 4,122 | 69 | -9.006 | -52,072.394 | +0.245 | 3,745,296 |
 | 2026-11-08 later, effort 8.0, microphone ADC | 4,138 | 53 | -8.325 | -53,336.764 | +0.238 | 3,783,032 |
 
+None of these four rows can be rebuilt to the numbers shown from the
+committed tree: they all ran before the stamp was pinned (2026-11-09),
+so the `BUILD_DATE` each carried is not in the repository -- and that
+constant moves the fit, as the 261031-against-261108 difference above
+shows. The 2026-11-06 row also needs `PLACEMENT_EFFORT_MULTIPLIER 4.0`,
+which `NDS.qsf` no longer sets (`2f75cc4` moved it to 8.0). The two
+2026-11-08 rows' features are still in the tree (`rumble` in
+`main_bus.sv`, `mic_adc` in `rtl/input/`), so their logic rebuilds; only
+their fit figures do not.
+
 That is 0.090 ns of setup for a build that exists, and it is the only change:
 `NDS.qsf` asks for 8.0 with the reason beside it. The margin it buys is 65
 LABs, the same order as the 48 the previous build had, so the next feature
