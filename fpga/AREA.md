@@ -519,6 +519,17 @@ which `NDS.qsf` no longer sets (`2f75cc4` moved it to 8.0). The two
 `main_bus.sv`, `mic_adc` in `rtl/input/`), so their logic rebuilds; only
 their fit figures do not.
 
+The microphone row was rebuilt to check that reading: `6f925da`'s tree,
+the same RTL with the ten macros committed, staged with the later pin
+mechanism and 261108 substituted for its clock date, fits at 4,157 of
+4,191 LABs with setup -8.210 and TNS -49,244.967, hold +0.250, and
+writes a 3,764,100-byte `NDS.rbf` with sha256 `a4adcf37...`. Every
+figure is the committed design's and none is the row's -- 19 more LABs
+than the 4,138 recorded, 1,597 more fitted registers (34,107 against
+32,510), 0.115 ns better setup, 4,091.797 of TNS, and 18,932 bytes
+smaller -- the same 19 LABs and 1,597 registers this file prices as the
+cost of one build stamp, measured here on a tree that predates the pin.
+
 That is 0.090 ns of setup for a build that exists, and it is the only change:
 `NDS.qsf` asks for 8.0 with the reason beside it. The margin it buys is 65
 LABs, the same order as the 48 the previous build had, so the next feature
