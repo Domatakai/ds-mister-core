@@ -527,7 +527,7 @@ from 41:21 to 08:33 with interconnect 89.7 against 94.2 on the H channel. TNS
 is 1,264 worse, so the domain that already failed still does; nothing new
 fails, and `pll_hdmi` now closes at 0.022 ns.
 
-### Reproducing these figures (2026-11-09)
+### Reproducing these figures (2026-11-09, rehearsed 2026-11-10)
 
 The configuration is in the project: seed 2,
 `PLACEMENT_EFFORT_MULTIPLIER 8.0` and the ten macros, so a clean checkout
@@ -570,6 +570,16 @@ warnings and none from the assembler, and it recorded stamp 261108
 against the bitstream and verified it. That bitstream is the same
 3,764,100 bytes with the same sha256, so the gate costs its own run
 time and changes nothing in the fit.
+Rehearsed again on 2026-11-10 from a tree staged at `4c9e3eb`, the
+checklist ran end to end: `bump_build_id.py` moved the pin 261108 to
+261110, `build.bat --record` passed its 73 stamp cases and the document
+check, and `--verify --max-age 30` matched the new record. The stamp
+reached the design -- `build_id.v` holds `"261110"` -- and the
+bitstream is 3,764,100 bytes with sha256 `e4508adc...f44b`, a different
+hash from the 261108 build at the same size. The flow took 01:00:44,
+and the fit still reports 38,881 ALMs, 34,107 registers and 127/18/0
+warnings, so a stamp-only change moved the bitstream and left the
+counts alone.
 
 In that microphone build only the 67.03 MHz core fails: the emu domain -8.325
 with -53,336.764, and every other domain closes. `pll_hdmi` is 0.022 ns with
