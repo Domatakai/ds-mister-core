@@ -559,6 +559,23 @@ recovered; only its TNS total survives. TimeQuest 17.0 has no
 unique-per-endpoint path option, so the count came from one worst-path
 query per register node.
 
+The endpoints that fail fall into two populations. By count the
+renderer leads: 5,120 of the 14,214 failing endpoints sit in its
+write bank, -21,601.065 ns in total, an average of -4.2 ns each.
+The ARM9 register file holds the deepest: 6,017 arm9_core
+endpoints carry -26,745.280 ns, with regs[11][11] at -8.752,
+regs[9][11] at -8.694 and regs[3][20] at -8.448; arm7 adds 609
+register and 388 r13/r14 endpoints. The spread is a bulge, not a
+spike: 1,223 endpoints fail by under a nanosecond, 1,997 by one
+to three, 8,555 by three to six, and 2,439 by six or more. The
+worst path runs insn[1] through rp_ic, rs_amt and LessThan1 into
+dp_b, two adders and Mux56, then Selector637 into regs[11][11]:
+16 logic levels, 22.841 ns of data delay against a 14.917 ns
+period, 62% of it interconnect with one 3.234 ns hop, behind
+8.550 ns of clock network. At 67 MHz no such cone closes, and the
+renderer write bank supplies the bulk of the rest at 4.2 ns over
+budget on average.
+
 That is 0.090 ns of setup for a build that exists, and it is the only change:
 `NDS.qsf` asks for 8.0 with the reason beside it. The margin it buys is 65
 LABs, the same order as the 48 the previous build had, so the next feature
