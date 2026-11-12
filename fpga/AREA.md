@@ -541,6 +541,57 @@ tree is not the committed design -- 143 pins against 144, the microphone
 ADC's line absent -- so unlike the microphone row it lands somewhere of
 its own, and its fit takes 01:25:59.
 
+### Timing-driven synthesis scoped to the ARM9 core (2026-11-11)
+
+The area profile switches timing-driven synthesis off for the whole
+design: `NDS.qsf` line 29 has carried
+`set_global_assignment -name SYNTH_TIMING_DRIVEN_SYNTHESIS OFF` since
+`469b4ae` (2026-10-31), and this file prices that area profile as
+deliberate. The one untried fitter lever was to turn it back on for the
+single entity that owns the worst cone:
+
+```
+set_instance_assignment -name SYNTH_TIMING_DRIVEN_SYNTHESIS ON \
+    -to "emu:emu|arm9_core:arm9"
+```
+
+Mapping the committed tree with and without that line moves the estimate
+by six ALMs and 125 combinational ALUTs out of about 38,700 and 56,000:
+38,732 ALMs, 56,043 combinational ALUTs and 28,151 registers without it,
+38,726, 56,168 and 28,151 with. The setting reaches the netlist, which
+`PHYSICAL_SYNTHESIS_EFFORT EXTRA` did not.
+
+Two full flows of one tree -- `d720637`, stamp 261108, the ten macros,
+`PLACEMENT_EFFORT_MULTIPLIER 8.0`, nothing else differing -- price it:
+
+| scoped timing-driven synthesis | LABs | fitted regs | setup (`emu`) | setup TNS | hold | rbf |
+|---|---|---|---|---|---|---|
+| off, the committed setting | 4,157 | 34,107 | -8.210 | -49,244.967 | +0.250 | 3,764,100 |
+| on for `arm9_core` | 4,138 | 32,612 | -8.325 | -53,336.764 | +0.238 | 3,783,032 |
+
+It saves 19 LABs and 1,495 fitted registers, and lowers peak
+interconnect from 87.2/85.9/91.1 to 83.0/82.3/89.7. It costs 0.115 ns of
+worst setup slack, 4,091.797 of TNS, 0.012 ns of hold and 18,932 bytes
+of bitstream, and does not shorten the cone: the path this file traced,
+`insn[1]` through the read port, shifter and ALU into `regs[11][11]`,
+moves the wrong way. Scoped to `arm9_core` the setting is a loss, so
+`NDS.qsf` is unchanged and still maps the design with timing-driven
+synthesis off.
+
+The off row is the committed design figure for figure: 4,157 LABs,
+-8.210, -49,244.967 and a 3,764,100-byte `NDS.rbf` with sha256
+`a4adcf37...`, as the 261108 rebuild recorded above.
+
+The on row lands on the 2026-11-08 microphone row's 4,138 LABs, -8.325,
+-53,336.764 and 3,783,032 bytes, at stamp 261108 -- which that row did
+not carry -- and with 32,612 fitted registers against the row's 32,510.
+Two different inputs reaching the same four figures is not explained
+here. Nor does this pair show what the row held: its tree was never
+committed, and the stamp attribution above is an inference from a
+difference, not a controlled pair. What the pair does show is that 19
+LABs, 0.115 ns and 4,091.797 of TNS can move at a fixed stamp from a
+synthesis setting, so a fitted figure alone does not identify its cause.
+
 The TNS this row reports measures something the worst slack cannot.
 All of it sits in the emu domain: -58,562.464, against -1.239 for
 pll_hdmi and 0 for every other clock. TNS sums the failing endpoints;
