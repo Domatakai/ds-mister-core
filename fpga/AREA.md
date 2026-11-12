@@ -592,6 +592,46 @@ difference, not a controlled pair. What the pair does show is that 19
 LABs, 0.115 ns and 4,091.797 of TNS can move at a fixed stamp from a
 synthesis setting, so a fitted figure alone does not identify its cause.
 
+### A three-bit shift-amount class in the ARM9 shifter (2026-11-11)
+
+The traced cone runs through the shifter's amount comparison: `rp_c` (Rs)
+reaches `rs_amt`, then the 8-bit tests that pick the shift case, then
+`op2`, `dp_b`, the ALU and the write mux. Each case branches on only three
+classes of that amount, and the classes are the bits above the barrel
+shifter's select, so the tests were rewritten as such -- `sh_in` and
+`sh_amt` became continuous wires, and
+
+```
+sh_zero = !(|sh_amt);                    // amount == 0
+sh_hi   = |sh_amt[7:5];                  // amount >= 32
+sh_32   = (sh_amt[7:5] == 3'd1) && !(|sh_amt[4:0]);
+```
+
+replace the comparisons against 0, 32 and 32-or-more. The rewrite is
+bit-exact -- for an 8-bit amount `< 32` is `sh_amt[7:5] == 0`, and `== 32`
+is the three-bit class with a zero low half -- but no simulator is
+installed on this host (`run_benches.py` shells out to `iverilog`), so it
+was not simulated, only elaborated and fitted.
+
+Mapping shows Quartus had already shared those comparisons: 38,760 ALMs
+and 56,187 combinational ALUTs against the committed 38,732 and 56,043,
+so naming the classes cost 28 ALMs rather than saving any.
+
+| shifter amount tests | LABs | fitted regs | setup (`emu`) | setup TNS | hold | rbf |
+|---|---|---|---|---|---|---|
+| as committed | 4,157 | 34,107 | -8.210 | -49,244.967 | +0.250 | 3,764,100 |
+| three-bit classes | 4,120 | 32,807 | -9.091 | -56,345.624 | +0.192 | 3,725,640 |
+
+The fit got worse on both headline numbers, by 0.881 ns of worst setup
+slack and 7,100.657 of TNS, while using 37 fewer LABs and 1,300 fewer
+fitted registers and writing a 38,460-byte smaller bitstream. A logic
+edit that small moving retiming by 1,300 registers is the finding: at
+98% LAB occupancy, with retiming and physical synthesis on, the fit is
+the dominant term, and a single pair cannot attribute the difference to
+the three-bit tests. The change is reverted; this record is the only
+thing kept.
+
+
 The TNS this row reports measures something the worst slack cannot.
 All of it sits in the emu domain: -58,562.464, against -1.239 for
 pll_hdmi and 0 for every other clock. TNS sums the failing endpoints;
