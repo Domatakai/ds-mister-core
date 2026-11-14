@@ -1653,20 +1653,20 @@ section's 4,157-LAB baseline:
 
 | | baseline | with the pak |
 |---|---|---|
-| LABs | 4,157 / 4,191 | 4,142 / 4,191 |
-| registers | 32,805 | 32,745 |
-| `emu` setup slack | -8.210 | -8.985 |
-| `emu` TNS | -49,244.967 | -48,490.589 |
-| worst hold | +0.158 | +0.164 |
-| peak interconnect | 90.5 / 90.0 / 94.4 % | 88.8 / 87.5 / 94.4 % |
-| rbf | 3,748,048 | 3,679,032 bytes |
+| LABs | 4,157 / 4,191 | 4,145 / 4,191 |
+| registers | 32,805 | 32,860 |
+| `emu` setup slack | -8.210 | -8.423 |
+| `emu` TNS | -49,244.967 | -50,412.860 |
+| worst hold | +0.158 | +0.249 |
+| peak interconnect | 90.5 / 90.0 / 94.4 % | 87.2 / 86.8 / 90.3 % |
+| rbf | 3,748,048 | 3,738,944 bytes |
 
-The design still fits at this seed, with 49 LABs spare instead of 34. The
-numbers move in both directions -- 15 fewer LABs, 60 fewer registers, a
-0.775 ns worse setup slack, a 0.754 ns better TNS -- and only one seed
-routes at all, so there is no spread to compare them against: these are
-single-sample numbers, not a saving. The rbf size moved by 69 KB too,
-which an uncompressed bitstream should not do (the assembler reports a
-compression ratio of 1); that is unexplained and worth a second look
-before anyone reads the size as area.
+The design still fits at this seed, with 46 LABs spare instead of 34. The
+numbers move in both directions -- 12 fewer LABs, 55 more registers, a
+0.213 ns worse setup slack, a 1.168 ns worse TNS, a 0.091 ns better hold
+-- and only one seed routes at all, so there is no spread to compare them
+against: these are single-sample numbers, not a saving. One intermediate
+build in the same directory produced a 3,679,032-byte rbf while the
+assembler still reported a compression ratio of 1; that does not fit the
+reading, and it was not investigated.
 
