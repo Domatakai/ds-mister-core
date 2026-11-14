@@ -320,10 +320,11 @@ endtask
 
 task m9_read16;
 	input  [31:0] a;
+	input   [3:0] be;
 	output [15:0] d;
 	begin
 		@(posedge clk);
-		m9_addr <= a; m9_be <= 4'b0011;
+		m9_addr <= a; m9_be <= be;
 		m9_rd <= 1; m9_wr <= 0;
 		@(posedge clk);
 		while (!m9_ready) @(posedge clk);
@@ -642,12 +643,20 @@ initial begin
 	      dut.mot_cnt === 5'd0);
 
 	// a halfword is a probe too, whichever half it lands in
-	m9_read16(32'h0A00_0000, h1);
+	m9_read16(32'h0A00_0000, 4'b0011, h1);
 	check("a halfword read answers 0xFC00", h1 === 16'hFC00);
-	m9_read16(32'h0A00_0002, h1);
+	m9_read16(32'h0A00_0002, 4'b1100, h1);
 	check("the upper halfword answers 0xFC00", h1 === 16'hFC00);
 	check("neither halfword advanced the sequence",
 	      dut.mot_cnt === 5'd0);
+
+	// writes go nowhere, and must not move the poll either
+	m9_write(32'h0A00_0000, 32'hDEAD_BEEF, 4'hF);
+	repeat (2) @(posedge clk);
+	check("a window write does not advance the sequence",
+	      dut.mot_cnt === 5'd0);
+	m9_read(32'h0A00_0000, r1);
+	check("the pack still detects after a write", r1 === 32'hFC00_FC00);
 
 	m9_read8(32'h0A00_0000, b1);
 	check("byte 0 of the poll is 0x00", b1 === 8'h00);
@@ -688,6 +697,27 @@ initial begin
 	end
 	m9_read8(32'h0A00_0000, b1);
 	check("the sequence wraps back to 0x00", b1 === 8'h00);
+
+	// the sequence belongs to the device, not to one address in it
+	while (dut.mot_cnt !== 5'd0) m9_read8(32'h0A00_0000, b1);
+	m9_read8(32'h0A00_0010, b1);
+	check("step 0 answers at any address in the window",
+	      b1 === 8'h00);
+	m9_read8(32'h0A00_0000, b1);
+	check("the next step follows at another address", b1 === 8'h03);
+
+	// a master that holds its read high for a few cycles must still
+	// advance the poll exactly once, not once per clock
+	while (dut.mot_cnt !== 5'd0) m9_read8(32'h0A00_0000, b1);
+	@(posedge clk);
+	m9_addr <= 32'h0A00_0000; m9_be <= 4'b0001; m9_rd <= 1; m9_wr <= 0;
+	@(posedge clk);
+	while (!m9_ready) @(posedge clk);
+	repeat (3) @(posedge clk);
+	m9_rd <= 0;
+	@(posedge clk);
+	check("a held read advances the sequence once",
+	      dut.mot_cnt === 5'd1);
 
 	// the deadzone: 3 of 127 is inside it, so X reads 0x80 (level)
 	stick_l = {8'h08, 8'h03};

@@ -467,7 +467,8 @@ and the row claims only the first 64 KB of the page --
 to use later. With the row Off the window is open bus, exactly as it is
 without the device. Note that the left stick is also what drives the
 stylus cursor in the cursor modes, so a game that enables both sees the
-tilt move the pointer as well.
+tilt move the pointer as well. Writes into the window are accepted and
+change nothing, which is what an unwritten device does.
 
 The cart window read bridge (`win_*`) is wired to
 `main_bus`
