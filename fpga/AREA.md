@@ -676,6 +676,23 @@ from 87.2/85.9/91.1 to 90.5/90.0/94.4, and a fit that takes four times as
 long. Removing the second shifter lowered the mapped area and left the
 fitted design worse on every timing figure. The change is reverted.
 
+On the rumble tree the same merge does not fit at all. `17492a1` with the
+ten macros, the later pin and 261108 fits at 4,118 of 4,191 LABs with setup
+-8.752, TNS -58,562.464 and a 3,735,040-byte bitstream. Mapped with the
+merge it is 267 ALMs smaller -- 38,426 ALMs and 55,731 combinational ALUTs
+against 38,693 and 56,108 -- and the fit ends after 02:06 with 188026 and
+11802, "Fitter failed to successfully route the design", and no bitstream.
+
+| rumble tree | map ALMs | LABs | setup (`emu`) | TNS | bitstream | fit |
+|---|---|---|---|---|---|---|
+| committed | 38,693 | 4,118 | -8.752 | -58,562.464 | 3,735,040 | 01:25:59 |
+| shared shifter | 38,426 | none | - | - | none | 02:06, failed |
+
+So the one change that reduced mapped area helped neither tree: it cost
+5.955 ns of worst setup slack on the committed tree and made the rumble
+tree unfittable. Area is not what this cone needs, and on this design the
+fit does not follow the map.
+
 
 
 The TNS this row reports measures something the worst slack cannot.
