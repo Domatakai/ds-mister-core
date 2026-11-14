@@ -396,8 +396,9 @@ wire [31:0] rumble_word = {rmb_hi, rmb_lo};
 
 // Slot-2 motion pak: the retail Motion Pack's byte-serial protocol, in the
 // 0x0A000000 window (GBATEK's SRAM area, which this core does not otherwise
-// decode -- the save path is still a stub). A word read answers the pack's
-// 0xFCXX detection value; byte reads walk a 17-step sequence -- 0x00, then
+// decode -- the save path is still a stub). A read wider than a byte, word
+// or halfword, answers the pack's 0xFCXX detection value and leaves the
+// sequence alone; single-byte reads walk it -- 0x00, then
 // four 0x03, then X, Y and Z as four two-bit chunks each, most significant
 // pair first -- which is what Tony Hawk's Motion polls. The axes are the
 // pad's sticks with 0x80 at rest: X and Y the left stick, Z the right one.
@@ -446,7 +447,12 @@ always @(*) begin
 	default: mot_byte = {6'd0, mot_z[1:0]};
 	endcase
 end
-wire [31:0] motion_word = (be == 4'hF) ? 32'hFC00_FC00 : {4{mot_rdata}};
+// A byte access is the only one that drives the sequence, so tell the
+// wide ones (word, either halfword) from it by the byte-enable shape
+// rather than by "not a word": tb_main_bus checks both halves.
+wire mot_byte_rd = (be == 4'h1) || (be == 4'h2) ||
+                   (be == 4'h4) || (be == 4'h8);
+wire [31:0] motion_word = mot_byte_rd ? {4{mot_rdata}} : 32'hFC00_FC00;
 // Slot-2 RAM expansion pak: the 8 MB the DS maps at 0x09000000..0x097FFFFF
 // when one is in the slot. With the OSD row off nothing decodes here, which
 // is exactly what a DS with an empty slot does.
@@ -668,6 +674,12 @@ always @(posedge clk) begin
 	// the first bench to put two continuously-fetching cores on this bus, hung
 	// on exactly that (the other master's transaction swallowed the one-cycle
 	// gap).
+	// the OSD row is this device's power, so switching it off forgets
+	// where the poll was rather than resuming mid-sequence later
+	if (!motion_pak) begin
+		mot_cnt   <= 5'd0;
+		mot_rdata <= 8'h00;
+	end
 	if (!m9_req) m9_block <= 0;
 	if (!m7_req) m7_block <= 0;
 	if (!d_req)  d_block  <= 0;
@@ -732,7 +744,7 @@ always @(posedge clk) begin
 			// byte this access asked for leaves before the counter moves
 			if (m_rd) begin
 				mot_rdata <= mot_byte;
-				if (be != 4'hF)
+				if (mot_byte_rd)
 					mot_cnt <= (mot_cnt == 5'd16) ? 5'd0 : mot_cnt + 1'd1;
 			end
 			state <= S_RESP;

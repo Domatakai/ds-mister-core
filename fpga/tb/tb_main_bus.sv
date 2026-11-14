@@ -318,6 +318,21 @@ task m9_read8;
 	end
 endtask
 
+task m9_read16;
+	input  [31:0] a;
+	output [15:0] d;
+	begin
+		@(posedge clk);
+		m9_addr <= a; m9_be <= 4'b0011;
+		m9_rd <= 1; m9_wr <= 0;
+		@(posedge clk);
+		while (!m9_ready) @(posedge clk);
+		d = m9_rdata[15:0];
+		m9_rd <= 0;
+		@(posedge clk);
+	end
+endtask
+
 task m7_write;
 	input [31:0] a;
 	input [31:0] d;
@@ -361,6 +376,7 @@ endtask
 
 reg [31:0] r1, r2;
 reg  [7:0] b1;
+reg [15:0] h1;
 integer i;
 
 initial begin
@@ -625,6 +641,14 @@ initial begin
 	check("a word read does not advance the sequence",
 	      dut.mot_cnt === 5'd0);
 
+	// a halfword is a probe too, whichever half it lands in
+	m9_read16(32'h0A00_0000, h1);
+	check("a halfword read answers 0xFC00", h1 === 16'hFC00);
+	m9_read16(32'h0A00_0002, h1);
+	check("the upper halfword answers 0xFC00", h1 === 16'hFC00);
+	check("neither halfword advanced the sequence",
+	      dut.mot_cnt === 5'd0);
+
 	m9_read8(32'h0A00_0000, b1);
 	check("byte 0 of the poll is 0x00", b1 === 8'h00);
 	begin : poll
@@ -700,7 +724,11 @@ initial begin
 	// the guard: only the first 64 KB of the page answers
 	m9_read(32'h0A01_0000, r1);
 	check("above 64 KB the window is open bus", r1 === 32'h0);
+
+	// the row is the device's power: off forgets the poll
 	motion_pak = 1'b0;
+	repeat (2) @(posedge clk);
+	check("row off resets the sequence", dut.mot_cnt === 5'd0);
 
 	if (errors == 0) $display("tb_main_bus: PASS");
 	else             $display("tb_main_bus: FAIL (%0d errors)", errors);

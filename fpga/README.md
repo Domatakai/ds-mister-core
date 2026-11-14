@@ -459,7 +459,9 @@ the row as unverified rather than working: nothing here has been
 compared with the accessory or a game. The bus bench does check the whole
 sequence -- the detector's word, the five-byte poll, all twelve axis
 reads, the wrap, the deadzone and the 64 KB guard -- and passes under
-iverilog 11. A stick inside a six-step deadzone (of 127) reports 0x80,
+iverilog 11. A read wider than a byte -- word or halfword -- answers 0xFC00 and
+leaves the sequence where it was, so only single-byte reads walk it; a
+stick inside a six-step deadzone (of 127) reports 0x80,
 and the row claims only the first 64 KB of the page --
 0x0A000000..0x0A00FFFF -- so the rest stays open bus for a save decode
 to use later. With the row Off the window is open bus, exactly as it is
