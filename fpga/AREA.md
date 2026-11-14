@@ -631,6 +631,52 @@ the dominant term, and a single pair cannot attribute the difference to
 the three-bit tests. The change is reverted; this record is the only
 thing kept.
 
+### Fitter sensitivity, and one shared barrel shifter (2026-11-12)
+
+The pairs above are single flows, so the first question is what the fitter
+itself contributes. The committed tree at stamp 261108 was fitted at three
+seeds with no other input changed:
+
+| SEED | bitstream | LABs | setup (`emu`) | TNS | fit time |
+|---|---|---|---|---|---|
+| 1 | none: "Fitter failed to successfully route the design", 188026/11802 | - | - | - | 00:43:27 |
+| 2 | yes | 4,157 | -8.210 | -49,244.967 | 00:45 |
+| 3 | none, the same 188026/11802 | - | - | - | 00:42:26 |
+
+Two of the three seeds produce no bitstream at all. The design uses 4,157
+of 4,191 LABs, so this is not a placement preference but the edge of
+fittability: the same netlist either fits exactly or does not fit. Every
+slack difference measured on this tree is a difference between fits that
+are themselves marginal, and any change that alters the netlist size also
+alters whether the part fits.
+
+That makes area the one lever with a predictable direction, and the ARM9
+core carried two 32-bit barrel shifters: the data-processing one behind
+`op2`, and `sdt_sh` for a single data transfer's register offset. Both are
+selected by `insn[6:5]`, so they were merged into one shifter whose input
+and amount are muxed by `sdt_reg` (`insn[27:26] == 2'b01 && insn[25]`, and
+not Thumb). The merge is bit-exact: `sdt_sh` is the same shifter with
+`rm_val` as input and `insn[11:7]` as amount, and a model of both forms
+agrees on 384,896 cases -- all 32 amounts, all four shift types, 3,007
+register values. The one special case, ROR by zero being RRX for data
+processing but a plain ROR for a transfer, is taken from `sdt_reg`.
+
+It maps 217 ALMs and 252 combinational ALUTs smaller: 38,515 ALMs, 55,791
+combinational ALUTs and 28,152 registers against 38,732, 56,043 and
+28,151, which is the direction the fitting margin needs.
+
+| build | LABs | regs | setup (`emu`) | TNS | hold | rbf | fit time |
+|---|---|---|---|---|---|---|---|
+| committed | 4,157 | 34,107 | -8.210 | -49,244.967 | +0.250 | 3,764,100 | 00:45 |
+| shared shifter | 4,138 | 32,805 | -14.165 | -52,338.245 | +0.158 | 3,748,048 | 03:06 |
+
+The fit is far worse, not better: 5.955 ns on the worst path, 3,093.278 of
+TNS, 0.092 ns of hold, `pll_hdmi` from -0.515 to -1.121, peak interconnect
+from 87.2/85.9/91.1 to 90.5/90.0/94.4, and a fit that takes four times as
+long. Removing the second shifter lowered the mapped area and left the
+fitted design worse on every timing figure. The change is reverted.
+
+
 
 The TNS this row reports measures something the worst slack cannot.
 All of it sits in the emu domain: -58,562.464, against -1.239 for
