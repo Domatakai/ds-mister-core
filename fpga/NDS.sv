@@ -36,6 +36,7 @@
 //   [34:33] stylus mode
 //   [36:35] microphone
 //   [37]    rumble pak
+//   [96]    motion pak      (Slot-2 motion pak driven by the pad's sticks)
 //   [39:38] pad profile
 //   [41:40] core speed       (100/150/200/Max %)
 //   [43:42] frameskip
@@ -157,6 +158,7 @@ localparam [19703:0] CONF_STR = {   // 2463 string bytes, the 6-char `BUILD_DATE
 "P4O[84:83],Lid close,Ignore,L2+R2,L3+R3;",
 "P4O[36:35],Microphone,Off,Button,Host device;",
 "P4O[37],Rumble pak,Off,On;",
+"P4O[96],Motion pak,Off,On;",
 "P4-;",
 "P4O[56],Face buttons,Standard,Swapped;",
 "P4O[57],Shoulders,Normal,Swapped;",
@@ -232,6 +234,7 @@ wire  [63:0] img_size;
 wire         ioctl_wait;   // cart slot backpressure -> HPS
 wire  [31:0] ioctl_file_ext; // extension of the file being downloaded
 wire  [15:0] stick0;       // left analog stick (stylus cursor mode)
+wire  [15:0] stick1;       // right analog stick (the motion pak's Z axis)
 
 // no SD block-device saves yet: keep HPS request inputs deasserted
 assign sd_rd = 1'b0;
@@ -267,6 +270,7 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1), .VDNUM(1)) hps_io
 	.joystick_0(joystick_0),
 	.joystick_1(joystick_1),
 	.joystick_l_analog_0(stick0),
+	.joystick_r_analog_0(stick1),
 	.ioctl_download(ioctl_download),
 	.ioctl_addr(ioctl_addr),
 	.ioctl_dout(ioctl_dout),
@@ -345,6 +349,7 @@ wire  [1:0] region        = status[32:31];
 wire  [1:0] stylus_mode   = status[34:33];
 wire  [1:0] mic_source    = status[36:35];
 wire        rumble        = status[37];
+wire        motion_pak    = status[96];
 wire  [1:0] pad_profile   = status[39:38];
 wire  [1:0] core_speed    = status[41:40];
 wire  [1:0] frameskip     = status[43:42];
@@ -1083,6 +1088,9 @@ main_bus main_bus (
 	.ram_exp(ram_exp),
 	.rumble_pak(rumble),
 	.rumble_lvl(rumble_lvl),
+	.motion_pak(motion_pak),
+	.stick_l(stick0),
+	.stick_r(stick1),
 	.ds_keys(ds_keys),
 	.lang(lang_sel),
 	.hinge_closed(hinge_j),

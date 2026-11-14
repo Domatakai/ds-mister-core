@@ -24,6 +24,9 @@ reg reset = 1;
 reg [11:0] ds_keys = 12'hFFF;
 reg         ram_exp = 1'b0;      // OSD row: Slot-2 RAM expansion pak
 reg         rumble_pak = 1'b0;   // OSD row: Slot-2 rumble pak
+reg         motion_pak = 1'b0;   // OSD row: Slot-2 motion pak
+reg  [15:0] stick_l = 16'h8080;  // left stick, centred
+reg  [15:0] stick_r = 16'h8080;  // right stick, centred
 wire        rumble_lvl;
 reg        hinge = 1'b0;
 reg  [2:0] lang = 3'd0;
@@ -114,6 +117,7 @@ main_bus dut (
 	// advance on every clock, which is the pre-retiming behaviour
 	.ce7(1'b1), .ram_exp(ram_exp),
 	.rumble_pak(rumble_pak), .rumble_lvl(rumble_lvl),
+	.motion_pak(motion_pak), .stick_l(stick_l), .stick_r(stick_r),
 	.ds_keys(ds_keys), .lang(lang), .hinge_closed(hinge),
 	.touch_x(9'd0), .touch_y(8'd0), .touch_down(1'b0), .mic_in(12'h400),
 	.m9_addr(m9_addr), .m9_wdata(m9_wdata), .m9_be(m9_be),
@@ -299,6 +303,21 @@ task m9_read;
 	end
 endtask
 
+task m9_read8;
+	input  [31:0] a;
+	output  [7:0] d;
+	begin
+		@(posedge clk);
+		m9_addr <= a; m9_be <= 4'b0001;
+		m9_rd <= 1; m9_wr <= 0;
+		@(posedge clk);
+		while (!m9_ready) @(posedge clk);
+		d = m9_rdata[7:0];
+		m9_rd <= 0;
+		@(posedge clk);
+	end
+endtask
+
 task m7_write;
 	input [31:0] a;
 	input [31:0] d;
@@ -341,6 +360,7 @@ task send_byte;
 endtask
 
 reg [31:0] r1, r2;
+reg  [7:0] b1;
 integer i;
 
 initial begin
@@ -590,6 +610,58 @@ initial begin
 	repeat (2) @(posedge clk);
 	check("0x08001000 is the same latch", rumble_lvl === 1'b1);
 	rumble_pak = 1'b0;
+
+	// ---- Slot-2 motion pak: the byte sequence on 0x0A000000 ----
+	motion_pak = 1'b0;
+	m9_read(32'h0A00_0000, r1);
+	check("row off: 0x0A000000 stays open bus", r1 === 32'h0);
+
+	motion_pak = 1'b1;
+	stick_l = 16'h8080; stick_r = 16'h8080;   // both sticks centred
+	repeat (2) @(posedge clk);
+	m9_read(32'h0A00_0000, r1);
+	check("the pack answers the detector with 0xFC00",
+	      r1 === 32'hFC00_FC00);
+	check("a word read does not advance the sequence",
+	      dut.mot_cnt === 5'd0);
+
+	m9_read8(32'h0A00_0000, b1);
+	check("byte 0 of the poll is 0x00", b1 === 8'h00);
+	begin : poll
+		integer i;
+		for (i = 0; i < 4; i = i + 1) begin
+			m9_read8(32'h0A00_0000, b1);
+			check("bytes 1..4 of the poll are 0x03", b1 === 8'h03);
+		end
+	end
+
+	// X and Y from the left stick, Z from the right one: +127 / -128 /
+	// -1 give 0xFF / 0x80 / 0xFE, two bits per read from the top
+	stick_l = {8'h00, 8'h7F};
+	stick_r = {8'hFF, 8'h80};
+	repeat (2) @(posedge clk);
+	begin : axes
+		integer i;
+		for (i = 0; i < 4; i = i + 1) begin
+			m9_read8(32'h0A00_0000, b1);
+			check("X reads 0xFF as four 0x03 chunks", b1 === 8'h03);
+		end
+		m9_read8(32'h0A00_0000, b1);
+		check("Y reads 0x80 top pair first", b1 === 8'h02);
+		for (i = 0; i < 3; i = i + 1) begin
+			m9_read8(32'h0A00_0000, b1);
+			check("Y reads 0x80 as 0x00 chunks", b1 === 8'h00);
+		end
+		for (i = 0; i < 3; i = i + 1) begin
+			m9_read8(32'h0A00_0000, b1);
+			check("Z reads 0xFE as 0x03 chunks", b1 === 8'h03);
+		end
+		m9_read8(32'h0A00_0000, b1);
+		check("Z ends on the low pair, 0x02", b1 === 8'h02);
+	end
+	m9_read8(32'h0A00_0000, b1);
+	check("the sequence wraps back to 0x00", b1 === 8'h00);
+	motion_pak = 1'b0;
 
 	if (errors == 0) $display("tb_main_bus: PASS");
 	else             $display("tb_main_bus: FAIL (%0d errors)", errors);

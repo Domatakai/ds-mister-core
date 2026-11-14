@@ -36,7 +36,10 @@ is written down rather than left to be discovered:
   (including one on a controller's headset jack) cannot reach the core — the
   microphone has to be wired to the ADC pins. The rumble pak answers its
   open-bus pattern and drives the pad's motors from the slot-2 latch; the lid
-  is a chord on `EXTKEYIN`. Missing: local DS-to-DS wireless.
+  is a chord on `EXTKEYIN`. The motion pak row answers the retail Motion
+  Pack's byte sequence on the sticks, but it is unverified: the protocol
+  is not vendor-documented and neither the accessory nor a simulator was
+  available to check it. Missing: local DS-to-DS wireless.
 - **M6, the front end** — the cheat engine and the DS-native menu are in; save
   states, rewind and replay are rows in that menu whose hardware does not
   exist yet.
@@ -439,7 +442,24 @@ row; with the row Off nothing decodes there, which is what a DS with an
 empty slot sees. `EXMEMCNT.7` does not gate it: on hardware that bit is
 GBA-slot ownership (0 = ARM9, 1 = ARM7, GBATEK), and the core keeps it as
 the plain read/write register it is, so the OSD row alone is the pak's
-presence. The cart window read bridge (`win_*`) is wired to
+presence.
+
+The **Motion pak** row is the other slot-2 device. With it On, reads in
+0x0A000000 -- GBATEK's SRAM area, which this core does not decode yet,
+since the save path is still a stub -- answer the retail Motion Pack's
+byte sequence, and the pad's sticks are its three axes: the left
+stick's X and Y, and the right stick's Y for Z, all 0x80 at rest. A
+word read returns 0xFC00 (the value the pack's detector looks for);
+byte reads then walk 17 steps -- 0x00, four 0x03, then X, Y and Z as
+four two-bit chunks each, most significant pair first -- which is the
+sequence Tony Hawk's Motion polls. The protocol is not vendor-documented
+(it comes from a DeSmuME forum post and the melonDS tracker), so treat
+the row as unverified rather than working: nothing here has been run
+against the accessory or a game, and no simulator is installed on this
+host to run the bench. With the row Off the window is open bus, exactly
+as it is without the device.
+
+The cart window read bridge (`win_*`) is wired to
 `main_bus`
 with a pending latch so a request survives DDR busy periods. A line is
 8 bytes and a fetch burst walks the four halfwords in it, so the read
@@ -1599,7 +1619,7 @@ this core added:
 | **Slot-1 Card** | load `.nds` into the next free slot (F1), **Slot-2 RAM expansion Off / 8 MB** (8 MB of main-bus RAM at 0x09000000, for the games that ask for the pak), save type, erase, **Boot menu** (also on the pad's Select), **Clear game slots** |
 | **Screens** | screen layout **Vertical / Horizontal / Top only / Bottom only** (the DS's own arrangement is the default), rotation 0-270, swap screens, aspect, **Backlight Dim / Low / Medium / High / Brightest** (the panel gain the DS's backlight steps map to), scanlines, refresh rate Native 59.82 / 59.95 / 60.00, video output HDMI 256x384 / CRT 240p side by side / CRT 240p single / CRT 31 kHz, video filter Off / Soft / Smooth / Sharp, **LCD colour** Original / DS LCD / Vivid / Warm / Cool / Grayscale |
 | **Sound** | master volume, **Sound output Stereo / Mono / Headphones** (the DS Settings wording), SPU sync, I²S latency 1 / 2 / 4 frames, audio filter Off / Warm / Bright / Bass, stereo width Off / Soft / Strong |
-| **Touch & Pad** | stylus cursor Off / D-pad / Left stick, stylus tap L2 / R2 / L3 / R3, **Lid close Ignore / L2+R2 / L3+R3**, **Microphone Off / Button / Host device** (Host device samples the board ADC at 48 kHz; the mic has to be wired to the ADC pins), rumble pak, face + shoulder swaps, pad profile |
+| **Touch & Pad** | stylus cursor Off / D-pad / Left stick, stylus tap L2 / R2 / L3 / R3, **Lid close Ignore / L2+R2 / L3+R3**, **Microphone Off / Button / Host device** (Host device samples the board ADC at 48 kHz; the mic has to be wired to the ADC pins), rumble pak, **motion pak Off / On** (slot-2 Motion Pack on the sticks), face + shoulder swaps, pad profile |
 | **Firmware** | **ARM7 BIOS HLE / bios7.bin**, **ARM9 BIOS HLE / bios9.bin**, **Firmware HLE / firmware.bin**, **Language English / Japanese / French / German / Italian / Spanish**, **Auto-start Manual / Auto**, region |
 | **System** | core speed 100 / 150 / 200 / Max %, CPU overclock Normal / ARM7 ×2 / ARM7 ×4, **auto overclock On / Off** (per game — see below), frameskip, auto frameskip, rewind buffer. A `Diagnostics` header row follows with FPS, frame graph, bus LEDs, log level and **Disable all cheats** |
 | **MIDI** | MT-32-pi link, MIDI volume 0–100% for the return path, internal demo stream, Pi LCD on screen, LCD size 1x / 2x, corner Top left / Top right / Bottom left / Bottom right, synth MT-32 / SoundFont, SoundFont bank 0-7 |

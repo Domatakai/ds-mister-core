@@ -61,6 +61,9 @@ module main_bus (
 	input            ram_exp,      // Slot-2 RAM expansion pak, from the OSD
 	input            rumble_pak,   // Slot-2 rumble pak, from the OSD
 	output reg       rumble_lvl,   // its actuator state, for the pad motors
+	input            motion_pak,   // Slot-2 motion pak, from the OSD
+	input     [15:0] stick_l,      // hps_io left stick {Y[15:8], X[7:0]}, signed
+	input     [15:0] stick_r,      // hps_io right stick: the pak's Z axis
 
 	// input state from input_mapper
 	input     [11:0] ds_keys,
@@ -390,6 +393,40 @@ wire [11:0] rmb_i = a[12:1];                        // halfword index
 wire [15:0] rmb_lo = {4'd0, rmb_i} & 16'hFFFD;
 wire [15:0] rmb_hi = {4'd0, rmb_i + 12'd1} & 16'hFFFD;
 wire [31:0] rumble_word = {rmb_hi, rmb_lo};
+
+// Slot-2 motion pak: the retail Motion Pack's byte-serial protocol, in the
+// 0x0A000000 window (GBATEK's SRAM area, which this core does not otherwise
+// decode -- the save path is still a stub). A word read answers the pack's
+// 0xFCXX detection value; byte reads walk a 17-step sequence -- 0x00, then
+// four 0x03, then X, Y and Z as four two-bit chunks each, most significant
+// pair first -- which is what Tony Hawk's Motion polls. The axes are the
+// pad's sticks with 0x80 at rest: X and Y the left stick, Z the right one.
+// The protocol is not vendor-documented; see README.md.
+wire is_motion = motion_pak && (a[31:24] == 8'h0A);
+wire [7:0] mot_x = {~stick_l[7],  stick_l[6:0]};
+wire [7:0] mot_y = {~stick_l[15], stick_l[14:8]};
+wire [7:0] mot_z = {~stick_r[15], stick_r[14:8]};
+reg  [4:0] mot_cnt;
+reg  [7:0] mot_byte;
+always @(*) begin
+	case (mot_cnt)
+	5'd0:                mot_byte = 8'h00;
+	5'd1, 5'd2, 5'd3, 5'd4: mot_byte = 8'h03;
+	5'd5:  mot_byte = {6'd0, mot_x[7:6]};
+	5'd6:  mot_byte = {6'd0, mot_x[5:4]};
+	5'd7:  mot_byte = {6'd0, mot_x[3:2]};
+	5'd8:  mot_byte = {6'd0, mot_x[1:0]};
+	5'd9:  mot_byte = {6'd0, mot_y[7:6]};
+	5'd10: mot_byte = {6'd0, mot_y[5:4]};
+	5'd11: mot_byte = {6'd0, mot_y[3:2]};
+	5'd12: mot_byte = {6'd0, mot_y[1:0]};
+	5'd13: mot_byte = {6'd0, mot_z[7:6]};
+	5'd14: mot_byte = {6'd0, mot_z[5:4]};
+	5'd15: mot_byte = {6'd0, mot_z[3:2]};
+	default: mot_byte = {6'd0, mot_z[1:0]};
+	endcase
+end
+wire [31:0] motion_word = (be == 4'hF) ? 32'hFC00_FC00 : {4{mot_byte}};
 // Slot-2 RAM expansion pak: the 8 MB the DS maps at 0x09000000..0x097FFFFF
 // when one is in the slot. With the OSD row off nothing decodes here, which
 // is exactly what a DS with an empty slot does.
@@ -577,6 +614,7 @@ wire [31:0] resp_word = is_vram    ? {hi_half, lo_half} :
                                       cheat_hit ? cheat_patch : lo_half} :
                         is_exp     ? {hi_half, lo_half} :
                         is_rumble  ? rumble_word :
+                        is_motion  ? motion_word :
                         is_cart    ? {hi_half, lo_half} : 32'h0;
 
 //------------------------------------------------------------------
@@ -668,6 +706,11 @@ always @(posedge clk) begin
 		end else if (is_rumble) begin
 			// the whole device: one latch bit, taken from the written halfword
 			if (m_wr) rumble_lvl <= w_lane_lo[1];
+			state <= S_RESP;
+		end else if (is_motion) begin
+			// the detector's sequence advances on byte reads only
+			if (m_rd && be != 4'hF)
+				mot_cnt <= (mot_cnt == 5'd16) ? 5'd0 : mot_cnt + 1'd1;
 			state <= S_RESP;
 		end else if (is_cart && m_rd) begin
 			cart_req  <= 1;
@@ -887,6 +930,7 @@ always @(posedge clk) begin
 		dispcnt_a   <= 0;
 		dispcnt_b   <= 0;
 		rumble_lvl  <= 0;
+		mot_cnt     <= 0;
 	end
 end
 

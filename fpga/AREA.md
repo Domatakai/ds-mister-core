@@ -1642,3 +1642,26 @@ shape of the logic rather than the effort the placer spends.
 So the LAB count still follows the LUT volume -- 25,803 of the 40,132 placed
 ALMs hold LUT logic alone -- and a setting can recover the packing slack around
 it, not the logic itself.
+
+## The motion pak, measured (2026-11-14)
+
+The slot-2 motion pak in `main_bus` (OSD bit 96) is a five-bit counter, a
+17-step byte sequence and three 8-bit axis values taken from the pad's
+sticks. Measured on the same tree, macros and `SEED 2` as the fitter-noise
+section (stamp 261108), against that section's 4,157-LAB baseline:
+
+| | baseline | with the pak |
+|---|---|---|
+| LABs | 4,157 / 4,191 | 4,119 / 4,191 |
+| registers | 32,805 | 32,848 |
+| `emu` setup slack | -8.210 | -8.120 |
+| `emu` TNS | -49,244.967 | -49,692.744 |
+| worst hold | +0.158 | +0.246 |
+| peak interconnect | 90.5 / 90.0 / 94.4 % | 85.5 / 84.9 / 88.6 % |
+| rbf | 3,748,048 | 3,743,212 bytes |
+
+The design still fits at this seed, with 72 LABs spare instead of 34. The
+LAB count and the rbf size moved the other way, which is the seed noise
+measured above rather than anything the device saves: 43 more registers
+and a slightly worse `emu` TNS are what the added logic costs, and both
+sit inside that noise band too.
