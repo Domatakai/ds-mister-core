@@ -1646,27 +1646,28 @@ it, not the logic itself.
 ## The motion pak, measured (2026-11-14)
 
 The slot-2 motion pak in `main_bus` (OSD bit 96) is a five-bit counter, a
-17-step byte sequence, a 64 KB window decode and three 8-bit axis values
-from the pad's sticks with a deadzone. Measured on the same tree, macros
-and `SEED 2` as the fitter-noise section (stamp 261108), against that
-section's 4,157-LAB baseline:
+17-step byte sequence, a 64 KB window decode, a byte-enable test and
+three 8-bit axis values from the pad's sticks with a deadzone. Measured
+on the same tree, macros and `SEED 2` as the fitter-noise section (stamp
+261108), against that section's 4,157-LAB baseline:
 
 | | baseline | with the pak |
 |---|---|---|
-| LABs | 4,157 / 4,191 | 4,145 / 4,191 |
-| registers | 32,805 | 32,860 |
-| `emu` setup slack | -8.210 | -8.423 |
-| `emu` TNS | -49,244.967 | -50,412.860 |
-| worst hold | +0.158 | +0.249 |
-| peak interconnect | 90.5 / 90.0 / 94.4 % | 87.2 / 86.8 / 90.3 % |
-| rbf | 3,748,048 | 3,738,944 bytes |
+| LABs | 4,157 / 4,191 | 4,142 / 4,191 |
+| registers | 32,805 | 32,792 |
+| `emu` setup slack | -8.210 | -8.417 |
+| `emu` TNS | -49,244.967 | -56,615.113 |
+| worst hold | +0.158 | +0.216 |
+| peak interconnect | 90.5 / 90.0 / 94.4 % | 86.2 / 85.8 / 90.6 % |
+| rbf | 3,748,048 | 3,765,048 bytes |
 
-The design still fits at this seed, with 46 LABs spare instead of 34. The
-numbers move in both directions -- 12 fewer LABs, 55 more registers, a
-0.213 ns worse setup slack, a 1.168 ns worse TNS, a 0.091 ns better hold
--- and only one seed routes at all, so there is no spread to compare them
-against: these are single-sample numbers, not a saving. One intermediate
-build in the same directory produced a 3,679,032-byte rbf while the
-assembler still reported a compression ratio of 1; that does not fit the
-reading, and it was not investigated.
+The design still fits at this seed, with 49 LABs spare instead of 34. The
+LAB and register counts moved down slightly, which with one routing seed
+is not evidence of anything. The `emu` TNS is the number that moved the
+wrong way -- 7.370 ns worse, and the largest single change here -- and it
+is worth watching rather than dismissing as noise: a single seed gives no
+spread to judge it against. One intermediate build in this directory
+produced a 3,679,032-byte rbf while the assembler still reported a
+compression ratio of 1; that does not fit the reading and was not
+investigated.
 

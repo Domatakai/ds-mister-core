@@ -465,7 +465,9 @@ stick inside a six-step deadzone (of 127) reports 0x80,
 and the row claims only the first 64 KB of the page --
 0x0A000000..0x0A00FFFF -- so the rest stays open bus for a save decode
 to use later. With the row Off the window is open bus, exactly as it is
-without the device.
+without the device. Note that the left stick is also what drives the
+stylus cursor in the cursor modes, so a game that enables both sees the
+tilt move the pointer as well.
 
 The cart window read bridge (`win_*`) is wired to
 `main_bus`
