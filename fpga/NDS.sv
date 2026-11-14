@@ -118,7 +118,7 @@ assign BUTTONS   = 0;
 // menu names games from their own headers. Further extensions would be
 // packed three characters each ("NDSBIN"), with no separator.
 //------------------------------------------------------------------
-localparam [19703:0] CONF_STR = {   // 2463 string bytes, the 6-char `BUILD_DATE
+localparam [19911:0] CONF_STR = {   // 2489 string bytes, the 6-char `BUILD_DATE
                                     // (sys/build_id.tcl: %y%m%d) included
                                     // (tools/confstr_len.py checks the width)
 "NDS MiSTer Test;;",

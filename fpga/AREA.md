@@ -1646,22 +1646,27 @@ it, not the logic itself.
 ## The motion pak, measured (2026-11-14)
 
 The slot-2 motion pak in `main_bus` (OSD bit 96) is a five-bit counter, a
-17-step byte sequence and three 8-bit axis values taken from the pad's
-sticks. Measured on the same tree, macros and `SEED 2` as the fitter-noise
-section (stamp 261108), against that section's 4,157-LAB baseline:
+17-step byte sequence, a 64 KB window decode and three 8-bit axis values
+from the pad's sticks with a deadzone. Measured on the same tree, macros
+and `SEED 2` as the fitter-noise section (stamp 261108), against that
+section's 4,157-LAB baseline:
 
 | | baseline | with the pak |
 |---|---|---|
-| LABs | 4,157 / 4,191 | 4,119 / 4,191 |
-| registers | 32,805 | 32,848 |
-| `emu` setup slack | -8.210 | -8.120 |
-| `emu` TNS | -49,244.967 | -49,692.744 |
-| worst hold | +0.158 | +0.246 |
-| peak interconnect | 90.5 / 90.0 / 94.4 % | 85.5 / 84.9 / 88.6 % |
-| rbf | 3,748,048 | 3,743,212 bytes |
+| LABs | 4,157 / 4,191 | 4,142 / 4,191 |
+| registers | 32,805 | 32,745 |
+| `emu` setup slack | -8.210 | -8.985 |
+| `emu` TNS | -49,244.967 | -48,490.589 |
+| worst hold | +0.158 | +0.164 |
+| peak interconnect | 90.5 / 90.0 / 94.4 % | 88.8 / 87.5 / 94.4 % |
+| rbf | 3,748,048 | 3,679,032 bytes |
 
-The design still fits at this seed, with 72 LABs spare instead of 34. The
-LAB count and the rbf size moved the other way, which is the seed noise
-measured above rather than anything the device saves: 43 more registers
-and a slightly worse `emu` TNS are what the added logic costs, and both
-sit inside that noise band too.
+The design still fits at this seed, with 49 LABs spare instead of 34. The
+numbers move in both directions -- 15 fewer LABs, 60 fewer registers, a
+0.775 ns worse setup slack, a 0.754 ns better TNS -- and only one seed
+routes at all, so there is no spread to compare them against: these are
+single-sample numbers, not a saving. The rbf size moved by 69 KB too,
+which an uncompressed bitstream should not do (the assembler reports a
+compression ratio of 1); that is unexplained and worth a second look
+before anyone reads the size as area.
+

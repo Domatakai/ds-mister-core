@@ -37,9 +37,10 @@ is written down rather than left to be discovered:
   microphone has to be wired to the ADC pins. The rumble pak answers its
   open-bus pattern and drives the pad's motors from the slot-2 latch; the lid
   is a chord on `EXTKEYIN`. The motion pak row answers the retail Motion
-  Pack's byte sequence on the sticks, but it is unverified: the protocol
-  is not vendor-documented and neither the accessory nor a simulator was
-  available to check it. Missing: local DS-to-DS wireless.
+  Pack's byte sequence on the sticks, and `tb_main_bus` verifies that
+  sequence, but it stays unverified against real hardware: the protocol is
+  not vendor-documented and the accessory itself was never available to
+  check it. Missing: local DS-to-DS wireless.
 - **M6, the front end** — the cheat engine and the DS-native menu are in; save
   states, rewind and replay are rows in that menu whose hardware does not
   exist yet.
@@ -454,10 +455,15 @@ byte reads then walk 17 steps -- 0x00, four 0x03, then X, Y and Z as
 four two-bit chunks each, most significant pair first -- which is the
 sequence Tony Hawk's Motion polls. The protocol is not vendor-documented
 (it comes from a DeSmuME forum post and the melonDS tracker), so treat
-the row as unverified rather than working: nothing here has been run
-against the accessory or a game, and no simulator is installed on this
-host to run the bench. With the row Off the window is open bus, exactly
-as it is without the device.
+the row as unverified rather than working: nothing here has been
+compared with the accessory or a game. The bus bench does check the whole
+sequence -- the detector's word, the five-byte poll, all twelve axis
+reads, the wrap, the deadzone and the 64 KB guard -- and passes under
+iverilog 11. A stick inside a six-step deadzone (of 127) reports 0x80,
+and the row claims only the first 64 KB of the page --
+0x0A000000..0x0A00FFFF -- so the rest stays open bus for a save decode
+to use later. With the row Off the window is open bus, exactly as it is
+without the device.
 
 The cart window read bridge (`win_*`) is wired to
 `main_bus`

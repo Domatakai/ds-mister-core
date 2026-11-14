@@ -25,8 +25,8 @@ reg [11:0] ds_keys = 12'hFFF;
 reg         ram_exp = 1'b0;      // OSD row: Slot-2 RAM expansion pak
 reg         rumble_pak = 1'b0;   // OSD row: Slot-2 rumble pak
 reg         motion_pak = 1'b0;   // OSD row: Slot-2 motion pak
-reg  [15:0] stick_l = 16'h8080;  // left stick, centred
-reg  [15:0] stick_r = 16'h8080;  // right stick, centred
+reg  [15:0] stick_l = 16'h0000;  // left stick, centred
+reg  [15:0] stick_r = 16'h0000;  // right stick, centred
 wire        rumble_lvl;
 reg        hinge = 1'b0;
 reg  [2:0] lang = 3'd0;
@@ -617,7 +617,7 @@ initial begin
 	check("row off: 0x0A000000 stays open bus", r1 === 32'h0);
 
 	motion_pak = 1'b1;
-	stick_l = 16'h8080; stick_r = 16'h8080;   // both sticks centred
+	stick_l = 16'h0000; stick_r = 16'h0000;   // both sticks centred
 	repeat (2) @(posedge clk);
 	m9_read(32'h0A00_0000, r1);
 	check("the pack answers the detector with 0xFC00",
@@ -635,10 +635,11 @@ initial begin
 		end
 	end
 
-	// X and Y from the left stick, Z from the right one: +127 / -128 /
-	// -1 give 0xFF / 0x80 / 0xFE, two bits per read from the top
+	// X and Y from the left stick, Z from the right one's Y: +127 /
+	// -128 / -28 become 0xFF / 0x00 / 0x64 (the pack reads level as
+	// 0x80), two bits per read from the most significant pair
 	stick_l = {8'h00, 8'h7F};
-	stick_r = {8'hFF, 8'h80};
+	stick_r = {8'hE4, 8'h80};
 	repeat (2) @(posedge clk);
 	begin : axes
 		integer i;
@@ -652,15 +653,53 @@ initial begin
 			m9_read8(32'h0A00_0000, b1);
 			check("Y reads 0x80 as 0x00 chunks", b1 === 8'h00);
 		end
-		for (i = 0; i < 3; i = i + 1) begin
-			m9_read8(32'h0A00_0000, b1);
-			check("Z reads 0xFE as 0x03 chunks", b1 === 8'h03);
-		end
 		m9_read8(32'h0A00_0000, b1);
-		check("Z ends on the low pair, 0x02", b1 === 8'h02);
+		check("Z reads 0x64 top pair first", b1 === 8'h01);
+		m9_read8(32'h0A00_0000, b1);
+		check("Z reads 0x64 second pair", b1 === 8'h02);
+		m9_read8(32'h0A00_0000, b1);
+		check("Z reads 0x64 third pair", b1 === 8'h01);
+		m9_read8(32'h0A00_0000, b1);
+		check("Z reads 0x64 low pair", b1 === 8'h00);
 	end
 	m9_read8(32'h0A00_0000, b1);
 	check("the sequence wraps back to 0x00", b1 === 8'h00);
+
+	// the deadzone: 3 of 127 is inside it, so X reads 0x80 (level)
+	stick_l = {8'h08, 8'h03};
+	repeat (2) @(posedge clk);
+	// resync: the counter is wherever the previous check left it, and
+	// a 0x00 axis chunk does not mark the start, so walk it to step 0
+	begin : sync
+		while (dut.mot_cnt !== 5'd0) m9_read8(32'h0A00_0000, b1);
+		m9_read8(32'h0A00_0000, b1);
+		check("the sequence restarts on 0x00", b1 === 8'h00);
+	end
+	begin : dz
+		integer i;
+		for (i = 0; i < 4; i = i + 1) begin
+			m9_read8(32'h0A00_0000, b1);
+			check("deadzone: the poll still reads 0x03", b1 === 8'h03);
+		end
+	end
+	m9_read8(32'h0A00_0000, b1);
+	check("a stick inside the deadzone reads 0x80", b1 === 8'h02);
+
+	// and the same on the negative side: -3 is inside it too
+	stick_l = {8'h00, 8'hFD};
+	repeat (2) @(posedge clk);
+	while (dut.mot_cnt !== 5'd0) m9_read8(32'h0A00_0000, b1);
+	m9_read8(32'h0A00_0000, b1);
+	begin : dzneg
+		integer i;
+		for (i = 0; i < 4; i = i + 1) m9_read8(32'h0A00_0000, b1);
+	end
+	m9_read8(32'h0A00_0000, b1);
+	check("-3 of 127 reads 0x80 too", b1 === 8'h02);
+
+	// the guard: only the first 64 KB of the page answers
+	m9_read(32'h0A01_0000, r1);
+	check("above 64 KB the window is open bus", r1 === 32'h0);
 	motion_pak = 1'b0;
 
 	if (errors == 0) $display("tb_main_bus: PASS");

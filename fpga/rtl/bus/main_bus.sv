@@ -402,12 +402,32 @@ wire [31:0] rumble_word = {rmb_hi, rmb_lo};
 // pair first -- which is what Tony Hawk's Motion polls. The axes are the
 // pad's sticks with 0x80 at rest: X and Y the left stick, Z the right one.
 // The protocol is not vendor-documented; see README.md.
-wire is_motion = motion_pak && (a[31:24] == 8'h0A);
-wire [7:0] mot_x = {~stick_l[7],  stick_l[6:0]};
-wire [7:0] mot_y = {~stick_l[15], stick_l[14:8]};
-wire [7:0] mot_z = {~stick_r[15], stick_r[14:8]};
+// The window is the 64 KB a save or a pak answers in, not the whole
+// 0x0A page: everything above it stays open bus, so a future save decode
+// still has somewhere to live and a stray read there cannot look like
+// the accessory.
+wire is_motion = motion_pak && (a[31:16] == 16'h0A00);
+// A resting stick is not exactly 0, and the pack's axes are 8-bit
+// acceleration, so anything inside the deadzone reports 0x80 (level).
+// The threshold is a comfort setting, not a calibration: 6 of 127.
+localparam signed [8:0] MOT_DZ = 9'sd6;
+// $signed is load-bearing: a part-select is unsigned, so without it a
+// negative reading zero-extends and only the sign bit looks large
+wire signed [8:0] mot_sx = $signed(stick_l[7:0]);
+wire signed [8:0] mot_sy = $signed(stick_l[15:8]);
+wire signed [8:0] mot_sz = $signed(stick_r[15:8]);
+wire [7:0] mot_x = (mot_sx > MOT_DZ || mot_sx < -MOT_DZ) ?
+                   {~mot_sx[7], mot_sx[6:0]} : 8'h80;
+wire [7:0] mot_y = (mot_sy > MOT_DZ || mot_sy < -MOT_DZ) ?
+                   {~mot_sy[7], mot_sy[6:0]} : 8'h80;
+wire [7:0] mot_z = (mot_sz > MOT_DZ || mot_sz < -MOT_DZ) ?
+                   {~mot_sz[7], mot_sz[6:0]} : 8'h80;
 reg  [4:0] mot_cnt;
 reg  [7:0] mot_byte;
+// The byte is latched before the counter moves: the response is built a
+// cycle later, so reading mot_byte directly would answer with the next
+// step of the sequence instead of the one this read asked for.
+reg  [7:0] mot_rdata;
 always @(*) begin
 	case (mot_cnt)
 	5'd0:                mot_byte = 8'h00;
@@ -426,7 +446,7 @@ always @(*) begin
 	default: mot_byte = {6'd0, mot_z[1:0]};
 	endcase
 end
-wire [31:0] motion_word = (be == 4'hF) ? 32'hFC00_FC00 : {4{mot_byte}};
+wire [31:0] motion_word = (be == 4'hF) ? 32'hFC00_FC00 : {4{mot_rdata}};
 // Slot-2 RAM expansion pak: the 8 MB the DS maps at 0x09000000..0x097FFFFF
 // when one is in the slot. With the OSD row off nothing decodes here, which
 // is exactly what a DS with an empty slot does.
@@ -708,9 +728,13 @@ always @(posedge clk) begin
 			if (m_wr) rumble_lvl <= w_lane_lo[1];
 			state <= S_RESP;
 		end else if (is_motion) begin
-			// the detector's sequence advances on byte reads only
-			if (m_rd && be != 4'hF)
-				mot_cnt <= (mot_cnt == 5'd16) ? 5'd0 : mot_cnt + 1'd1;
+			// the detector's sequence advances on byte reads only, and the
+			// byte this access asked for leaves before the counter moves
+			if (m_rd) begin
+				mot_rdata <= mot_byte;
+				if (be != 4'hF)
+					mot_cnt <= (mot_cnt == 5'd16) ? 5'd0 : mot_cnt + 1'd1;
+			end
 			state <= S_RESP;
 		end else if (is_cart && m_rd) begin
 			cart_req  <= 1;
@@ -931,6 +955,7 @@ always @(posedge clk) begin
 		dispcnt_b   <= 0;
 		rumble_lvl  <= 0;
 		mot_cnt     <= 0;
+		mot_rdata   <= 8'h00;
 	end
 end
 
