@@ -83,7 +83,11 @@ assign c_ack  = gnt_c && ack;
 assign e_ack  = gnt_e && ack;
 assign c_dout = dout;
 assign e_dout = dout;
-assign c_busy = gnt_c && busy;
-assign e_busy = gnt_e && busy;
+// busy is not just the bridge's: a requester holds its request until busy
+// falls, so one that is waiting for the grant has to look busy. Reporting
+// "not busy" there would let the cart cancel a request it never got served
+// and then wait for an ack that is never coming.
+assign c_busy = gnt_c ? busy : c_req;
+assign e_busy = gnt_e ? busy : e_req;
 
 endmodule

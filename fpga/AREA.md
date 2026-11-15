@@ -1732,7 +1732,16 @@ state machine never learns which memory answered.
 The bus holds `req` across both halves of a 32-bit access, so `exp_ddr`
 treats "the offset changed while `req` was still high" as the next beat
 rather than waiting for `req` to drop; without that the second half would
-stall forever. Lane arithmetic keeps a halfword inside one line (an
+stall forever.
+
+What it costs, measured in `tb_exp_ddr` rather than estimated: one
+halfword takes 6 clk_sys from `req` to `done` against a bridge that acks
+in 2, and 12 against one that acks in 8, so the shim's own share is 4
+clk_sys and does not follow the bridge. On top of that sits the DDR3
+line time, which these benches do not model, and a 32-bit access is two
+lines -- the bench counts two transactions for one `ldr`.
+
+Lane arithmetic keeps a halfword inside one line (an
 even offset never straddles two), so a partial write needs no
 read-modify-write: the byte enables go to the DDR controller and it masks
 the line write.

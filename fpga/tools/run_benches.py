@@ -67,10 +67,18 @@ def steps(readme):
             cur["run"] = s
             out.append(cur)
             cur = None
+        elif s.startswith("python tools/check_"):
+            # a checker, not a bench: one command, its own verdict line
+            out.append({"cc": s, "run": None})
     named = []
     for n, st in enumerate(out, 1):
         m = re.search(r"-o\s+(\S+)", st["cc"])
-        name = os.path.basename(m.group(1)) if m else "bench%02d" % n
+        if m:
+            name = os.path.basename(m.group(1))
+        elif st["cc"].startswith("python "):
+            name = os.path.basename(st["cc"].split()[1]).replace(".py", "")
+        else:
+            name = "bench%02d" % n
         named.append((name, st["cc"], st["run"]))
     return named
 
@@ -78,6 +86,7 @@ def steps(readme):
 def verdicts(text):
     found = re.findall(r"^\s*TB\s+(\S+).*?\b(PASS|FAIL)\s*$", text, re.M)
     found += re.findall(r"^\s*(tb_\S+?):\s*(PASS|FAIL)", text, re.M)
+    found += re.findall(r"^\s*([A-Za-z0-9_.\-]+):\s*(PASS|FAIL)\s*$", text, re.M)
     return found
 
 

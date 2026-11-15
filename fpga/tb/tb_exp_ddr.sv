@@ -43,7 +43,8 @@ exp_ddr dut (
 // line memory standing in for the DDR3: two cycles, then ack
 //------------------------------------------------------------------
 reg [63:0] line [0:15];
-reg  [1:0] dly = 2'd2;
+reg  [3:0] bm_lat = 4'd2;
+reg  [3:0] dly = 4'd2;
 integer    ndone = 0;      // transactions the shim has started
 integer    k;
 initial for (k = 0; k < 16; k = k + 1) line[k] = 64'd0;
@@ -51,13 +52,13 @@ initial for (k = 0; k < 16; k = k + 1) line[k] = 64'd0;
 always @(posedge clk) begin
 	if (reset) begin
 		d_ack <= 0;
-		dly   <= 2'd2;
+		dly   <= bm_lat;
 	end else if (!d_req) begin
 		d_ack <= 0;
-		dly   <= 2'd2;
+		dly   <= bm_lat;
 	end else if (!d_ack) begin
-		if (dly != 2'd0) begin
-			dly <= dly - 2'd1;
+		if (dly != 4'd0) begin
+			dly <= dly - 4'd1;
 		end else begin
 			if (d_wr) begin
 				for (k = 0; k < 8; k = k + 1)
@@ -106,6 +107,25 @@ task acc;
 endtask
 
 reg [15:0] rd;
+integer    cyc, c_fast, c_slow;
+
+// one access, counting the cycles it takes with the bridge at `lat`
+task measure;
+	input  [3:0] lat;
+	output integer c;
+	begin
+		bm_lat = lat;
+		req <= 0;
+		@(posedge clk);
+		hw <= 24'd20; wr <= 1'b0; be <= 2'b11; req <= 1;
+		c = 0;
+		@(posedge clk);
+		while (!done) begin @(posedge clk); c = c + 1; end
+		req <= 0;
+		@(posedge clk);
+	end
+endtask
+
 reg [28:0] first_addr;
 reg  [7:0] first_be;
 integer    t0;
@@ -172,6 +192,18 @@ initial begin
 	req <= 0;
 	@(posedge clk);
 	check("two transactions, not one", ndone - t0 == 2);
+
+	// ---- what the shim costs on top of the bridge's own latency: the same
+	// access twice, with the bridge acking at two different latencies, and
+	// the difference is the shim's own
+	measure(4'd2, c_fast);
+	measure(4'd8, c_slow);
+	$display("info: req to done: %0d cycles at a 2-cycle bridge, %0d at 8",
+	         c_fast, c_slow);
+	$display("info: the shim's own cost is %0d clk_sys", c_fast - 2);
+	check("the shim's cost does not follow bridge latency",
+	      c_slow - c_fast == 6);
+	check("and it is a handful of cycles", c_fast - 2 <= 4);
 
 	if (errors == 0) $display("tb_exp_ddr: PASS");
 	else             $display("tb_exp_ddr: FAIL (%0d errors)", errors);

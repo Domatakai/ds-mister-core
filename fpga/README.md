@@ -451,7 +451,12 @@ storage:
 The 8 and 16 MB paks fit the SDRAM module beside main RAM, the save area
 and the VRAM banks; the 32 MB pak does not (16M halfwords on its own), so
 it lives in DDR3 past the four cart slots and shares that port with the
-cart ROM through `ddr_arb`. A slot-2 device cannot coexist with it at
+cart ROM through `ddr_arb`. It is the slow one of the three: a halfword
+costs one DDR3 line plus 4 clk_sys of shim (`tb_exp_ddr` measures that
+against two bridge latencies), so a 32-bit access is two lines, and it
+waits behind whatever cart line is in flight.
+
+A slot-2 device cannot coexist with it at
 0x0A000000, so the 32 MB size shadows the motion pak. With the row Off
 nothing decodes there, which is what a DS with an empty slot sees.
 `EXMEMCNT.7` does not gate it: on hardware that bit is
@@ -721,6 +726,8 @@ fpga/
   tb/tb_main_bus.sv       fabric: masters, RAM, cart, slot-2 pak, cheat, IO [SIM-VERIFIED]
   tb/tb_exp_ddr.sv        the 32 MB pak's DDR3 shim: lines, lanes,
                           byte enables, held-request beats  [SIM-VERIFIED]
+  tb/tb_ddr_arb.sv        the cart and the pak sharing DDR3: ack routing,
+                          busy while waiting, no starvation  [SIM-VERIFIED]
   tb/tb_cheat_engine.sv   file parse + types + guard    [SIM-VERIFIED]
   tb/tb_renderer_2d.sv    text BG/OBJ render, hflip, line swap, 3D
                           layer merge and priority, 64-wide 8bpp map
@@ -1377,6 +1384,15 @@ vvp /tmp/tb_bus
 iverilog -g2012 -o /tmp/tb_exp tb/tb_exp_ddr.sv rtl/mem/exp_ddr.sv
 vvp /tmp/tb_exp
 # tb_exp_ddr: PASS
+
+# 5c. the cart and the pak taking turns on the DDR3 port
+iverilog -g2012 -o /tmp/tb_ddr_arb tb/tb_ddr_arb.sv rtl/mem/ddr_arb.sv
+vvp /tmp/tb_ddr_arb
+# tb_ddr_arb: PASS
+
+# 5d. the SDRAM map's fixed regions still clear each other
+python tools/check_memmap.py
+# check_memmap: PASS
 
 # 6. cheat engine — GBATEK type table, guard block, lockout, reload
 iverilog -g2012 -o /tmp/tb_cheat tb/tb_cheat_engine.sv rtl/cart/cheat_engine.sv

@@ -30,19 +30,20 @@ def main():
     top = constant(ROOT / "rtl/video/vram_arbiter.sv", "VRAM_SDRAM_TOP")
     exp = constant(ROOT / "rtl/bus/main_bus.sv", "EXP_SDRAM_BASE")
     if top is None or exp is None:
-        print("check_memmap: cannot read VRAM_SDRAM_TOP / EXP_SDRAM_BASE")
+        print("check_memmap: FAIL -- cannot read the map constants")
         return 1
     if exp <= top:
-        print("check_memmap: the expansion pak at 0x%06x overlaps the VRAM "
-              "banks, which reach 0x%06x" % (exp, top))
+        print("check_memmap: FAIL -- the expansion pak at 0x%06x overlaps "
+              "the VRAM banks, which reach 0x%06x" % (exp, top))
         return 1
     head = exp - top
     if head < MIN_HEADROOM:
-        print("check_memmap: only 0x%x halfwords of headroom between the "
-              "VRAM banks and the pak" % head)
+        print("check_memmap: FAIL -- only 0x%x halfwords of headroom "
+              "between the VRAM banks and the pak" % head)
         return 1
-    print("check_memmap: ok, VRAM banks reach 0x%06x, pak base 0x%06x, "
+    print("check_memmap: VRAM banks reach 0x%06x, pak base 0x%06x, "
           "%d KB clear" % (top, exp, head * 2 // 1024))
+    print("check_memmap: PASS")
     return 0
 
 
