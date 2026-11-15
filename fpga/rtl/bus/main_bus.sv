@@ -58,7 +58,7 @@ module main_bus (
 	input            reset,
 	input            ce7,          // ARM7 clock enable (cpu_ce): the timers
 	                               // count it, not clk_sys
-	input            ram_exp,      // Slot-2 RAM expansion pak, from the OSD
+	input      [1:0] ram_exp,      // Slot-2 RAM expansion: 0 / 8 / 16 MB
 	input            rumble_pak,   // Slot-2 rumble pak, from the OSD
 	output reg       rumble_lvl,   // its actuator state, for the pad motors
 	input            motion_pak,   // Slot-2 motion pak, from the OSD
@@ -319,11 +319,12 @@ wire [9:0]  pal_idx    = a[10:1];
 // 32-bit word spans halves {k, k+1} (never overlapping its neighbour).
 wire [24:0] ram_word_lo = {3'd0, 1'b1, a[21:1]};
 wire [24:0] ram_word_hi = ram_word_lo + 25'd1;
-// The pak's 8 MB goes in SDRAM at 0xA00000 + a[22:1]: main RAM owns
-// 0x200000, palette/OAM 0x400000 and the VRAM banks 0x600000..0x9FFFFF
-// (vram_arbiter's VRAM_SDRAM_BASE), while the cart ROM is in DDR3, so
-// 0xA00000..0xDFFFFF is free (the chip's 16M halfwords end at 0xFFFFFF).
-wire [24:0] exp_word_lo = 25'hA00000 + {3'd0, a[22:1]};
+// The pak goes in SDRAM at 0x700000 + a[23:1]. Main RAM owns 0x200000 and
+// palette/OAM 0x400000; the VRAM banks start at 0x600000 and only reach
+// 0x6B0000 of the 8 MB once reserved for them, so 0x700000..0xFFFFFF is
+// free -- 18 MB of the chip's 16M halfwords, which is what a 16 MB pak
+// needs and a 32 MB one cannot have.
+wire [24:0] exp_word_lo = 25'h700000 + {2'd0, a[23:1]};
 wire [24:0] exp_word_hi = exp_word_lo + 25'd1;
 
 // VRAM window port (byte address within the 1MB window; offset register
@@ -456,7 +457,14 @@ wire [31:0] motion_word = mot_byte_rd ? {4{mot_rdata}} : 32'hFC00_FC00;
 // Slot-2 RAM expansion pak: the 8 MB the DS maps at 0x09000000..0x097FFFFF
 // when one is in the slot. With the OSD row off nothing decodes here, which
 // is exactly what a DS with an empty slot does.
-wire is_exp    = ram_exp && (a[31:23] == 9'd18);
+// The OSD row picks the pak's size. 8 MB stops at the a[23] boundary
+// (0x09000000..0x097FFFFF, the official pak); 16 MB takes the whole 0x09
+// page (0x09000000..0x09FFFFFF, the unofficial one). A 32 MB pak would
+// run into 0x0A000000, which this core gives to the SRAM window and the
+// motion pak, and the SDRAM behind it is not there either -- see
+// README.md.
+wire is_exp    = (ram_exp == 2'd1) ? (a[31:23] == 9'd18) :
+                 (ram_exp == 2'd2) ? (a[31:24] == 8'h09) : 1'b0;
 wire is_private = is_bios | is_shared | is_a7wram | is_io | is_pal | is_oam;
 
 //------------------------------------------------------------------

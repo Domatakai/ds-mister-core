@@ -64,6 +64,9 @@
 //                            I2C — 0xA1 vs 0xA2 in sys/mt32pi.sv)
 //   [79:77] SoundFont bank   (which soundfont the Pi loads, 0..7; only used
 //                            in SoundFont mode — rtl/audio/mt32_select.sv)
+//   [89:88] slot-2 RAM expansion (Off / 8 MB / 16 MB: the official pak is
+//                            8 MB and the unofficial one 16 MB; 32 MB does
+//                            not fit in the 32 MB SDRAM, see AREA.md)
 //   [80]    Pi LCD size      (1x = 128x64 exact pixels / 2x = 256x128 for
 //                            a large display — rtl/video/lcd_overlay.sv)
 //   [82:81] Pi LCD corner    (top/bottom x left/right; 2x fills the width)
@@ -118,14 +121,14 @@ assign BUTTONS   = 0;
 // menu names games from their own headers. Further extensions would be
 // packed three characters each ("NDSBIN"), with no separator.
 //------------------------------------------------------------------
-localparam [19911:0] CONF_STR = {   // 2489 string bytes, the 6-char `BUILD_DATE
+localparam [19983:0] CONF_STR = {   // 2498 string bytes, the 6-char `BUILD_DATE
                                     // (sys/build_id.tcl: %y%m%d) included
                                     // (tools/confstr_len.py checks the width)
 "NDS MiSTer Test;;",
 "-;",
 "P1,Slot-1 Card;",
 "P1F1,NDS;",
-"P1O[88],Slot-2 RAM expansion,Off,8 MB;",
+"P1O[89:88],Slot-2 RAM expansion,Off,8 MB,16 MB;",
 "P1-;",
 "h0P1O[4:2],Save type,Auto,EEPROM 512K,EEPROM 8K,FLASH 512K,FLASH 1M,FRAM,NAND;",
 "h0P1T[126],Erase save data;",
@@ -324,7 +327,7 @@ wire        reset_core    = RESET | status[0] | buttons[1];
 wire        soft_reset    = status[127];
 wire        erase_save    = status[126];
 wire  [2:0] save_type     = status[4:2];
-wire        ram_exp       = status[88];   // Slot-2 RAM expansion pak: 8 MB
+wire [1:0]  ram_exp       = status[89:88]; // Slot-2 RAM expansion: 0,8,16 MB
                                           // at 0x09000000 when on
 wire  [2:0] scr_layout    = status[7:5];
 wire  [1:0] rotation      = status[9:8];

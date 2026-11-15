@@ -22,7 +22,7 @@ always #10 clk = ~clk; // 50 MHz
 reg reset = 1;
 
 reg [11:0] ds_keys = 12'hFFF;
-reg         ram_exp = 1'b0;      // OSD row: Slot-2 RAM expansion pak
+reg   [1:0] ram_exp = 2'd0;      // OSD row: Slot-2 RAM expansion pak
 reg         rumble_pak = 1'b0;   // OSD row: Slot-2 rumble pak
 reg         motion_pak = 1'b0;   // OSD row: Slot-2 motion pak
 reg  [15:0] stick_l = 16'h0000;  // left stick, centred
@@ -502,7 +502,7 @@ initial begin
 	m9_read (32'h0900_0000, r1);
 	check("writes dropped while the row is off", r1 === 32'h0000_0000);
 
-	ram_exp = 1'b1;
+	ram_exp = 2'd1;
 	repeat (2) @(posedge clk);
 	m9_write(32'h0900_0000, 32'hC0DE_1234, 4'hF);
 	m9_read (32'h0900_0000, r1);
@@ -526,7 +526,25 @@ initial begin
 	m7_read (32'h0900_0000, r2);
 	check("ARM7 reads the expansion too", r2 === 32'hC0DE_1234);
 
-	ram_exp = 1'b0;
+	// 16 MB: the whole 0x09 page, including what 8 MB could not reach
+	ram_exp = 2'd2;
+	repeat (2) @(posedge clk);
+	m9_write(32'h09FF_FFFC, 32'h1234_5678, 4'hF);
+	m9_read (32'h09FF_FFFC, r1);
+	check("last word of the 16 MB window", r1 === 32'h1234_5678);
+	m9_write(32'h0980_0000, 32'hBEEF_0001, 4'hF);
+	m9_read (32'h0980_0000, r1);
+	check("the 8 MB boundary decodes at 16 MB", r1 === 32'hBEEF_0001);
+	m9_read (32'h097F_FFFC, r1);
+	check("the 8 MB tail survived", r1 === 32'h5A5A_0F0F);
+
+	// and the 8 MB size does not reach the boundary
+	ram_exp = 2'd1;
+	repeat (2) @(posedge clk);
+	m9_read (32'h0980_0000, r1);
+	check("8 MB does not reach 0x09800000", r1 === 32'h0000_0000);
+
+	ram_exp = 2'd0;
 	repeat (2) @(posedge clk);
 	m9_read (32'h0900_0000, r1);
 	check("the OSD row gates the window again", r1 === 32'h0000_0000);

@@ -1690,3 +1690,44 @@ useless. One intermediate build in this directory produced a
 3,679,032-byte rbf while the assembler still reported a compression ratio
 of 1; that does not fit the reading and was not investigated.
 
+## Slot-2 RAM expansion sizes (2026-11-15)
+
+The row now picks Off / 8 MB / 16 MB, and the sizes are real: the pak
+window at 0x09000000 grows from 0x09000000..0x097FFFFF to
+0x09000000..0x09FFFFFF, and the SDRAM behind it moved down to make room.
+What the 32 MB module actually holds, from the RTL rather than a datasheet:
+
+| region | SDRAM halfwords | size |
+|---|---|---|
+| cart save data | 0x000000..0x0FFFFF | 2 MB reserved (M4) |
+| main RAM | 0x200000..0x3FFFFF | 4 MB |
+| palette/OAM overflow | 0x400000..0x4FFFFF | 2 MB reserved |
+| VRAM banks | 0x600000..0x6B0000 | about 0.7 MB of an 8 MB reservation |
+| expansion pak | 0x700000..0xFFFFFF | 18 MB |
+
+The VRAM banks are what made this possible: `vram_arbiter` places them
+from 0x600000 and `pbase` reaches only 0x90000 + 128 KB, so the 8 MB once
+reserved for them was 7 MB of empty space. Moving the pak base from
+0xA00000 to 0x700000 turns the old 8 MB region plus the 4 MB above it
+into 18 MB, which is what a 16 MB pak needs.
+
+32 MB is not implementable here, for two independent reasons:
+
+* the storage does not exist -- a 32 MB pak plus the 4 MB of main RAM,
+  the save region and the VRAM banks needs more than the module's 32 MB;
+* the address does not exist either -- a 32 MB pak runs from 0x09000000
+  to 0x0AFFFFFF, and 0x0A000000 is the SRAM window this core also gives
+  to the motion pak.
+
+MiSTer's dual-SDRAM arrangement does not rescue it: that mode repurposes
+the DDR3 pins for a second module, and this core drives those pins as
+DDR3 for the cart ROM (`ddr_bus_bridge`). A 32 MB pak would need the
+expansion to live in DDR3 beside the cart, which is a different design.
+
+Fit of the tree after this change (`SEED 2`, stamp 261108): 4,122 / 4,191
+LABs (69 spare), 32,605 registers, `emu` setup -9.575, TNS -54,038.768,
+worst hold +0.212, peak interconnect 90.3 / 89.9 / 94.6 %, rbf 3,734,988
+bytes. The motion pak section above was measured before this change, so
+its LAB count is not comparable with this one; the seed sweep there still
+describes what the fitter does at the edge.
+

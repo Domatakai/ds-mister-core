@@ -437,10 +437,14 @@ and cart save data; `mem_arbiter` shares it between the bus RAM window
 (CPU traffic), the cart save path (fixed priority, saves are
 latency-sensitive bursts) and the VRAM path behind `vram_arbiter`. The
 space above those regions is free, and the optional Slot-2 RAM expansion
-pak takes 8 MB of it (SDRAM 0xA00000, seen by both CPUs at
-0x09000000..0x097FFFFF), switched by the **Slot-2 RAM expansion** OSD
-row; with the row Off nothing decodes there, which is what a DS with an
-empty slot sees. `EXMEMCNT.7` does not gate it: on hardware that bit is
+pak takes up to 16 MB of it (SDRAM 0x700000, seen by both CPUs at
+0x09000000..0x097FFFFF for the official 8 MB pak and
+0x09000000..0x09FFFFFF for the unofficial 16 MB one), switched by the
+**Slot-2 RAM expansion** OSD row; with the row Off nothing decodes there,
+which is what a DS with an empty slot sees. The menu stops at 16 MB
+because the core's SDRAM is a 32 MB module and the rest of it is in use:
+32 MB needs the DDR3, which this core gives to the cart.
+`EXMEMCNT.7` does not gate it: on hardware that bit is
 GBA-slot ownership (0 = ARM9, 1 = ARM7, GBATEK), and the core keeps it as
 the plain read/write register it is, so the OSD row alone is the pak's
 presence.
@@ -1627,7 +1631,7 @@ this core added:
 
 | Group | Rows |
 |---|---|
-| **Slot-1 Card** | load `.nds` into the next free slot (F1), **Slot-2 RAM expansion Off / 8 MB** (8 MB of main-bus RAM at 0x09000000, for the games that ask for the pak), save type, erase, **Boot menu** (also on the pad's Select), **Clear game slots** |
+| **Slot-1 Card** | load `.nds` into the next free slot (F1), **Slot-2 RAM expansion Off / 8 MB / 16 MB** (main-bus RAM at 0x09000000 for the games that ask for the pak: the official pak is 8 MB, the unofficial one 16 MB, and 32 MB does not fit in the 32 MB SDRAM), save type, erase, **Boot menu** (also on the pad's Select), **Clear game slots** |
 | **Screens** | screen layout **Vertical / Horizontal / Top only / Bottom only** (the DS's own arrangement is the default), rotation 0-270, swap screens, aspect, **Backlight Dim / Low / Medium / High / Brightest** (the panel gain the DS's backlight steps map to), scanlines, refresh rate Native 59.82 / 59.95 / 60.00, video output HDMI 256x384 / CRT 240p side by side / CRT 240p single / CRT 31 kHz, video filter Off / Soft / Smooth / Sharp, **LCD colour** Original / DS LCD / Vivid / Warm / Cool / Grayscale |
 | **Sound** | master volume, **Sound output Stereo / Mono / Headphones** (the DS Settings wording), SPU sync, I²S latency 1 / 2 / 4 frames, audio filter Off / Warm / Bright / Bass, stereo width Off / Soft / Strong |
 | **Touch & Pad** | stylus cursor Off / D-pad / Left stick, stylus tap L2 / R2 / L3 / R3, **Lid close Ignore / L2+R2 / L3+R3**, **Microphone Off / Button / Host device** (Host device samples the board ADC at 48 kHz; the mic has to be wired to the ADC pins), rumble pak, **motion pak Off / On** (slot-2 Motion Pack on the sticks), face + shoulder swaps, pad profile |
