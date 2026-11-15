@@ -129,6 +129,54 @@ task pak_line;
 	end
 endtask
 
+// a write through the port: the data, enables and direction have to arrive
+// intact, or the cart writes the pak's line and nobody notices in a read test
+task cart_write;
+	input  [28:0] a;
+	input  [63:0] d;
+	input   [7:0] b;
+	reg            ok, own;
+	begin
+		@(posedge clk);
+		c_req <= 1; c_wr <= 1; c_addr <= a; c_din <= d; c_be <= b;
+		@(posedge clk);
+		ok = 0;
+		while (!c_ack) begin
+			if (req && req_wr && req_addr === a && req_din === d && req_be === b)
+				ok = 1;
+			@(posedge clk);
+		end
+		if (req && req_wr && req_addr === a && req_din === d && req_be === b)
+			ok = 1;
+		check("the cart's write reaches the port intact", ok);
+		c_wr <= 0; c_req <= 0;
+		@(posedge clk);
+	end
+endtask
+
+task pak_write;
+	input  [28:0] a;
+	input  [63:0] d;
+	input   [7:0] b;
+	reg            ok;
+	begin
+		@(posedge clk);
+		e_req <= 1; e_wr <= 1; e_addr <= a; e_din <= d; e_be <= b;
+		@(posedge clk);
+		ok = 0;
+		while (!e_ack) begin
+			if (req && req_wr && req_addr === a && req_din === d && req_be === b)
+				ok = 1;
+			@(posedge clk);
+		end
+		if (req && req_wr && req_addr === a && req_din === d && req_be === b)
+			ok = 1;
+		check("the pak's write reaches the port intact", ok);
+		e_wr <= 0; e_req <= 0;
+		@(posedge clk);
+	end
+endtask
+
 reg [63:0] got;
 integer    i;
 
@@ -151,6 +199,24 @@ initial begin
 	check("pak line carries its address", got === 64'hA5);
 	repeat (2) @(posedge clk);
 	check("the grant is released again", req === 1'b0);
+
+	// ---- writes keep their direction, data and enables through the mux
+	cart_write(29'h000_0777, 64'h0123_4567_89AB_CDEF, 8'hF0);
+	pak_write (29'h200_0888, 64'hFEDC_BA98_7654_3210, 8'h0F);
+	cart_line(29'h000_0777, got);
+	check("a read after the writes is a read again", got === 64'h77);
+	repeat (2) @(posedge clk);
+	check("and the port is not left in write mode", req_wr === 1'b0);
+
+	// ---- a reset in the middle of a transfer lets go of the port
+	e_req <= 1; e_wr <= 0; e_addr <= 29'h200_0999;
+	@(posedge clk); @(posedge clk);
+	reset <= 1;
+	@(posedge clk); @(posedge clk);
+	reset <= 0;
+	e_req <= 0;
+	@(posedge clk); @(posedge clk);
+	check("a reset drops the port", req === 1'b0 && !c_busy && !e_busy);
 
 	// ---- the regression this bench exists for: the cart asking while
 	// the pak holds the port must see busy, or it cancels its request and

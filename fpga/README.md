@@ -727,7 +727,8 @@ fpga/
   tb/tb_exp_ddr.sv        the 32 MB pak's DDR3 shim: lines, lanes,
                           byte enables, held-request beats  [SIM-VERIFIED]
   tb/tb_ddr_arb.sv        the cart and the pak sharing DDR3: ack routing,
-                          busy while waiting, no starvation  [SIM-VERIFIED]
+                          busy while waiting, writes, reset, no
+                          starvation                        [SIM-VERIFIED]
   tb/tb_cheat_engine.sv   file parse + types + guard    [SIM-VERIFIED]
   tb/tb_renderer_2d.sv    text BG/OBJ render, hflip, line swap, 3D
                           layer merge and priority, 64-wide 8bpp map

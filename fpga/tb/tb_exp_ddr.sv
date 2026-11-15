@@ -107,17 +107,18 @@ task acc;
 endtask
 
 reg [15:0] rd;
-integer    cyc, c_fast, c_slow;
+integer    cyc, c_fast, c_slow, c_write;
 
 // one access, counting the cycles it takes with the bridge at `lat`
 task measure;
 	input  [3:0] lat;
+	input         w;
 	output integer c;
 	begin
 		bm_lat = lat;
 		req <= 0;
 		@(posedge clk);
-		hw <= 24'd20; wr <= 1'b0; be <= 2'b11; req <= 1;
+		hw <= 24'd20; wr <= w; wdata <= 16'h5A5A; be <= 2'b11; req <= 1;
 		c = 0;
 		@(posedge clk);
 		while (!done) begin @(posedge clk); c = c + 1; end
@@ -196,14 +197,17 @@ initial begin
 	// ---- what the shim costs on top of the bridge's own latency: the same
 	// access twice, with the bridge acking at two different latencies, and
 	// the difference is the shim's own
-	measure(4'd2, c_fast);
-	measure(4'd8, c_slow);
+	measure(4'd2, 1'b0, c_fast);
+	measure(4'd8, 1'b0, c_slow);
+	measure(4'd2, 1'b1, c_write);
 	$display("info: req to done: %0d cycles at a 2-cycle bridge, %0d at 8",
 	         c_fast, c_slow);
-	$display("info: the shim's own cost is %0d clk_sys", c_fast - 2);
+	$display("info: the shim's own cost is %0d clk_sys (a write: %0d)",
+	         c_fast - 2, c_write - 2);
 	check("the shim's cost does not follow bridge latency",
 	      c_slow - c_fast == 6);
 	check("and it is a handful of cycles", c_fast - 2 <= 4);
+	check("a write costs what a read costs", c_write == c_fast);
 
 	if (errors == 0) $display("tb_exp_ddr: PASS");
 	else             $display("tb_exp_ddr: FAIL (%0d errors)", errors);

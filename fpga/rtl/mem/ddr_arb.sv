@@ -81,6 +81,9 @@ end
 
 assign c_ack  = gnt_c && ack;
 assign e_ack  = gnt_e && ack;
+// dout is the bridge's line whichever side asked for it. Both requesters
+// only take data when their own ack fires, and ack is gated by the grant,
+// so a foreign line is never read by the wrong one.
 assign c_dout = dout;
 assign e_dout = dout;
 // busy is not just the bridge's: a requester holds its request until busy
