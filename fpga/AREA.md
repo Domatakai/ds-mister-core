@@ -1661,13 +1661,32 @@ on the same tree, macros and `SEED 2` as the fitter-noise section (stamp
 | peak interconnect | 90.5 / 90.0 / 94.4 % | 86.2 / 85.8 / 90.6 % |
 | rbf | 3,748,048 | 3,765,048 bytes |
 
-The design still fits at this seed, with 49 LABs spare instead of 34. The
-LAB and register counts moved down slightly, which with one routing seed
-is not evidence of anything. The `emu` TNS is the number that moved the
-wrong way -- 7.370 ns worse, and the largest single change here -- and it
-is worth watching rather than dismissing as noise: a single seed gives no
-spread to judge it against. One intermediate build in this directory
-produced a 3,679,032-byte rbf while the assembler still reported a
-compression ratio of 1; that does not fit the reading and was not
-investigated.
+The design fits at this seed with 49 LABs spare instead of 34, and the LAB
+and register counts moved down slightly.
+
+### Across seeds
+
+Seeds 4 and 5 on the same tree, one full compile each, to see how much of
+the difference above belongs to the seed rather than the logic:
+
+| seed | result | LABs | `emu` setup | `emu` TNS | worst hold |
+|---|---|---|---|---|---|
+| 2 | fits | 4,142 | -8.417 | -56,615.113 | +0.216 |
+| 4 | failed to route (188026 / 11802) | -- | -- | -- | -- |
+| 5 | fits | 4,132 | -10.975 | -56,916.851 | +0.256 |
+
+The seed moves the setup slack by 2.558 ns between the two that route,
+which is far more than the 0.207 ns the pak costs at a fixed seed, so
+setup slack here is the seed's number before it is the design's. The
+`emu` TNS is the opposite: -56,615 and -56,917 are 0.302 ns apart, and
+both sit about 7.4 ns below the -49,245 the baseline tree measured at
+`SEED 2`, so that change is the pak rather than the seed and is the one
+number in this section worth acting on.
+
+Seed 4 joining seeds 1 and 3 in failing to route is the other result:
+three of five seeds fit. Seed 4 also reports a peak virtual memory of
+9,365 MB on an 8 GB machine, so a failing seed is slow as well as
+useless. One intermediate build in this directory produced a
+3,679,032-byte rbf while the assembler still reported a compression ratio
+of 1; that does not fit the reading and was not investigated.
 
