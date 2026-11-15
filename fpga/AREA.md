@@ -1738,14 +1738,30 @@ What it costs, measured in `tb_exp_ddr` rather than estimated: one
 halfword takes 6 clk_sys from `req` to `done` against a bridge that acks
 in 2, and 12 against one that acks in 8, so the shim's own share is 4
 clk_sys and does not follow the bridge; a write measures the same 4. On
-top of that sits the DDR3 line time, which these benches do not model,
-and a 32-bit access is two lines -- the bench counts two transactions
-for one `ldr`.
+top of that sits the DDR3 line time, which these benches do not model.
+
+The shim keeps two lines: the one the last access used, and the line
+after it once the bus has been quiet for 8 cycles. A line is four
+halfwords and `main_bus` asks for two per 32-bit access, so the second
+half is a hit -- the bench counts one transaction for one `ldr` where it
+counted two -- and a prefetched line answers in 2 clk_sys against 6 for
+the fetch it replaces. The prefetch waits for that quiet period on
+purpose. Firing at the first free cycle would put a fetch in front of
+the next real access, and take a line from the cart, to gain nothing
+while the port is already busy: `tb_pak_worst`, whose cart re-requests
+every free cycle, never leaves an 8-cycle gap, and the pak's numbers
+there are what they were without the cache. Writes go through to DDR3
+and are written into the cached copy of that line, so a read after a
+write costs nothing either.
 
 What contention adds is measured too, in `tb_pak_worst`, which runs the
 real shim and arbiter against a 7-cycle line and a cart that re-requests
-every free cycle: 12 clk_sys for a lone access, 19 worst and 18 mean
-under that load, with the cart completing 16 lines across 8 pak accesses.
+every free cycle: 12 clk_sys for a lone access, 19 worst and 16 mean
+under that load, with the cart completing 14 lines across 8 pak accesses.
+The mean is the one number the cache moves there, and it moves it by one
+warm hit: the lone access fetches line 0, and the first streamed access
+is then served from it. Nothing else in that bench is touched, because a
+cart asking on every free cycle never lets the bus go quiet.
 So the pak waits for about one cart line, not for a burst, which is what
 the alternation is for. Both numbers scale with the line latency the
 model is given; the 7 is `tb_ddr_bridge`'s model, not the DDR3 controller.
@@ -1766,19 +1782,27 @@ pak, so that size shadows it -- a slot cannot hold both devices at once.
 MiSTer's dual-SDRAM mode does not help here and is not used: it
 repurposes the DDR3 pins, which this core drives as DDR3 for the cart.
 
-Fit of the tree with the 32 MB pak, `SEED 2`, stamp 261108: 4,159 /
-4,191 LABs (32 spare), 32,275 registers, `emu` setup -8.490, TNS
--52,506.494, worst hold +0.211, peak interconnect 86.5 / 85.0 / 93.3 %,
-rbf 3,726,348 bytes, 52:14 wall clock. The 8/16 MB-only tree before the
-DDR3 path fitted at 4,122 LABs, -9.575 / -54,038.768 with 32,605
-registers, so the second behind the pak costs 37 LABs and does not make
-setup worse. The motion pak section above was measured before either
-change, so its LAB count is not comparable with these; the seed sweep
-there still describes what the fitter does at the edge.
+Fit of the tree with the 32 MB pak and its line cache, `SEED 2`, stamp
+261115: 4,172 / 4,191 LABs (19 spare), 32,642 registers, `emu` setup
+-8.248, TNS -48,507.556, worst hold +0.248, rbf 3,733,660 bytes, 47:46
+wall clock, no fitter or assembler error. The same tree without the cache
+fitted at 4,160 / 4,191 LABs, 32,472 registers, -8.730 / -50,632.913,
+hold +0.252 and 3,736,092 bytes, so the cache costs 12 LABs and 170
+registers, leaves hold 0.004 ns worse, and both setup and TNS came out
+shallower than the tree without it. Two compiles do not separate a design
+change from a seed's own spread, which the sweep below measures at 0.213
+ns and 12 LABs, so read those timing deltas as unaffected. The 8/16
+MB-only tree before the DDR3 path fitted at 4,122 LABs, -9.575 /
+-54,038.768 with 32,605 registers, so the second behind the pak costs 37
+LABs and does not make setup worse. The motion pak section above was
+measured before either change, so its LAB count is not comparable with
+these; the seed sweep there still describes what the fitter does at the
+edge.
 
-### Across seeds, with the 32 MB pak
+### Across seeds, with the 32 MB pak, before the line cache
 
-Same three seeds as the sweep above, each a full compile of this tree:
+Same three seeds as the sweep above, each a full compile of the tree as it
+stood before the line cache:
 
 | seed | LABs / 4,191 | registers | `emu` setup | TNS | hold | peak | rbf | wall |
 |---|---|---|---|---|---|---|---|---|

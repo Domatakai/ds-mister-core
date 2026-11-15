@@ -76,7 +76,7 @@ task check;
 	input [8*44:1] name;
 	input cond;
 	begin
-		if (!cond) begin
+		if (cond !== 1'b1) begin
 			$display("FAIL %0s", name);
 			errors = errors + 1;
 		end else
@@ -180,6 +180,11 @@ endtask
 reg [63:0] got;
 integer    i;
 
+// the address the port was actually given, sampled where its answer lands
+// (comparing req_addr after the transfer reads whatever came next)
+reg [28:0] ack_addr;
+always @(posedge clk) if (c_ack) ack_addr <= req_addr;
+
 initial begin
 	repeat (4) @(posedge clk);
 	reset = 0;
@@ -190,7 +195,7 @@ initial begin
 
 	// ---- one requester at a time
 	cart_line(29'h000_1234, got);
-	check("cart line carries its address", req_addr === 29'h000_1234 || got === 64'h34);
+	check("cart line carries its address", ack_addr === 29'h000_1234);
 	check("cart gets the answer, not the pak", got === 64'h34);
 	repeat (2) @(posedge clk);
 	check("the grant is released afterwards", req === 1'b0);

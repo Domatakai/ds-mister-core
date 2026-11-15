@@ -80,7 +80,7 @@ task check;
 	input [8*44:1] name;
 	input cond;
 	begin
-		if (!cond) begin
+		if (cond !== 1'b1) begin
 			$display("FAIL %0s", name);
 			errors = errors + 1;
 		end else
@@ -107,18 +107,22 @@ task acc;
 endtask
 
 reg [15:0] rd;
-integer    cyc, c_fast, c_slow, c_write;
+integer    cyc, c_fast, c_slow, c_write, c_hit;
 
 // one access, counting the cycles it takes with the bridge at `lat`
 task measure;
 	input  [3:0] lat;
 	input         w;
+	input  [23:0] off;
 	output integer c;
 	begin
 		bm_lat = lat;
 		req <= 0;
 		@(posedge clk);
-		hw <= 24'd20; wr <= w; wdata <= 16'h5A5A; be <= 2'b11; req <= 1;
+		// let any idle prefetch finish, so this measures the access and not
+		// a wait behind the prefetch
+		while (dut.st !== 3'd0 || dut.pf_want) @(posedge clk);
+		hw <= off; wr <= w; wdata <= 16'h5A5A; be <= 2'b11; req <= 1;
 		c = 0;
 		@(posedge clk);
 		while (!done) begin @(posedge clk); c = c + 1; end
@@ -147,11 +151,17 @@ initial begin
 	acc(24'd4, 1'b0, 16'd0, 2'b11, rd);
 	check("hw 4 moves to the next line", rd === 16'h0000);
 
-	// and the line it asked the bridge for
-	acc(24'd0, 1'b0, 16'd0, 2'b11, rd);
-	check("line 0 is 256 MB into the DDR3", first_addr === 29'h200_0000);
-	acc(24'd4, 1'b0, 16'd0, 2'b11, rd);
-	check("hw 4 asks for the line after it", first_addr === 29'h200_0001);
+	// and the line it asked the bridge for -- fresh lines, because a line
+	// the cache holds is not fetched again and would leave first_addr stale
+	acc(24'd96, 1'b0, 16'd0, 2'b11, rd);
+	check("hw 96 is 256 MB + 24 lines in", first_addr === 29'h200_0018);
+	acc(24'd100, 1'b0, 16'd0, 2'b11, rd);
+	check("hw 100 asks for the line after it", first_addr === 29'h200_0019);
+	while (dut.st !== 3'd0 || dut.pf_want) @(posedge clk);
+	t0 = ndone;
+	acc(24'd100, 1'b0, 16'd0, 2'b11, rd);
+	check("a line already cached is not fetched again", ndone == t0);
+	check("and still answers with its own data", rd === line[9][15:0]);
 
 	// ---- a halfword write touches its own two bytes
 	acc(24'd2, 1'b1, 16'hAABB, 2'b11, rd);
@@ -192,14 +202,15 @@ initial begin
 	check("second beat answered while req stayed high", rdata === 16'h5555);
 	req <= 0;
 	@(posedge clk);
-	check("two transactions, not one", ndone - t0 == 2);
+	check("a 32-bit read costs one line, not two", ndone - t0 == 1);
 
 	// ---- what the shim costs on top of the bridge's own latency: the same
 	// access twice, with the bridge acking at two different latencies, and
 	// the difference is the shim's own
-	measure(4'd2, 1'b0, c_fast);
-	measure(4'd8, 1'b0, c_slow);
-	measure(4'd2, 1'b1, c_write);
+	// different lines each time, so neither run is served from the cache
+	measure(4'd2, 1'b0, 24'd200, c_fast);
+	measure(4'd8, 1'b0, 24'd400, c_slow);
+	measure(4'd2, 1'b1, 24'd600, c_write);
 	$display("info: req to done: %0d cycles at a 2-cycle bridge, %0d at 8",
 	         c_fast, c_slow);
 	$display("info: the shim's own cost is %0d clk_sys (a write: %0d)",
@@ -208,6 +219,29 @@ initial begin
 	      c_slow - c_fast == 6);
 	check("and it is a handful of cycles", c_fast - 2 <= 4);
 	check("a write costs what a read costs", c_write == c_fast);
+
+	// ---- the prefetch, tested the way it is used: a sequential walk. Two
+	// adjacent lines establish the direction, the second one's serve is
+	// followed by an idle fetch of the third, and the third must then cost
+	// nothing at all.
+	// a miss on a line that follows the one just read starts the fetch of
+	// the line after it, so a walk costs one fetch per two lines
+	acc(24'd2400, 1'b0, 16'd0, 2'b11, rd);   // line 600: cold, prefetches 601
+	repeat (16) @(posedge clk);              // time for the prefetch to land
+	while (dut.st !== 3'd0 || dut.pf_want) @(posedge clk);  // port quiet
+	measure(4'd2, 1'b0, 24'd2404, c_hit);    // line 601, already here
+	$display("info: a prefetched line: %0d clk_sys at a 2-cycle bridge", c_hit);
+	check("a prefetched line answers in a couple of cycles",
+	      c_hit > 0 && c_hit <= 4);
+	acc(24'd2404, 1'b0, 16'd0, 2'b11, rd);
+	check("and it carries the right data", rd === line[9][15:0]);
+
+	// that line is still cached, so a write to it is seen without a fetch
+	acc(24'd2404, 1'b1, 16'hBEEF, 2'b11, rd);
+	t0 = ndone;
+	acc(24'd2404, 1'b0, 16'd0, 2'b11, rd);
+	check("a write to a cached line is visible at once",
+	      rd === 16'hBEEF && ndone == t0);
 
 	if (errors == 0) $display("tb_exp_ddr: PASS");
 	else             $display("tb_exp_ddr: FAIL (%0d errors)", errors);

@@ -453,11 +453,14 @@ and the VRAM banks; the 32 MB pak does not (16M halfwords on its own), so
 it lives in DDR3 past the four cart slots and shares that port with the
 cart ROM through `ddr_arb`. It is the slow one of the three: a halfword
 costs one DDR3 line plus 4 clk_sys of shim (`tb_exp_ddr` measures that
-against two bridge latencies), so a 32-bit access is two lines, and it
-waits behind whatever cart line is in flight. `tb_pak_worst` puts numbers
-on that with a 7-cycle line in the model: 12 clk_sys for a lone access
-and 19 with the cart re-requesting every free cycle, while the cart gets
-two lines through for each pak access.
+against two bridge latencies), and it waits behind whatever cart line is
+in flight. The shim keeps the line it just fetched, and once the bus has
+been quiet for 8 cycles it fetches the next one, so the second half of a
+32-bit access costs no line at all and a prefetched line answers in 2
+clk_sys against 6 for the fetch it replaces. `tb_pak_worst` puts numbers
+on the contended case with a 7-cycle line in the model: 12 clk_sys for a
+lone access and 19 with the cart re-requesting every free cycle, while
+the cart still gets about two lines through per pak access.
 
 A slot-2 device cannot coexist with it at
 0x0A000000, so the 32 MB size shadows the motion pak. With the row Off
@@ -728,7 +731,8 @@ fpga/
                                                           [SIM-VERIFIED]
   tb/tb_main_bus.sv       fabric: masters, RAM, cart, slot-2 pak, cheat, IO [SIM-VERIFIED]
   tb/tb_exp_ddr.sv        the 32 MB pak's DDR3 shim: lines, lanes,
-                          byte enables, held-request beats  [SIM-VERIFIED]
+                          byte enables, held-request beats, the line
+                          cache and its prefetch            [SIM-VERIFIED]
   tb/tb_ddr_arb.sv        the cart and the pak sharing DDR3: ack routing,
                           busy while waiting, writes, reset, no
                           starvation                        [SIM-VERIFIED]

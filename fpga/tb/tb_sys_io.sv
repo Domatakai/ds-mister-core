@@ -54,7 +54,7 @@ module tb_sys_io;
 		input [8*52:1] name;
 		input          cond;
 		begin
-			if (!cond) begin
+			if (cond !== 1'b1) begin
 				$display("FAIL %0s", name);
 				errors = errors + 1;
 			end else

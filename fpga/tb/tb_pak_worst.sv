@@ -106,6 +106,8 @@ always @(posedge clk) begin
 end
 
 //------------------------------------------------------------------
+integer accs = 0;      // accesses the shim actually answered
+
 task pak_acc;
 	input  [23:0] off;
 	output integer c;
@@ -116,6 +118,7 @@ task pak_acc;
 		c = 0;
 		@(posedge clk);
 		while (!done) begin @(posedge clk); c = c + 1; end
+		accs = accs + 1;
 		req <= 0;
 		@(posedge clk);
 	end
@@ -126,7 +129,7 @@ task check;
 	input [8*44:1] name;
 	input cond;
 	begin
-		if (!cond) begin
+		if (cond !== 1'b1) begin
 			$display("FAIL %0s", name);
 			errors = errors + 1;
 		end else
@@ -163,7 +166,7 @@ initial begin
 	$display("info: the cart completed %0d lines across those 8 accesses",
 	         cart_lines - lines0);
 
-	check("every pak access completed", i == 8);
+	check("every pak access was answered", accs == 9);
 	check("worst case is bounded by about two lines", c_worst <= 2 * bm_lat + 20);
 	check("contention costs something", c_worst > c_idle);
 	check("the cart still made progress", cart_lines - lines0 >= 8);
