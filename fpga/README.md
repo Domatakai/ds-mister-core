@@ -1397,7 +1397,8 @@ vvp /tmp/tb_ddr_arb
 # tb_ddr_arb: PASS
 
 # 5e. what a pak access costs with the cart streaming
-iverilog -g2012 -o /tmp/tb_pakw tb/tb_pak_worst.sv \n         rtl/mem/exp_ddr.sv rtl/mem/ddr_arb.sv
+iverilog -g2012 -o /tmp/tb_pakw tb/tb_pak_worst.sv \
+         rtl/mem/exp_ddr.sv rtl/mem/ddr_arb.sv
 vvp /tmp/tb_pakw
 # tb_pak_worst: PASS
 
