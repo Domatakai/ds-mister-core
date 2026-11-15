@@ -1788,3 +1788,11 @@ this one is.
 A fourth seed (1) was started and the machine went down mid-fit; it is
 not reported rather than reported as a result.
 
+The table predates the arbiter's busy fix (see below), so the tree as
+committed is one small edit past it. That edit, re-measured at seed 2:
+4,160 / 4,191 LABs, 32,472 registers, `emu` setup -8.730, TNS
+-50,632.913, hold +0.252, peak 86.7 / 85.9 / 91.9 %, rbf 3,736,092,
+58:04. It costs one LAB and leaves setup 0.24 ns worse and TNS 1,873
+better than the same seed before it -- inside the spread the table shows
+across seeds, which is the point of quoting a sweep rather than a run.
+
