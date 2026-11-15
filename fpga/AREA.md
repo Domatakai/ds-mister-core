@@ -1752,3 +1752,30 @@ setup worse. The motion pak section above was measured before either
 change, so its LAB count is not comparable with these; the seed sweep
 there still describes what the fitter does at the edge.
 
+### Across seeds, with the 32 MB pak
+
+Same three seeds as the sweep above, each a full compile of this tree:
+
+| seed | LABs / 4,191 | registers | `emu` setup | TNS | hold | peak | rbf | wall |
+|---|---|---|---|---|---|---|---|---|
+| 2 | 4,159 | 32,275 | -8.490 | -52,506.494 | +0.211 | 86.5 / 85.0 / 93.3 % | 3,726,348 | 52:14 |
+| 4 | 4,147 | 32,266 | -8.296 | -42,101.156 | +0.246 | 85.9 / 83.9 / 91.9 % | 3,756,188 | 68:17 |
+| 5 | 4,150 | 32,289 | -8.277 | -49,338.581 | +0.249 | 87.6 / 87.5 / 90.9 % | 3,695,252 | 79:42 |
+
+All three fit, with 32 to 44 LABs to spare. The LAB count moves by 12
+across the sweep and setup slack by 0.213 ns, so neither is a figure to
+read off a single seed; end-point TNS is the number that moves with the
+design (spread 10,405 here) and it is the one to compare across trees. At
+seed 2 this tree's TNS is 6.6% deeper than the pre-pak baseline's
+-49,244.967 measured at the same seed; seeds 4 and 5 both come in
+shallower than that baseline, which is seed noise, not a repair.
+
+One observation worth keeping: seed 4 is the seed that failed to route on
+the tree before the expansion work (188026/11802, peak 9,365 MB) and it
+routes and fits here. A seed's outcome is not a property of the seed, so
+a sweep has to be repeated whenever the tree changes -- which is what
+this one is.
+
+A fourth seed (1) was started and the machine went down mid-fit; it is
+not reported rather than reported as a result.
+
