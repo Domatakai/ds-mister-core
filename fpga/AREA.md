@@ -1742,6 +1742,20 @@ top of that sits the DDR3 line time, which these benches do not model,
 and a 32-bit access is two lines -- the bench counts two transactions
 for one `ldr`.
 
+What contention adds is measured too, in `tb_pak_worst`, which runs the
+real shim and arbiter against a 7-cycle line and a cart that re-requests
+every free cycle: 12 clk_sys for a lone access, 19 worst and 18 mean
+under that load, with the cart completing 16 lines across 8 pak accesses.
+So the pak waits for about one cart line, not for a burst, which is what
+the alternation is for. Both numbers scale with the line latency the
+model is given; the 7 is `tb_ddr_bridge`'s model, not the DDR3 controller.
+
+The DDR3 split has a guard as well: `check_memmap` now reads the pak's
+line base and the cart's own line mapping (`{boot_slot, win_addr[25:3]}`)
+and fails if the base ever drops inside the cart's range, and
+`tools/test_check_memmap.py` breaks each split in turn to prove the guard
+refuses it.
+
 Lane arithmetic keeps a halfword inside one line (an
 even offset never straddles two), so a partial write needs no
 read-modify-write: the byte enables go to the DDR controller and it masks

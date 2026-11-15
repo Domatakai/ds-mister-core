@@ -454,7 +454,10 @@ it lives in DDR3 past the four cart slots and shares that port with the
 cart ROM through `ddr_arb`. It is the slow one of the three: a halfword
 costs one DDR3 line plus 4 clk_sys of shim (`tb_exp_ddr` measures that
 against two bridge latencies), so a 32-bit access is two lines, and it
-waits behind whatever cart line is in flight.
+waits behind whatever cart line is in flight. `tb_pak_worst` puts numbers
+on that with a 7-cycle line in the model: 12 clk_sys for a lone access
+and 19 with the cart re-requesting every free cycle, while the cart gets
+two lines through for each pak access.
 
 A slot-2 device cannot coexist with it at
 0x0A000000, so the 32 MB size shadows the motion pak. With the row Off
@@ -729,6 +732,8 @@ fpga/
   tb/tb_ddr_arb.sv        the cart and the pak sharing DDR3: ack routing,
                           busy while waiting, writes, reset, no
                           starvation                        [SIM-VERIFIED]
+  tb/tb_pak_worst.sv      the pak's worst case behind a cart that never
+                          stops asking                      [SIM-VERIFIED]
   tb/tb_cheat_engine.sv   file parse + types + guard    [SIM-VERIFIED]
   tb/tb_renderer_2d.sv    text BG/OBJ render, hflip, line swap, 3D
                           layer merge and priority, 64-wide 8bpp map
@@ -1390,6 +1395,11 @@ vvp /tmp/tb_exp
 iverilog -g2012 -o /tmp/tb_ddr_arb tb/tb_ddr_arb.sv rtl/mem/ddr_arb.sv
 vvp /tmp/tb_ddr_arb
 # tb_ddr_arb: PASS
+
+# 5e. what a pak access costs with the cart streaming
+iverilog -g2012 -o /tmp/tb_pakw tb/tb_pak_worst.sv \n         rtl/mem/exp_ddr.sv rtl/mem/ddr_arb.sv
+vvp /tmp/tb_pakw
+# tb_pak_worst: PASS
 
 # 5d. the SDRAM map's fixed regions still clear each other
 python tools/check_memmap.py
