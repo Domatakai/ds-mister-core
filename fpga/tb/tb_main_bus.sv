@@ -57,6 +57,17 @@ wire [15:0] win_data;
 
 // ---- SDRAM path
 wire        bus_ram_req, bus_ram_wr, bus_ram_done;
+// ---- the 32 MB pak answers from DDR3, on its own path
+wire        exp_ddr_sel;
+wire [23:0] exp_ddr_hw;
+reg [23:0] pk_tag [0:15];
+reg [15:0] pk_dat [0:15];
+reg        pk_val [0:15];
+reg        exp_done = 0;
+reg [15:0] exp_rdata = 0;
+reg [23:0] pk_last = 0;
+reg        pk_served = 0;
+
 wire [24:0] bus_ram_addr;
 wire [15:0] bus_ram_wdata;
 wire  [1:0] bus_ram_be;
@@ -128,7 +139,9 @@ main_bus dut (
 	.cart_valid(win_valid), .cart_rdata(win_data),
 	.ram_req(bus_ram_req), .ram_wr(bus_ram_wr), .ram_addr(bus_ram_addr),
 	.ram_wdata(bus_ram_wdata), .ram_be(bus_ram_be),
-	.ram_done(bus_ram_done), .ram_rdata(arb_rdata),
+	.ram_done(exp_ddr_sel ? exp_done : bus_ram_done),
+	.ram_rdata(exp_ddr_sel ? exp_rdata : arb_rdata),
+	.exp_ddr_sel(exp_ddr_sel), .exp_ddr_hw(exp_ddr_hw),
 	.vramcnt_we(), .vramcnt_addr(), .vramcnt_data(),
 	// M2 ports not exercised here: tie the DMA master and engine
 	// consumers off (DMA fabric traffic is covered by tb_dma_engine;
@@ -223,6 +236,52 @@ end
 assign arb_rdata = sd_dout;
 assign arb_rd_done = sd_rd_done;
 assign arb_wr_done = sd_wr_done;
+
+//------------------------------------------------------------------
+// 32 MB pak model: the DDR3 side of the expansion
+//------------------------------------------------------------------
+// 32 MB is too much to allocate here, so the model is a tagged table: a
+// write remembers its offset, and a read of an offset it never saw returns
+// zero. What the bench needs is not the whole pak but that an access left
+// main_bus, arrived with the right offset and came back with the right
+// bytes -- including at the two ends of the window.
+integer pk_i;
+initial for (pk_i = 0; pk_i < 16; pk_i = pk_i + 1) pk_val[pk_i] = 0;
+
+always @(posedge clk) begin : pak_model
+	integer i;
+	reg found, have_free;
+	reg [3:0] slot;
+	found = 0; have_free = 0; slot = 4'd0;
+	exp_done <= 0;
+	if (!bus_ram_req || !exp_ddr_sel) pk_served = 0;
+	// the bus holds req across both halfwords, so a repeat of the offset we
+	// just answered is the same beat, not a new one -- exp_ddr keeps the
+	// same guard with last_hw
+	if (exp_ddr_sel && bus_ram_req && (!pk_served || exp_ddr_hw != pk_last)) begin
+		for (i = 0; i < 16; i = i + 1) begin
+			if (pk_val[i] && pk_tag[i] == exp_ddr_hw) begin
+				found = 1;
+				if (bus_ram_wr) begin
+					if (bus_ram_be[0]) pk_dat[i][7:0]  = bus_ram_wdata[7:0];
+					if (bus_ram_be[1]) pk_dat[i][15:8] = bus_ram_wdata[15:8];
+				end else exp_rdata <= pk_dat[i];
+			end
+			if (!pk_val[i] && !have_free) begin have_free = 1; slot = i; end
+		end
+		if (!found && bus_ram_wr && have_free) begin
+			pk_val[slot] = 1;
+			pk_tag[slot] = exp_ddr_hw;
+			pk_dat[slot] = 16'h0000;
+			if (bus_ram_be[0]) pk_dat[slot][7:0]  = bus_ram_wdata[7:0];
+			if (bus_ram_be[1]) pk_dat[slot][15:8] = bus_ram_wdata[15:8];
+		end
+		if (!bus_ram_wr && !found) exp_rdata <= 16'h0000;
+		exp_done  <= 1;
+		pk_last    = exp_ddr_hw;
+		pk_served  = 1;
+	end
+end
 
 //------------------------------------------------------------------
 // cart bridge model: pulse accepted, one-cycle response
@@ -543,6 +602,28 @@ initial begin
 	repeat (2) @(posedge clk);
 	m9_read (32'h0980_0000, r1);
 	check("8 MB does not reach 0x09800000", r1 === 32'h0000_0000);
+
+	// 32 MB: the pak is DDR3-backed and covers both the 0x09 and 0x0A pages
+	ram_exp = 2'd3;
+	repeat (2) @(posedge clk);
+	m9_write(32'h0900_0000, 32'hFEED_0001, 4'hF);
+	m9_read (32'h0900_0000, r1);
+	check("32 MB pak answers at 0x09000000", r1 === 32'hFEED_0001);
+	m9_write(32'h0980_0000, 32'hFEED_0002, 4'hF);
+	m9_read (32'h0980_0000, r1);
+	check("32 MB pak reaches 0x09800000", r1 === 32'hFEED_0002);
+	m9_write(32'h0A00_0000, 32'hFEED_0003, 4'hF);
+	m9_read (32'h0A00_0000, r1);
+	check("32 MB pak wins at 0x0A000000", r1 === 32'hFEED_0003);
+	m9_write(32'h0AFF_FFFC, 32'hFEED_0004, 4'hF);
+	m9_read (32'h0AFF_FFFC, r1);
+	check("last word of the 32 MB window", r1 === 32'hFEED_0004);
+	m9_write(32'h0900_0008, 32'hAABB_CCDD, 4'hF);
+	m9_write(32'h0900_0008, 32'h0000_00EE, 4'b0001);
+	m9_read (32'h0900_0008, r1);
+	check("32 MB pak byte enable", r1 === 32'hAABB_CCEE);
+	m9_read (32'h0A00_0000, r1);
+	check("32 MB pak keeps its words apart", r1 === 32'hFEED_0003);
 
 	ram_exp = 2'd0;
 	repeat (2) @(posedge clk);

@@ -121,14 +121,14 @@ assign BUTTONS   = 0;
 // menu names games from their own headers. Further extensions would be
 // packed three characters each ("NDSBIN"), with no separator.
 //------------------------------------------------------------------
-localparam [19983:0] CONF_STR = {   // 2498 string bytes, the 6-char `BUILD_DATE
+localparam [20031:0] CONF_STR = {   // 2504 string bytes, the 6-char `BUILD_DATE
                                     // (sys/build_id.tcl: %y%m%d) included
                                     // (tools/confstr_len.py checks the width)
 "NDS MiSTer Test;;",
 "-;",
 "P1,Slot-1 Card;",
 "P1F1,NDS;",
-"P1O[89:88],Slot-2 RAM expansion,Off,8 MB,16 MB;",
+"P1O[89:88],Slot-2 RAM expansion,Off,8 MB,16 MB,32 MB;",
 "P1-;",
 "h0P1O[4:2],Save type,Auto,EEPROM 512K,EEPROM 8K,FLASH 512K,FLASH 1M,FRAM,NAND;",
 "h0P1T[126],Erase save data;",
@@ -327,8 +327,8 @@ wire        reset_core    = RESET | status[0] | buttons[1];
 wire        soft_reset    = status[127];
 wire        erase_save    = status[126];
 wire  [2:0] save_type     = status[4:2];
-wire [1:0]  ram_exp       = status[89:88]; // Slot-2 RAM expansion: 0,8,16 MB
-                                          // at 0x09000000 when on
+wire [1:0]  ram_exp       = status[89:88]; // Slot-2 RAM expansion: Off,8,16,
+                                          // 32 MB at 0x09000000 when on
 wire  [2:0] scr_layout    = status[7:5];
 wire  [1:0] rotation      = status[9:8];
 wire  [2:0] aspect        = status[12:10];
@@ -783,7 +783,12 @@ assign VIDEO_ARY = 13'd3;
 // path — through mem_arbiter into sdram_ctrl (per-byte write masks).
 // Cart ROM lives in DDR3 (see cart slot) so 256 Mbit+ carts fit.
 //------------------------------------------------------------------
-wire        bus_ram_req, bus_ram_wr, bus_ram_done;
+wire        bus_ram_req, bus_ram_wr;
+wire        mem_bus_done, exp_ddr_done;
+wire [15:0] exp_ddr_rdata;
+// A 32 MB pak is DDR3-backed, so the two memories answer on separate paths
+wire        bus_exp_ddr_sel;
+wire [23:0] bus_exp_ddr_hw;
 wire [24:0] bus_ram_addr;
 wire [15:0] bus_ram_wdata;
 wire  [1:0] bus_ram_be;
@@ -813,12 +818,12 @@ wire [15:0] arb_bs_data;    // forwarded by mem_arbiter
 mem_arbiter mem_arbiter (
 	.clk(clk_sys),
 	.reset(reset),
-	.bus_req(bus_ram_req),
+	.bus_req(bus_ram_req && !bus_exp_ddr_sel),
 	.bus_wr(bus_ram_wr),
 	.bus_addr(bus_ram_addr),
 	.bus_wdata(bus_ram_wdata),
 	.bus_be(bus_ram_be),
-	.bus_ready(bus_ram_done),
+	.bus_ready(mem_bus_done),
 	.save_req(save_req),
 	.save_wr(save_wr),
 	.save_addr(save_addr),
@@ -956,17 +961,80 @@ cart_slot cart_slot (
 	.slot_save_det(slot_save_det)
 );
 
+//------------------------------------------------------------------
+// DDR3: the cart ROM and a 32 MB expansion pak share the one port
+//------------------------------------------------------------------
+wire        ddr_req, ddr_req_wr, ddr_ack, ddr_busy;
+wire [28:0] ddr_req_addr;
+wire [63:0] ddr_req_din, ddr_dout;
+wire  [7:0] ddr_req_be;
+wire        exp_ddr_req, exp_ddr_wr, exp_ddr_ack, exp_ddr_busy;
+wire [28:0] exp_ddr_addr;
+wire [63:0] exp_ddr_din, exp_ddr_dout;
+wire  [7:0] exp_ddr_be;
+
+// The pak: main_bus's held halfword request in, one DDR3 line per access
+// out. Whatever the bus asked for comes back on ram_done/ram_rdata above.
+exp_ddr exp_ddr (
+	.clk(clk_sys),
+	.reset(reset),
+	.req(bus_ram_req && bus_exp_ddr_sel),
+	.wr(bus_ram_wr),
+	.hw(bus_exp_ddr_hw),
+	.wdata(bus_ram_wdata),
+	.be(bus_ram_be),
+	.done(exp_ddr_done),
+	.rdata(exp_ddr_rdata),
+	.d_req(exp_ddr_req),
+	.d_wr(exp_ddr_wr),
+	.d_addr(exp_ddr_addr),
+	.d_din(exp_ddr_din),
+	.d_be(exp_ddr_be),
+	.d_ack(exp_ddr_ack),
+	.d_dout(exp_ddr_dout),
+	.d_busy(exp_ddr_busy)
+);
+
+ddr_arb ddr_arb (
+	.clk(clk_sys),
+	.reset(reset),
+	.c_req(cart_ddr_rd | cart_ddr_we),
+	.c_wr(cart_ddr_we),
+	.c_addr(cart_ddr_addr),
+	.c_din(cart_ddr_din),
+	.c_be(cart_ddr_be),
+	.c_ack(cart_ddr_ack),
+	.c_dout(cart_ddr_dout),
+	.c_busy(cart_ddr_busy),
+	.e_req(exp_ddr_req),
+	.e_wr(exp_ddr_wr),
+	.e_addr(exp_ddr_addr),
+	.e_din(exp_ddr_din),
+	.e_be(exp_ddr_be),
+	.e_ack(exp_ddr_ack),
+	.e_dout(exp_ddr_dout),
+	.e_busy(exp_ddr_busy),
+	.req(ddr_req),
+	.req_wr(ddr_req_wr),
+	.req_addr(ddr_req_addr),
+	.req_din(ddr_req_din),
+	.req_be(ddr_req_be),
+	.ack(ddr_ack),
+	.busy(ddr_busy),
+	.dout(ddr_dout)
+);
+
 ddr_bus_bridge ddr_bus_bridge (
 	.clk(clk_sys),
 	.reset(reset),
-	.req(cart_ddr_rd | cart_ddr_we),
-	.req_wr(cart_ddr_we),
-	.req_addr(cart_ddr_addr),
-	.req_din(cart_ddr_din),
-	.req_be(cart_ddr_be),
-	.ack(cart_ddr_ack),
-	.busy(cart_ddr_busy),
-	.dout(cart_ddr_dout),
+	.req(ddr_req),
+	.req_wr(ddr_req_wr),
+	.req_addr(ddr_req_addr),
+	.req_din(ddr_req_din),
+	.req_be(ddr_req_be),
+	.ack(ddr_ack),
+	.busy(ddr_busy),
+	.dout(ddr_dout),
 	.clk_ddr(clk_ddr),
 	.reset_ddr(reset),
 	.ddr_burstcnt(DDRAM_BURSTCNT),
@@ -1124,8 +1192,10 @@ main_bus main_bus (
 	.ram_addr(bus_ram_addr),
 	.ram_wdata(bus_ram_wdata),
 	.ram_be(bus_ram_be),
-	.ram_done(bus_ram_done),
-	.ram_rdata(arb_rdata),
+	.ram_done(bus_exp_ddr_sel ? exp_ddr_done : mem_bus_done),
+	.ram_rdata(bus_exp_ddr_sel ? exp_ddr_rdata : arb_rdata),
+	.exp_ddr_sel(bus_exp_ddr_sel),
+	.exp_ddr_hw(bus_exp_ddr_hw),
 	.vramcnt_we(bus_vramcnt_we),
 	.vramcnt_addr(bus_vramcnt_addr),
 	.vramcnt_data(bus_vramcnt_data),

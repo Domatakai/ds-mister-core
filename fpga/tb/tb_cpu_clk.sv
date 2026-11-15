@@ -204,6 +204,7 @@ main_bus dut (
 	.ram_req(bus_ram_req), .ram_wr(bus_ram_wr), .ram_addr(bus_ram_addr),
 	.ram_wdata(bus_ram_wdata), .ram_be(bus_ram_be),
 	.ram_done(bus_ram_done), .ram_rdata(arb_rdata),
+	.exp_ddr_sel(), .exp_ddr_hw(),
 	.vramcnt_we(), .vramcnt_addr(), .vramcnt_data(),
 	.vram_valid(1'b0), .vram_rdata(16'd0),
 	.dma_reg_rdata(16'd0),

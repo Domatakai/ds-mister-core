@@ -107,6 +107,10 @@ module main_bus (
 	input            ram_done,
 	input     [15:0] ram_rdata,
 
+	// ---- the 32 MB pak answers from DDR3, not from mem_arbiter ----
+	output           exp_ddr_sel,
+	output    [23:0] exp_ddr_hw,
+
 	// ---- VRAMCNT writes -> vram_arbiter ----
 	output           vramcnt_we,
 	output     [3:0] vramcnt_addr,
@@ -319,12 +323,21 @@ wire [9:0]  pal_idx    = a[10:1];
 // 32-bit word spans halves {k, k+1} (never overlapping its neighbour).
 wire [24:0] ram_word_lo = {3'd0, 1'b1, a[21:1]};
 wire [24:0] ram_word_hi = ram_word_lo + 25'd1;
-// The pak goes in SDRAM at 0x700000 + a[23:1]. Main RAM owns 0x200000 and
-// palette/OAM 0x400000; the VRAM banks start at 0x600000 and only reach
-// 0x6B0000 of the 8 MB once reserved for them, so 0x700000..0xFFFFFF is
-// free -- 18 MB of the chip's 16M halfwords, which is what a 16 MB pak
-// needs and a 32 MB one cannot have.
-wire [24:0] exp_word_lo = 25'h700000 + {2'd0, a[23:1]};
+// The 8 and 16 MB paks go in SDRAM at EXP_SDRAM_BASE + a[23:1]. Main RAM
+// owns 0x200000 and palette/OAM 0x400000; the VRAM banks start at
+// 0x600000 and only reach 0x6B0000 (VRAM_SDRAM_TOP) of the 8 MB once
+// reserved for them, which is why this base is 0x700000: the region from
+// here to the top of the chip is 18 MB, enough for a 16 MB pak and nothing
+// larger. tools/check_memmap.py keeps the two ends apart.
+localparam [24:0] EXP_SDRAM_BASE = 25'h700000;
+// The 32 MB pak is backed by DDR3 (exp_ddr.sv, routed in NDS.sv), so its
+// offset runs from 0 to 16M halfwords. That is (a - 0x09000000) >> 1 and
+// not a[24:1]: bit 24 is set for the whole 0x09 page, so a[24:1] alone
+// would start the pak at 0x0A000000.
+wire [24:0] exp32_off  = a[24:0] - 25'h100_0000;
+wire [23:0] exp32_hw   = exp32_off[24:1];
+wire [23:0] exp_hw_lo  = (ram_exp == 2'd3) ? exp32_hw : a[23:1];
+wire [24:0] exp_word_lo = EXP_SDRAM_BASE + {1'b0, exp_hw_lo};
 wire [24:0] exp_word_hi = exp_word_lo + 25'd1;
 
 // VRAM window port (byte address within the 1MB window; offset register
@@ -408,7 +421,10 @@ wire [31:0] rumble_word = {rmb_hi, rmb_lo};
 // 0x0A page: everything above it stays open bus, so a future save decode
 // still has somewhere to live and a stray read there cannot look like
 // the accessory.
-wire is_motion = motion_pak && (a[31:16] == 16'h0A00);
+// A 32 MB pak covers this page, so it shadows the motion pak: a device in
+// the slot cannot occupy the same addresses as the pak's last 32 MB.
+wire is_motion = motion_pak && (ram_exp != 2'd3) &&
+                 (a[31:16] == 16'h0A00);
 // A resting stick is not exactly 0, and the pack's axes are 8-bit
 // acceleration, so anything inside the deadzone reports 0x80 (level).
 // The threshold is a comfort setting, not a calibration: 6 of 127.
@@ -459,12 +475,16 @@ wire [31:0] motion_word = mot_byte_rd ? {4{mot_rdata}} : 32'hFC00_FC00;
 // is exactly what a DS with an empty slot does.
 // The OSD row picks the pak's size. 8 MB stops at the a[23] boundary
 // (0x09000000..0x097FFFFF, the official pak); 16 MB takes the whole 0x09
-// page (0x09000000..0x09FFFFFF, the unofficial one). A 32 MB pak would
-// run into 0x0A000000, which this core gives to the SRAM window and the
-// motion pak, and the SDRAM behind it is not there either -- see
-// README.md.
+// page (0x09000000..0x09FFFFFF, the unofficial one), and the DDR3-backed
+// 32 MB pak covers both pages (0x09000000..0x0AFFFFFF) -- see README.md.
 wire is_exp    = (ram_exp == 2'd1) ? (a[31:23] == 9'd18) :
-                 (ram_exp == 2'd2) ? (a[31:24] == 8'h09) : 1'b0;
+                 (ram_exp == 2'd2) ? (a[31:24] == 8'h09) :
+                 (ram_exp == 2'd3) ? (a[31:24] == 8'h09 ||
+                                      a[31:24] == 8'h0A) : 1'b0;
+// The 32 MB pak holds more than the SDRAM module has, so its transactions
+// go to the DDR3-backed exp_ddr instead of mem_arbiter.
+assign exp_ddr_sel = is_exp && (ram_exp == 2'd3);
+assign exp_ddr_hw  = ram_addr[23:0] - EXP_SDRAM_BASE[23:0];
 wire is_private = is_bios | is_shared | is_a7wram | is_io | is_pal | is_oam;
 
 //------------------------------------------------------------------

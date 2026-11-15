@@ -105,6 +105,11 @@ module vram_arbiter (
 );
 
 localparam [23:0] VRAM_SDRAM_BASE = 24'h60_0000; // after 4MB main RAM @0x20_0000
+// The bank map's ceiling: the last bank starts at +0x90000 and is 128K
+// halfwords, so no VRAMCNT assignment reaches past this. main_bus puts the
+// expansion pak's SDRAM at 0x700000, 0x50000 halfwords above it --
+// tools/check_memmap.py fails the build if those two ever meet.
+localparam [23:0] VRAM_SDRAM_TOP  = 24'h6B_0000;
 
 //------------------------------------------------------------------
 // Bank control registers

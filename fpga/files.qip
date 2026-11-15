@@ -49,3 +49,6 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio/audio_mix.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio/midi_port.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio/mt32_select.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio/spu.sv
+
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/mem/ddr_arb.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/mem/exp_ddr.sv

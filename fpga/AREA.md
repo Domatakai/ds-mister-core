@@ -1711,23 +1711,44 @@ reserved for them was 7 MB of empty space. Moving the pak base from
 0xA00000 to 0x700000 turns the old 8 MB region plus the 4 MB above it
 into 18 MB, which is what a 16 MB pak needs.
 
-32 MB is not implementable here, for two independent reasons:
+That base now depends on a number in another module, so it is guarded:
+`vram_arbiter` names the bank map's ceiling (`VRAM_SDRAM_TOP`, 0x6B0000)
+and `tools/check_memmap.py` reads both it and `EXP_SDRAM_BASE` from the
+RTL, failing if the pak base ever drops to or below the banks, or if less
+than 64 KB separates them. Today the headroom is 0x50000 halfwords
+(640 KB).
 
-* the storage does not exist -- a 32 MB pak plus the 4 MB of main RAM,
-  the save region and the VRAM banks needs more than the module's 32 MB;
-* the address does not exist either -- a 32 MB pak runs from 0x09000000
-  to 0x0AFFFFFF, and 0x0A000000 is the SRAM window this core also gives
-  to the motion pak.
+32 MB cannot come from that module at all: the pak alone is 16M
+halfwords, the whole chip, and its window runs from 0x09000000 to
+0x0AFFFFFF. So the 32 MB size is backed by DDR3 instead. The cart ROM
+already lives there, and `ddr_bus_bridge` carries one 64-bit line per
+transaction, so `exp_ddr` turns one halfword access into one line request
+at line 0x200_0000 (256 MB in, past anything a cart slot can address) and
+`ddr_arb` lets the pak and the cart take turns on that port. main_bus
+keeps driving its usual held halfword request, and NDS.sv routes it to
+`exp_ddr` instead of `mem_arbiter` when the size is 32 MB, so the bus
+state machine never learns which memory answered.
 
-MiSTer's dual-SDRAM arrangement does not rescue it: that mode repurposes
-the DDR3 pins for a second module, and this core drives those pins as
-DDR3 for the cart ROM (`ddr_bus_bridge`). A 32 MB pak would need the
-expansion to live in DDR3 beside the cart, which is a different design.
+The bus holds `req` across both halves of a 32-bit access, so `exp_ddr`
+treats "the offset changed while `req` was still high" as the next beat
+rather than waiting for `req` to drop; without that the second half would
+stall forever. Lane arithmetic keeps a halfword inside one line (an
+even offset never straddles two), so a partial write needs no
+read-modify-write: the byte enables go to the DDR controller and it masks
+the line write.
 
-Fit of the tree after this change (`SEED 2`, stamp 261108): 4,122 / 4,191
-LABs (69 spare), 32,605 registers, `emu` setup -9.575, TNS -54,038.768,
-worst hold +0.212, peak interconnect 90.3 / 89.9 / 94.6 %, rbf 3,734,988
-bytes. The motion pak section above was measured before this change, so
-its LAB count is not comparable with this one; the seed sweep there still
-describes what the fitter does at the edge.
+At 0x0A000000 the 32 MB pak covers the page this core gives the motion
+pak, so that size shadows it -- a slot cannot hold both devices at once.
+MiSTer's dual-SDRAM mode does not help here and is not used: it
+repurposes the DDR3 pins, which this core drives as DDR3 for the cart.
+
+Fit of the tree with the 32 MB pak, `SEED 2`, stamp 261108: 4,159 /
+4,191 LABs (32 spare), 32,275 registers, `emu` setup -8.490, TNS
+-52,506.494, worst hold +0.211, peak interconnect 86.5 / 85.0 / 93.3 %,
+rbf 3,726,348 bytes, 52:14 wall clock. The 8/16 MB-only tree before the
+DDR3 path fitted at 4,122 LABs, -9.575 / -54,038.768 with 32,605
+registers, so the second behind the pak costs 37 LABs and does not make
+setup worse. The motion pak section above was measured before either
+change, so its LAB count is not comparable with these; the seed sweep
+there still describes what the fitter does at the edge.
 
