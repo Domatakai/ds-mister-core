@@ -1012,6 +1012,13 @@ which silently re-runs an older build. Its cases live in
 `test_check_benches.py`: an unrun bench, a drifted binary name, and a
 compile that is never run.
 
+`python fpga/tools/preflight.py` is the gate in front of a push. It runs
+the checkers and each one's cases, and without `--fast` the whole bench
+suite behind them -- twelve minutes or so on this machine, and no Quartus
+anywhere in it. Installed as the repository's pre-push hook, with
+`exec python fpga/tools/preflight.py --fast`, it fails the push rather
+than letting a stale figure or an unwired bench through.
+
 Both sides of that gate were run for real on 2026-11-10, from a
 tree staged with `git archive HEAD:fpga`. The clean tree built with
 `build.bat --record`: the gate printed `docs ok: 2 file(s)`, the flow

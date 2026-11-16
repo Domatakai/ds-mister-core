@@ -1812,6 +1812,26 @@ bytes larger. The trade was made for routing headroom, not for area: on
 the same settings the seed that used to run out of routing now fits (see
 the sweep below).
 
+The write buffer was tried in a compact form too, and put back: two
+halfword slots -- lane, data and byte enables each -- instead of a 64-bit
+word with a byte mask, which is 29 fewer flops on paper. Built at `SEED 2`
+it measured 4,174 / 4,191 LABs, 39,194 ALMs and 33,356 registers, against
+4,157 / 39,119 / 33,283 for the form in the tree. Fewer flops, more
+fabric: the fitter spent the difference duplicating the buffer for
+routability, which is what it was already doing to the wide one. It also
+moved setup the other way -- -7.917 and TNS -46,129.179 against -8.751
+and -54,941.052 -- and took `pll_hdmi` from +0.157 to -0.470, so it is
+not a change this tree can afford for 17 LABs of margin. The wide form
+stays.
+
+Moving the two cached lines into M10K was considered against that and not
+taken. It would pull 128 registers out of the fitter's way, but a block
+RAM read is registered: a hit would answer in 3 `clk_sys` instead of 2,
+and the shim's own cost would go from 4 to 5, which is the property the
+cache exists to protect. Trading a cycle on every hit for 128 of 4,157
+LABs is the wrong side of that trade on a part that is 99 % full of
+routing, not of registers.
+
 The same tree before the write buffer, and before that narrowing, fitted
 at 4,172 / 4,191 LABs, 32,642 registers, -8.248 / -48,507.556, hold
 +0.248 and 3,733,660 bytes, so the buffer and the narrowing together cost
