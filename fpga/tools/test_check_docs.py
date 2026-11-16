@@ -273,12 +273,14 @@ def main():
     print()
     if failures:
         print("%d of %d cases failed" % (len(failures), count))
+        print("test_check_docs: FAIL")
         for name, detail in failures:
             print("FAILED: %s" % name)
             if detail:
                 print(detail)
         return 1
     print("%d cases passed" % count)
+    print("test_check_docs: PASS")
     return 0
 
 

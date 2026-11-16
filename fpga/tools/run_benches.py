@@ -67,8 +67,8 @@ def steps(readme):
             cur["run"] = s
             out.append(cur)
             cur = None
-        elif s.startswith("python tools/check_"):
-            # a checker, not a bench: one command, its own verdict line
+        elif s.startswith(("python tools/check_", "python tools/test_")):
+            # a checker or a guard's own test: one command, its own verdict
             out.append({"cc": s, "run": None})
     named = []
     for n, st in enumerate(out, 1):

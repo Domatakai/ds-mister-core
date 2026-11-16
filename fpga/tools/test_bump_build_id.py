@@ -734,8 +734,10 @@ def main():
             if detail:
                 print(detail.rstrip())
         print("%d of %d cases failed" % (len(failures), count))
+        print("test_bump_build_id: FAIL")
         return 1
     print("%d cases passed" % count)
+    print("test_bump_build_id: PASS")
     return 0
 
 

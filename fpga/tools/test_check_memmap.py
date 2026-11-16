@@ -79,4 +79,6 @@ rc, out = run(d)
 check("a cart widened into the pak's lines is refused", rc == 1)
 
 print("\n%d passed, %d failed" % (passed, failed))
+# a verdict line the bench runner can read, like the checkers print
+print("test_check_memmap: %s" % ("FAIL" if failed else "PASS"))
 sys.exit(1 if failed else 0)

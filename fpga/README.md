@@ -457,10 +457,13 @@ against two bridge latencies), and it waits behind whatever cart line is
 in flight. The shim keeps the line it just fetched, and once the bus has
 been quiet for 8 cycles it fetches the next one, so the second half of a
 32-bit access costs no line at all and a prefetched line answers in 2
-clk_sys against 6 for the fetch it replaces. `tb_pak_worst` puts numbers
-on the contended case with a 7-cycle line in the model: 12 clk_sys for a
-lone access and 19 with the cart re-requesting every free cycle, while
-the cart still gets about two lines through per pak access.
+clk_sys against 6 for the fetch it replaces. Stores are collected the
+same way: the two halfwords of a 32-bit store merge into one line, and a
+write is answered in 2 clk_sys without waiting for DDR3 at all.
+`tb_pak_worst` puts numbers on the contended case with a 7-cycle line in
+the model: 12 clk_sys for a lone access and 19 with the cart re-requesting
+every free cycle, while the cart still gets about two lines through per
+pak access.
 
 A slot-2 device cannot coexist with it at
 0x0A000000, so the 32 MB size shadows the motion pak. With the row Off
@@ -1406,9 +1409,17 @@ iverilog -g2012 -o /tmp/tb_pakw tb/tb_pak_worst.sv \
 vvp /tmp/tb_pakw
 # tb_pak_worst: PASS
 
-# 5d. the SDRAM map's fixed regions still clear each other
+# 5d. the SDRAM map's fixed regions still clear each other, and the DDR3
+# split with them
 python tools/check_memmap.py
 # check_memmap: PASS
+
+# the guards test themselves: each one is handed a broken map and must
+# refuse it, or it has not been shown to catch anything
+python tools/test_check_memmap.py
+# test_check_memmap: PASS
+python tools/test_check_docs.py
+# test_check_docs: PASS
 
 # 6. cheat engine — GBATEK type table, guard block, lockout, reload
 iverilog -g2012 -o /tmp/tb_cheat tb/tb_cheat_engine.sv rtl/cart/cheat_engine.sv

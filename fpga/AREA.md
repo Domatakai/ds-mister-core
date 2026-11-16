@@ -1750,9 +1750,19 @@ purpose. Firing at the first free cycle would put a fetch in front of
 the next real access, and take a line from the cart, to gain nothing
 while the port is already busy: `tb_pak_worst`, whose cart re-requests
 every free cycle, never leaves an 8-cycle gap, and the pak's numbers
-there are what they were without the cache. Writes go through to DDR3
-and are written into the cached copy of that line, so a read after a
-write costs nothing either.
+there are what they were without the cache.
+
+Stores are collected rather than sent one halfword at a time. `main_bus`
+presents a 32-bit store as two halfword beats, so the shim holds the first
+and merges the second into it, and the bench counts one line for the pair
+where it counted two, with the merged enables reading 0x0F. A write is
+answered in 2 clk_sys at either bridge latency, because nothing about it
+waits for the port. The collected bytes go out before anything that would
+read the line, before a write to a different line, and on their own when
+the bus has been quiet for 8 cycles -- a lone halfword store that nothing
+follows still reaches DDR3, which the bench checks by reading it back
+after an idle gap. Writes also land in the cached copy of that line, so a
+read that follows a store sees it without a fetch.
 
 What contention adds is measured too, in `tb_pak_worst`, which runs the
 real shim and arbiter against a 7-cycle line and a cart that re-requests
@@ -1782,56 +1792,43 @@ pak, so that size shadows it -- a slot cannot hold both devices at once.
 MiSTer's dual-SDRAM mode does not help here and is not used: it
 repurposes the DDR3 pins, which this core drives as DDR3 for the cart.
 
-Fit of the tree with the 32 MB pak and its line cache, `SEED 2`, stamp
-261115: 4,172 / 4,191 LABs (19 spare), 32,642 registers, `emu` setup
--8.248, TNS -48,507.556, worst hold +0.248, rbf 3,733,660 bytes, 47:46
-wall clock, no fitter or assembler error. The same tree without the cache
-fitted at 4,160 / 4,191 LABs, 32,472 registers, -8.730 / -50,632.913,
-hold +0.252 and 3,736,092 bytes, so the cache costs 12 LABs and 170
-registers, leaves hold 0.004 ns worse, and both setup and TNS came out
-shallower than the tree without it. Two compiles do not separate a design
-change from a seed's own spread, which the sweep below measures at 0.213
-ns and 12 LABs, so read those timing deltas as unaffected. The 8/16
-MB-only tree before the DDR3 path fitted at 4,122 LABs, -9.575 /
--54,038.768 with 32,605 registers, so the second behind the pak costs 37
-LABs and does not make setup worse. The motion pak section above was
-measured before either change, so its LAB count is not comparable with
-these; the seed sweep there still describes what the fitter does at the
-edge.
+Fit of the tree with the 32 MB pak, its line cache and its write buffer,
+`SEED 2`, stamp 261115: 4,170 / 4,191 LABs (21 spare), 33,358 registers,
+`emu` setup -8.266, TNS -53,817.071, worst hold +0.250, rbf 3,736,636
+bytes, 63:56 wall clock, no fitter or assembler error. The same tree
+before the write buffer fitted at 4,172 / 4,191 LABs, 32,642 registers,
+-8.248 / -48,507.556, hold +0.248 and 3,733,660 bytes, so collecting
+stores into a line costs about 716 registers, nothing measurable in LABs,
+and moves TNS 5,309 deeper -- at this fill, inside what the sweep below
+shows seeds doing to each other. The 8/16 MB-only tree before the DDR3
+path fitted at 4,122 LABs, -9.575 / -54,038.768 with 32,605 registers, so
+the second behind the pak costs 48 LABs and does not make setup worse.
+The motion pak section above was measured before any of this, so its LAB
+count is not comparable with these.
 
-### Across seeds, with the 32 MB pak, before the line cache
+### Across seeds
 
-Same three seeds as the sweep above, each a full compile of the tree as it
-stood before the line cache:
+Three seeds, each a full compile of the tree as committed:
 
-| seed | LABs / 4,191 | registers | `emu` setup | TNS | hold | peak | rbf | wall |
-|---|---|---|---|---|---|---|---|---|
-| 2 | 4,159 | 32,275 | -8.490 | -52,506.494 | +0.211 | 86.5 / 85.0 / 93.3 % | 3,726,348 | 52:14 |
-| 4 | 4,147 | 32,266 | -8.296 | -42,101.156 | +0.246 | 85.9 / 83.9 / 91.9 % | 3,756,188 | 68:17 |
-| 5 | 4,150 | 32,289 | -8.277 | -49,338.581 | +0.249 | 87.6 / 87.5 / 90.9 % | 3,695,252 | 79:42 |
+| seed | LABs / 4,191 | registers | `emu` setup | TNS | hold | rbf | wall |
+|---|---|---|---|---|---|---|---|
+| 2 | 4,170 | 33,358 | -8.266 | -53,817.071 | +0.250 | 3,736,636 | 63:56 |
+| 4 | 4,163 | 33,352 | -8.435 | -48,679.446 | +0.250 | 3,720,124 | 53:19 |
+| 5 | does not fit | 31,604 | - | - | - | - | 43:53 |
 
-All three fit, with 32 to 44 LABs to spare. The LAB count moves by 12
-across the sweep and setup slack by 0.213 ns, so neither is a figure to
-read off a single seed; end-point TNS is the number that moves with the
-design (spread 10,405 here) and it is the one to compare across trees. At
-seed 2 this tree's TNS is 6.6% deeper than the pre-pak baseline's
--49,244.967 measured at the same seed; seeds 4 and 5 both come in
-shallower than that baseline, which is seed noise, not a repair.
+Seeds 2 and 4 fit, with 21 and 28 LABs to spare and the same worst hold;
+they differ by 7 LABs, 0.169 ns on setup and 5,138 on TNS. Seed 5 does
+not finish: it packs the logic into 4,129 LABs and then runs out of
+routing, 43:53 in, reporting 188005 (excessive demand for the available
+routing) and 11802 (cannot fit). The register count in its row is what
+that failed attempt got to. All three seeds fitted on the tree before the
+line cache and the write buffer, so the edge has moved closer: both that
+fit and this one read 99 %, which is why the LAB count alone does not say
+it, and why the sweep is worth running after every change to the tree.
 
-One observation worth keeping: seed 4 is the seed that failed to route on
-the tree before the expansion work (188026/11802, peak 9,365 MB) and it
-routes and fits here. A seed's outcome is not a property of the seed, so
-a sweep has to be repeated whenever the tree changes -- which is what
-this one is.
-
-A fourth seed (1) was started and the machine went down mid-fit; it is
-not reported rather than reported as a result.
-
-The table predates the arbiter's busy fix (see below), so the tree as
-committed is one small edit past it. That edit, re-measured at seed 2:
-4,160 / 4,191 LABs, 32,472 registers, `emu` setup -8.730, TNS
--50,632.913, hold +0.252, peak 86.7 / 85.9 / 91.9 %, rbf 3,736,092,
-58:04. It costs one LAB and leaves setup 0.24 ns worse and TNS 1,873
-better than the same seed before it -- inside the spread the table shows
-across seeds, which is the point of quoting a sweep rather than a run.
+A seed's outcome is not a property of the seed -- seed 4 failed to route
+on the tree before the expansion work and fits here -- so a sweep says
+what this tree does at the edge, not what a seed will always do. Seed 1
+remains unreported: the machine went down mid-fit the one time it was
+started.
 

@@ -106,6 +106,15 @@ task acc;
 	end
 endtask
 
+// drop the request and let the write buffer empty itself
+task flushw;
+	begin
+		req <= 0;
+		while (dut.pw_val) @(posedge clk);
+		@(posedge clk);
+	end
+endtask
+
 reg [15:0] rd;
 integer    cyc, c_fast, c_slow, c_write, c_hit;
 
@@ -121,7 +130,7 @@ task measure;
 		@(posedge clk);
 		// let any idle prefetch finish, so this measures the access and not
 		// a wait behind the prefetch
-		while (dut.st !== 3'd0 || dut.pf_want) @(posedge clk);
+		while (dut.st !== 3'd0 || dut.pf_want || dut.pw_val) @(posedge clk);
 		hw <= off; wr <= w; wdata <= 16'h5A5A; be <= 2'b11; req <= 1;
 		c = 0;
 		@(posedge clk);
@@ -130,6 +139,11 @@ task measure;
 		@(posedge clk);
 	end
 endtask
+
+// the prefetch gate's own guard (the monitor that drives these is below)
+integer pf_starts = 0;
+integer pf_early  = 0;
+reg     pf_seen   = 1'b0;
 
 reg [28:0] first_addr;
 reg  [7:0] first_be;
@@ -179,16 +193,40 @@ initial begin
 	acc(24'd0, 1'b0, 16'd0, 2'b11, rd);
 	check("byte write keeps the low byte", rd === 16'hDDCC);
 
-	// the enables the bridge sees for those writes
+	// the enables the bridge sees for those writes, each on its own
 	acc(24'd1, 1'b1, 16'h1234, 2'b01, rd);
+	flushw;
 	check("low byte only -> bridge be 0x04", first_be == 8'h04);
 	acc(24'd1, 1'b1, 16'h1234, 2'b10, rd);
+	flushw;
 	check("high byte only -> bridge be 0x08", first_be == 8'h08);
 	acc(24'd1, 1'b1, 16'h1234, 2'b11, rd);
+	flushw;
 	check("both bytes -> bridge be 0x0C", first_be == 8'h0C);
+
+	// ---- two halfword beats of one 32-bit store become one line
+	flushw;
+	t0 = ndone;
+	acc(24'd116, 1'b1, 16'h1111, 2'b11, rd);
+	acc(24'd117, 1'b1, 16'h2222, 2'b11, rd);
+	flushw;
+	check("a 32-bit write costs one line, not two", ndone - t0 == 1);
+	check("and both halves merge into it", first_be == 8'h0F);
+	acc(24'd116, 1'b0, 16'd0, 2'b11, rd);
+	check("the merged low half reads back", rd === 16'h1111);
+	acc(24'd117, 1'b0, 16'd0, 2'b11, rd);
+	check("and the high half too", rd === 16'h2222);
+
+	// a lone halfword still reaches the memory when nothing follows it
+	flushw;
+	acc(24'd24, 1'b1, 16'h5A5A, 2'b11, rd);
+	flushw;
+	acc(24'd24, 1'b0, 16'd0, 2'b11, rd);
+	check("a write with nothing behind it still lands", rd === 16'h5A5A);
 
 	// ---- the bus holding req across both halves of a 32-bit access
 	line[2] = 64'h7777_6666_5555_4444;
+	flushw;
 	t0 = ndone;
 	@(posedge clk);
 	hw <= 24'd8; wr <= 1'b0; be <= 2'b11; req <= 1;
@@ -213,12 +251,14 @@ initial begin
 	measure(4'd2, 1'b1, 24'd600, c_write);
 	$display("info: req to done: %0d cycles at a 2-cycle bridge, %0d at 8",
 	         c_fast, c_slow);
-	$display("info: the shim's own cost is %0d clk_sys (a write: %0d)",
-	         c_fast - 2, c_write - 2);
+	$display("info: the shim's own cost is %0d clk_sys, a write answers in %0d",
+	         c_fast - 2, c_write);
 	check("the shim's cost does not follow bridge latency",
 	      c_slow - c_fast == 6);
 	check("and it is a handful of cycles", c_fast - 2 <= 4);
-	check("a write costs what a read costs", c_write == c_fast);
+	// the store is collected, not sent: the answer does not wait for a line
+	check("a write is answered without waiting for the port",
+	      c_write > 0 && c_write < c_fast);
 
 	// ---- the prefetch, tested the way it is used: a sequential walk. Two
 	// adjacent lines establish the direction, the second one's serve is
@@ -236,16 +276,36 @@ initial begin
 	acc(24'd2404, 1'b0, 16'd0, 2'b11, rd);
 	check("and it carries the right data", rd === line[9][15:0]);
 
-	// that line is still cached, so a write to it is seen without a fetch
+	// that line is still cached: the store is collected, the read that
+	// follows pushes it out as one line, and the cached copy follows it
 	acc(24'd2404, 1'b1, 16'hBEEF, 2'b11, rd);
 	t0 = ndone;
 	acc(24'd2404, 1'b0, 16'd0, 2'b11, rd);
-	check("a write to a cached line is visible at once",
-	      rd === 16'hBEEF && ndone == t0);
+	check("a write to a cached line is visible at once", rd === 16'hBEEF);
+	check("and the store cost one line, not two", ndone - t0 == 1);
+
+	// the guard is only worth having if prefetches happen at all
+	$display("info: prefetches started %0d, of those early %0d",
+	         pf_starts, pf_early);
+	check("prefetches do happen in this bench", pf_starts > 0);
+	check("none starts inside the quiet window", pf_early == 0);
 
 	if (errors == 0) $display("tb_exp_ddr: PASS");
 	else             $display("tb_exp_ddr: FAIL (%0d errors)", errors);
 	$finish;
+end
+
+// The prefetch may only start once the bus has been quiet for its window.
+// The request is registered, so a start is observed on the first cycle in
+// E_PFWAIT; by then `quiet` has counted one more cycle than the gate
+// looked at, which is why a legal start reads 9 and not 8.
+always @(posedge clk) begin
+	if (dut.st != 4'd4) pf_seen <= 1'b0;
+	if (dut.st === 4'd4 && !pf_seen) begin
+		pf_seen   <= 1'b1;
+		pf_starts  = pf_starts + 1;
+		if (dut.quiet < 4'd9) pf_early = pf_early + 1;
+	end
 end
 
 // capture what the shim asked for, on the last cycle of each request
