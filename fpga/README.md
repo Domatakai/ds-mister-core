@@ -1024,18 +1024,22 @@ First full compile (analysis + fit + ASM + timing) is a Quartus job of
 about an hour: 01:02:48 of flow time in the 2026-11-09 rebuild AREA.md
 records, 01:14:57 in the release run through `build.bat`, on 5:39:59
 and 3:52:27 of CPU (`NUM_PARALLEL_PROCESSORS ALL` is set). A
-build with the ten macros above fits with
-`PLACEMENT_EFFORT_MULTIPLIER 8.0` (seed 2, as committed): **4,138 of
-4,191 LABs**, a 3,783,032-byte `NDS.rbf`, 18 fitter warnings, 0 errors
-from the fitter and the assembler, and setup short on the 67.03 MHz `emu`
-domain (-8.325 ns), with `pll_hdmi` closing at +0.022 ns in this run. A
-clean rebuild of the same commit fits at 4,157 LABs and leaves `pll_hdmi`
-0.515 ns short. The build stamp used to come from the clock, so every day's
-build was a different netlist; `sys/build_id.txt` pins it, and a rebuild of
-the same tree then reproduces its own LAB count and slacks. AREA.md records
-both runs.
-At the 4.0 effort the tree used
-before the ARM9 decode fixes it places but abandons routing (`16618`,
+build with the ten macros above and `PLACEMENT_EFFORT_MULTIPLIER 8.0` on
+seed 2 -- the settings the committed `.qsf` holds -- fits: the last full
+compile of this tree reports **4,170 of 4,191 LABs**, 39,214 ALMs, `emu`
+setup -8.266, hold +0.250 and a 3,736,636-byte `NDS.rbf`, with no fitter
+or assembler error. The 2026-11-09 release run of the same settings
+recorded 4,138 LABs, a 3,783,032-byte `NDS.rbf`, 18 fitter warnings,
+setup -8.325 and `pll_hdmi` closing at +0.022; a clean rebuild of that
+commit fitted at 4,157 and left `pll_hdmi` 0.515 ns short.
+
+The build stamp used to come from the clock, so every day's build was a
+different netlist; `sys/build_id.txt` pins it, and a rebuild of the same
+tree then reproduces its own LAB count and slacks. AREA.md records both
+runs.
+
+At the 4.0 effort the tree used before the ARM9 decode fixes it places but
+abandons routing (`16618`,
 `188026`, `11802`, in two runs); those fixes cost 490 ALUTs inside
 `arm9_core` and 599 in the design, both measured in `AREA.md`. Without
 those macros the same tree needs
@@ -1267,6 +1271,13 @@ vvp /tmp/tb_sc
 iverilog -g2012 -o /tmp/tb_in tb/tb_input_mapper.sv rtl/input/input_mapper.sv
 vvp /tmp/tb_in
 # tb_input_mapper: PASS
+
+# 3a. the microphone's LTC2308 on the bus: twelve bits into `sample`,
+# a later conversion replacing them, conversions at 48 kHz
+iverilog -g2012 -o /tmp/tb_mic tb/tb_mic_adc.sv \
+         rtl/input/mic_adc.sv sys/ltc2308.sv
+vvp /tmp/tb_mic
+# tb_mic_adc: PASS
 
 # 3b. ARM7TDMI core — two hand-assembled programs run through a bus model:
 #     ARM execution (ADD/CMP/MOVEQ/MUL/barrel shifter), STR/LDR round trip,

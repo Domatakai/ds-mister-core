@@ -1,7 +1,9 @@
 //============================================================================
 // NDS MiSTer Test — microphone ADC bench
 //
-//   iverilog -g2012 -o /tmp/tb_mic tb/tb_mic_adc.sv //            rtl/input/mic_adc.sv sys/ltc2308.sv && vvp /tmp/tb_mic
+//   iverilog -g2012 -o /tmp/tb_mic tb/tb_mic_adc.sv \
+//            rtl/input/mic_adc.sv sys/ltc2308.sv
+//   vvp /tmp/tb_mic
 //
 // The LTC2308 is modelled on the bus the way the part answers: after CONVST
 // it clocks out twelve bits, MSB first, held on the data line while SCK is
