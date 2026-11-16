@@ -21,7 +21,7 @@ fit on the same part, not from a datasheet.
 
 These rows are the baseline this file was started from, when the design did
 not fit; they are not the current state. The area fits now -- the committed
-tree's last full compile, `SEED 2`, reports 39,214 ALMs and 4,170 of 4,191
+tree's last full compile, `SEED 2`, reports 39,119 ALMs and 4,157 of 4,191
 LABs (the slot-2 pak section at the end of this file has that build in
 full) -- so read the table above as where the cut ladder began and the
 rungs below as how far it has come. The 38,881 ALMs and 4,157 LABs quoted
@@ -1796,42 +1796,67 @@ MiSTer's dual-SDRAM mode does not help here and is not used: it
 repurposes the DDR3 pins, which this core drives as DDR3 for the cart.
 
 Fit of the tree with the 32 MB pak, its line cache and its write buffer,
-`SEED 2`, stamp 261115: 4,170 / 4,191 LABs (21 spare) and 39,214 / 41,910
-ALMs, 33,358 registers, `emu` setup -8.266, TNS -53,817.071, worst hold
-+0.250, rbf 3,736,636 bytes, 63:56 wall clock, no fitter or assembler
-error. The same tree before the write buffer fitted at 4,172 / 4,191
-LABs, 32,642 registers, -8.248 / -48,507.556, hold +0.248 and 3,733,660
-bytes, so collecting stores into a line costs about 716 registers,
-nothing measurable in LABs, and moves TNS 5,310 deeper -- at this fill,
-inside what the sweep below shows seeds doing to each other. The 8/16
+`SEED 2`, stamp 261115: 4,157 / 4,191 LABs (34 spare) and 39,119 / 41,910
+ALMs, 33,283 registers, `emu` setup -8.751, TNS -54,941.052, worst hold
++0.259, rbf 3,738,524 bytes, 01:06:02 wall clock, no fitter or assembler
+error.
+
+Narrowing the shim's datapath -- a halfword out of a cached line and a
+beat out of the store buffer as four-way 16-bit muxes instead of 64-bit
+barrel shifters, and the flushed store merged into a cached copy by mask
+instead of an eight-way byte loop -- is what moved the row above off the
+one before it: 4,170 to 4,157 LABs, 39,214 to 39,119 ALMs, 33,358 to
+33,283 registers. It buys 95 ALMs and 75 registers and gives back setup
+slack, -8.266 to -8.751, with TNS 1,124 deeper and the bitstream 1,888
+bytes larger. The trade was made for routing headroom, not for area: on
+the same settings the seed that used to run out of routing now fits (see
+the sweep below).
+
+The same tree before the write buffer, and before that narrowing, fitted
+at 4,172 / 4,191 LABs, 32,642 registers, -8.248 / -48,507.556, hold
++0.248 and 3,733,660 bytes, so the buffer and the narrowing together cost
+641 registers, give back 15 LABs, and move TNS 6,433 deeper -- at this
+fill, inside what the sweep below shows seeds doing to each other. The 8/16
 MB-only tree before the DDR3 path fitted at 4,122 LABs, -9.575 /
 -54,038.768 with 32,605 registers -- recorded when that tree was built
 at `3f91bda`, not rebuilt for this comparison -- so everything behind
-the pak, cache and write buffer included, costs 48 LABs and does not
-make setup worse.
+the pak, cache and write buffer included costs 35 LABs, and setup is
+0.824 worse than that baseline (-8.751 against -9.575).
 
 The motion pak section above was measured before any of this, so its LAB
 count is not comparable with these.
 
 ### Across seeds
 
-Three seeds, each a full compile of the tree as committed:
+Three seeds, each a full compile. Seeds 2 and 5 are this tree; seed 4's
+row was taken before the shim's datapath was narrowed and is kept because
+it has not been rebuilt at these settings:
 
 | seed | LABs / 4,191 | registers | `emu` setup | TNS | hold | rbf | wall |
 |---|---|---|---|---|---|---|---|
-| 2 | 4,170 | 33,358 | -8.266 | -53,817.071 | +0.250 | 3,736,636 | 63:56 |
+| 2 | 4,157 | 33,283 | -8.751 | -54,941.052 | +0.259 | 3,738,524 | 01:06:02 |
 | 4 | 4,163 | 33,352 | -8.435 | -48,679.446 | +0.250 | 3,720,124 | 53:19 |
-| 5 | does not fit | 31,604 | - | - | - | - | 43:53 |
+| 5 | 4,159 | 33,355 | -7.526 | -47,247.484 | +0.253 | 3,764,240 | 01:21:54 |
 
-Seeds 2 and 4 fit, with 21 and 28 LABs to spare and the same worst hold;
-they differ by 7 LABs, 0.169 ns on setup and 5,138 on TNS. Seed 5 does
-not finish: it packs the logic into 4,129 LABs and then runs out of
-routing, 43:53 in, reporting 188005 (excessive demand for the available
-routing) and 11802 (cannot fit). The register count in its row is what
-that failed attempt got to. All three seeds fitted on the tree before the
-line cache and the write buffer, so the edge has moved closer: both that
-fit and this one read 99 %, which is why the LAB count alone does not say
-it, and why the sweep is worth running after every change to the tree.
+All three fit, with 32, 28 and 34 LABs to spare for seeds 5, 4 and 2.
+They differ by 6 LABs, 1.225 ns on setup and 7,694 on TNS -- and the
+spread runs the other way from the order of the seeds, seed 5 closing at
+-7.526 while seed 2 sits at -8.751.
+
+Seed 5 is the one that changed sides. On the tree before the shim's
+datapath was narrowed it packed 4,129 LABs and then ran out of routing,
+43:53 in, reporting 188005 (excessive demand for the available routing)
+and 11802 (cannot fit). It now routes, and takes the longest to do it:
+01:21:54 of wall time against 63:56 and 53:19. What the shim
+gave up to get there is the two 64-bit barrel shifters that pulled a
+halfword out of a cached line and a beat out of the store buffer, each
+now a four-way 16-bit mux, and the eight-way byte loop that folded a
+flushed store into a cached copy, now a mask and a merge.
+
+The LAB count alone does not show the edge: every row above reads 99 %,
+and the two seeds that fitted before this change did so by 21 and 28
+LABs. That is why the sweep is worth running after every change to the
+tree.
 
 A seed's outcome is not a property of the seed -- seed 4 failed to route
 on the tree before the expansion work and fits here -- so a sweep says

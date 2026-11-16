@@ -1003,6 +1003,15 @@ prints each offending `file:line` and exits nonzero. Its suite,
 this checker over the tree, listing the documents it walked and
 failing when an independent walk counts a different number.
 
+`python fpga/tools/check_benches.py` reads the snippet's own steps and
+fails when a bench in `tb/` is compiled by none of them -- a file in the
+table but not in the snippet is a test nothing runs, which is how
+`tb_mic_adc` went unrun with `[SIM-VERIFIED]` beside it -- and when a
+step runs a binary other than the one its `iverilog -o` just built,
+which silently re-runs an older build. Its cases live in
+`test_check_benches.py`: an unrun bench, a drifted binary name, and a
+compile that is never run.
+
 Both sides of that gate were run for real on 2026-11-10, from a
 tree staged with `git archive HEAD:fpga`. The clean tree built with
 `build.bat --record`: the gate printed `docs ok: 2 file(s)`, the flow
@@ -1026,8 +1035,8 @@ records, 01:14:57 in the release run through `build.bat`, on 5:39:59
 and 3:52:27 of CPU (`NUM_PARALLEL_PROCESSORS ALL` is set). A
 build with the ten macros above and `PLACEMENT_EFFORT_MULTIPLIER 8.0` on
 seed 2 -- the settings the committed `.qsf` holds -- fits: the last full
-compile of this tree reports **4,170 of 4,191 LABs**, 39,214 ALMs, `emu`
-setup -8.266, hold +0.250 and a 3,736,636-byte `NDS.rbf`, with no fitter
+compile of this tree reports **4,157 of 4,191 LABs**, 39,119 ALMs, `emu`
+setup -8.751, hold +0.259 and a 3,738,524-byte `NDS.rbf`, with no fitter
 or assembler error. The 2026-11-09 release run of the same settings
 recorded 4,138 LABs, a 3,783,032-byte `NDS.rbf`, 18 fitter warnings,
 setup -8.325 and `pll_hdmi` closing at +0.022; a clean rebuild of that
@@ -1431,6 +1440,17 @@ python tools/test_check_memmap.py
 # test_check_memmap: PASS
 python tools/test_check_docs.py
 # test_check_docs: PASS
+python tools/test_check_benches.py
+# test_check_benches: PASS
+
+# every bench in tb/ is compiled and run by this snippet, and each step runs
+# the binary it just built -- the shape that keeps a bench from going unrun
+python tools/check_benches.py
+# check_benches: PASS
+
+# the build-stamp tool: its cases run against throwaway trees
+python tools/test_bump_build_id.py
+# test_bump_build_id: PASS
 
 # 6. cheat engine — GBATEK type table, guard block, lockout, reload
 iverilog -g2012 -o /tmp/tb_cheat tb/tb_cheat_engine.sv rtl/cart/cheat_engine.sv

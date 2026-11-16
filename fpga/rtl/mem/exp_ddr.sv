@@ -74,7 +74,21 @@ wire  [2:0] lane     = byte_off[2:0];
 wire [7:0] lane_be = (be[0] ? (8'h01 << lane)          : 8'h00) |
                      (be[1] ? (8'h01 << (lane + 3'd1)) : 8'h00);
 
-wire [63:0] dout_sh = d_dout >> {lane, 3'b000};
+// `hw` is a halfword offset, so `lane` is always even and lane[2:1] picks
+// which of the line's four halfwords this access wants -- a 4:1 mux, where
+// shifting the whole 64-bit line costs a barrel shifter instead
+function [15:0] hw_of;
+	input [63:0] line;
+	input  [2:0] ln;
+	begin
+		case (ln[2:1])
+		2'd0:    hw_of = line[15:0];
+		2'd1:    hw_of = line[31:16];
+		2'd2:    hw_of = line[47:32];
+		default: hw_of = line[63:48];
+		endcase
+	end
+endfunction
 
 // this beat's bytes, in their own place in the line: two beats to the same
 // line are merged, so each one's data has to stay where it belongs
@@ -96,23 +110,7 @@ wire hit0 = cl0_val && (cl0_idx == line_idx);
 wire hit1 = cl1_val && (cl1_idx == line_idx);
 wire hit  = hit0 || hit1;
 wire [63:0] hit_dat = hit0 ? cl0_dat : cl1_dat;
-wire [63:0] hit_sh  = hit_dat >> {lane, 3'b000};
-
-// a cached line with these bytes written into it
-function [63:0] apply_bytes;
-	input [63:0] line;
-	input [21:0] idx;
-	input [21:0] want;
-	input [63:0] dat;
-	input  [7:0] b;
-	integer k;
-	begin
-		apply_bytes = line;
-		if (idx == want)
-			for (k = 0; k < 8; k = k + 1)
-				if (b[k]) apply_bytes[k*8 +: 8] = dat[k*8 +: 8];
-	end
-endfunction
+wire [15:0] hit_hw  = hw_of(hit_dat, lane);
 
 //------------------------------------------------------------------
 // the write being collected: one line's worth of bytes
@@ -121,6 +119,12 @@ reg        pw_val = 1'b0;
 reg [21:0] pw_idx = 22'd0;
 reg [63:0] pw_dat = 64'd0;
 reg  [7:0] pw_be  = 8'h00;
+
+// those enables widened to the line, so applying the buffer to a cached copy
+// is a mask and a merge rather than a per-byte loop
+wire [63:0] be_full = {{8{pw_be[7]}}, {8{pw_be[6]}}, {8{pw_be[5]}},
+                       {8{pw_be[4]}}, {8{pw_be[3]}}, {8{pw_be[2]}},
+                       {8{pw_be[1]}}, {8{pw_be[0]}}};
 
 // a second beat to the same line joins the first; anything else -- a read,
 // another line, overlapping bytes -- means the buffer goes out first
@@ -196,7 +200,7 @@ always @(posedge clk) begin
 					// access served from slot 1 is using the prefetched line
 					// itself, and fetching on from there would evict the line
 					// still in use.
-					rdata   <= hit_sh[15:0];
+					rdata   <= hit_hw;
 					pf_want <= hit0 && seq_ok;
 					pf_idx  <= line_idx + 22'd1;
 					st      <= E_DONE;
@@ -228,7 +232,7 @@ always @(posedge clk) begin
 			cl1_val <= 1'b0;   // the old prefetch is behind us now
 			pf_want <= seq_ok;
 			pf_idx  <= line_idx + 22'd1;
-			rdata <= dout_sh[15:0];
+			rdata <= hw_of(d_dout, lane);
 			st    <= E_DONE;
 		end
 
@@ -236,8 +240,10 @@ always @(posedge clk) begin
 		// follows it, so a read that hits afterwards still sees the store
 		E_FLUSH: if (d_ack) begin
 			d_req   <= 1'b0;
-			cl0_dat <= apply_bytes(cl0_dat, cl0_idx, pw_idx, pw_dat, pw_be);
-			cl1_dat <= apply_bytes(cl1_dat, cl1_idx, pw_idx, pw_dat, pw_be);
+			cl0_dat <= (cl0_idx == pw_idx)
+			         ? ((cl0_dat & ~be_full) | (pw_dat & be_full)) : cl0_dat;
+			cl1_dat <= (cl1_idx == pw_idx)
+			         ? ((cl1_dat & ~be_full) | (pw_dat & be_full)) : cl1_dat;
 			pw_val  <= 1'b0;
 			pw_be   <= 8'h00;
 			st      <= E_IDLE;
@@ -260,7 +266,7 @@ always @(posedge clk) begin
 				served   <= 1'b1;
 				prev_idx <= line_idx;
 				prev_val <= 1'b1;
-				rdata    <= hit_sh[15:0];
+				rdata    <= hit_hw;
 				done     <= 1'b1;
 			end
 			if (d_ack) begin
