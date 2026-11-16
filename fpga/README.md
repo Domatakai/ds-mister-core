@@ -462,8 +462,8 @@ same way: the two halfwords of a 32-bit store merge into one line, and a
 write is answered in 2 clk_sys without waiting for DDR3 at all.
 `tb_pak_worst` puts numbers on the contended case with a 7-cycle line in
 the model: 12 clk_sys for a lone access and 19 with the cart re-requesting
-every free cycle, while the cart still gets about two lines through per
-pak access.
+every free cycle, while the cart still gets nearly two lines through per
+pak access (14 across 8).
 
 A slot-2 device cannot coexist with it at
 0x0A000000, so the 32 MB size shadows the motion pak. With the row Off

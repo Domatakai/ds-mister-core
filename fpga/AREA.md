@@ -20,10 +20,13 @@ fit on the same part, not from a datasheet.
 | I/O pins | 143 | 314 | 171 (46%) |
 
 These rows are the baseline this file was started from, when the design did
-not fit; they are not the current state. The area fits now -- 38,881 ALMs and
-4,157 of 4,191 LABs in the 2026-11-09 rebuild the last section records -- so
-read the table above as where the cut ladder began and the rungs below as how
-far it has come.
+not fit; they are not the current state. The area fits now -- the committed
+tree's last full compile, `SEED 2`, reports 39,214 ALMs and 4,170 of 4,191
+LABs (the slot-2 pak section at the end of this file has that build in
+full) -- so read the table above as where the cut ladder began and the
+rungs below as how far it has come. The 38,881 ALMs and 4,157 LABs quoted
+here earlier were the 2026-11-09 rebuild, three features back; they are
+the figure that section records for that date, not for this tree.
 
 41,910 ALMs each give two combinational nodes and two registers, so the LUT and
 register limits are the same 83,820. The node count is now *under* that limit —
@@ -1737,8 +1740,8 @@ stall forever.
 What it costs, measured in `tb_exp_ddr` rather than estimated: one
 halfword takes 6 clk_sys from `req` to `done` against a bridge that acks
 in 2, and 12 against one that acks in 8, so the shim's own share is 4
-clk_sys and does not follow the bridge; a write measures the same 4. On
-top of that sits the DDR3 line time, which these benches do not model.
+clk_sys and does not follow the bridge. On top of that sits the DDR3 line
+time, which these benches do not model.
 
 The shim keeps two lines: the one the last access used, and the line
 after it once the bus has been quiet for 8 cycles. A line is four
@@ -1749,8 +1752,8 @@ the fetch it replaces. The prefetch waits for that quiet period on
 purpose. Firing at the first free cycle would put a fetch in front of
 the next real access, and take a line from the cart, to gain nothing
 while the port is already busy: `tb_pak_worst`, whose cart re-requests
-every free cycle, never leaves an 8-cycle gap, and the pak's numbers
-there are what they were without the cache.
+every free cycle, never leaves an 8-cycle gap, so the cache leaves what
+that bench measures alone bar one warm hit.
 
 Stores are collected rather than sent one halfword at a time. `main_bus`
 presents a 32-bit store as two halfword beats, so the shim holds the first
@@ -1793,16 +1796,20 @@ MiSTer's dual-SDRAM mode does not help here and is not used: it
 repurposes the DDR3 pins, which this core drives as DDR3 for the cart.
 
 Fit of the tree with the 32 MB pak, its line cache and its write buffer,
-`SEED 2`, stamp 261115: 4,170 / 4,191 LABs (21 spare), 33,358 registers,
-`emu` setup -8.266, TNS -53,817.071, worst hold +0.250, rbf 3,736,636
-bytes, 63:56 wall clock, no fitter or assembler error. The same tree
-before the write buffer fitted at 4,172 / 4,191 LABs, 32,642 registers,
--8.248 / -48,507.556, hold +0.248 and 3,733,660 bytes, so collecting
-stores into a line costs about 716 registers, nothing measurable in LABs,
-and moves TNS 5,309 deeper -- at this fill, inside what the sweep below
-shows seeds doing to each other. The 8/16 MB-only tree before the DDR3
-path fitted at 4,122 LABs, -9.575 / -54,038.768 with 32,605 registers, so
-the second behind the pak costs 48 LABs and does not make setup worse.
+`SEED 2`, stamp 261115: 4,170 / 4,191 LABs (21 spare) and 39,214 / 41,910
+ALMs, 33,358 registers, `emu` setup -8.266, TNS -53,817.071, worst hold
++0.250, rbf 3,736,636 bytes, 63:56 wall clock, no fitter or assembler
+error. The same tree before the write buffer fitted at 4,172 / 4,191
+LABs, 32,642 registers, -8.248 / -48,507.556, hold +0.248 and 3,733,660
+bytes, so collecting stores into a line costs about 716 registers,
+nothing measurable in LABs, and moves TNS 5,310 deeper -- at this fill,
+inside what the sweep below shows seeds doing to each other. The 8/16
+MB-only tree before the DDR3 path fitted at 4,122 LABs, -9.575 /
+-54,038.768 with 32,605 registers -- recorded when that tree was built
+at `3f91bda`, not rebuilt for this comparison -- so everything behind
+the pak, cache and write buffer included, costs 48 LABs and does not
+make setup worse.
+
 The motion pak section above was measured before any of this, so its LAB
 count is not comparable with these.
 
