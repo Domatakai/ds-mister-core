@@ -1848,30 +1848,34 @@ count is not comparable with these.
 
 ### Across seeds
 
-Three seeds, each a full compile. Seeds 2 and 5 are this tree; seed 4's
-row was taken before the shim's datapath was narrowed and is kept because
-it has not been rebuilt at these settings:
+Four seeds, each a full compile of the tree as committed:
 
-| seed | LABs / 4,191 | registers | `emu` setup | TNS | hold | rbf | wall |
-|---|---|---|---|---|---|---|---|
-| 2 | 4,157 | 33,283 | -8.751 | -54,941.052 | +0.259 | 3,738,524 | 01:06:02 |
-| 4 | 4,163 | 33,352 | -8.435 | -48,679.446 | +0.250 | 3,720,124 | 53:19 |
-| 5 | 4,159 | 33,355 | -7.526 | -47,247.484 | +0.253 | 3,764,240 | 01:21:54 |
+| seed | LABs / 4,191 | ALMs | registers | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 4,152 | 39,169 | 33,318 | -8.559 | -53,402.246 | +0.249 | -0.418 | 3,794,856 | 51:12 |
+| 2 | 4,157 | 39,119 | 33,283 | -8.751 | -54,941.052 | +0.259 | +0.157 | 3,738,524 | 01:06:02 |
+| 4 | 4,169 | 39,093 | 33,207 | -8.409 | -51,033.563 | +0.075 | -0.188 | 3,731,896 | 59:30 |
+| 5 | 4,159 | 39,241 | 33,355 | -7.526 | -47,247.484 | +0.253 | -0.360 | 3,764,240 | 48:44 |
 
-All three fit, with 32, 28 and 34 LABs to spare for seeds 5, 4 and 2.
-They differ by 6 LABs, 1.225 ns on setup and 7,694 on TNS -- and the
-spread runs the other way from the order of the seeds, seed 5 closing at
--7.526 while seed 2 sits at -8.751.
+All four fit, with 39, 34, 32 and 22 LABs to spare for seeds 1, 2, 5 and
+4. They differ by 17 LABs, 1.225 ns on setup, 7,694 on TNS and 0.184 ns
+on hold, and the spread does not follow the order of the seeds: seed 5
+closes highest at -7.526, seed 2 lowest at -8.751, seed 4 tightest on
+hold at +0.075.
+
+`pll_hdmi` is the one path that does not clear on most of them: +0.157 on
+seed 2, then -0.188, -0.360 and -0.418 on seeds 4, 5 and 1. That is the
+closest thing to a failure in the table, and the seed the `.qsf` names is
+the one where it closes.
 
 Seed 5 is the one that changed sides. On the tree before the shim's
 datapath was narrowed it packed 4,129 LABs and then ran out of routing,
 43:53 in, reporting 188005 (excessive demand for the available routing)
-and 11802 (cannot fit). It now routes, and takes the longest to do it:
-01:21:54 of wall time against 63:56 and 53:19. What the shim
-gave up to get there is the two 64-bit barrel shifters that pulled a
-halfword out of a cached line and a beat out of the store buffer, each
-now a four-way 16-bit mux, and the eight-way byte loop that folded a
-flushed store into a cached copy, now a mask and a merge.
+and 11802 (cannot fit). It now routes. What the shim gave up to get there
+is the two 64-bit barrel shifters that pulled a halfword out of a cached
+line and a beat out of the store buffer, each now a four-way 16-bit mux,
+and the eight-way byte loop that folded a flushed store into a cached
+copy, now a mask and a merge.
 
 The LAB count alone does not show the edge: every row above reads 99 %,
 and the two seeds that fitted before this change did so by 21 and 28
@@ -1880,7 +1884,9 @@ tree.
 
 A seed's outcome is not a property of the seed -- seed 4 failed to route
 on the tree before the expansion work and fits here -- so a sweep says
-what this tree does at the edge, not what a seed will always do. Seed 1
-remains unreported: the machine went down mid-fit the one time it was
-started.
+what this tree does at the edge, not what a seed will always do. It is
+also not stable to the run: seed 5 was built twice here, and the second
+build repeated its counts to the register (4,159 LABs, 33,355 registers,
+-7.526) while its wall time moved from 01:21:54 to 48:44 under a
+different load. Counts and slacks are reproducible; minutes are not.
 
