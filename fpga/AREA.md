@@ -1790,6 +1790,13 @@ even offset never straddles two), so a partial write needs no
 read-modify-write: the byte enables go to the DDR controller and it masks
 the line write.
 
+The pak's twelve window checks run twice: once against a mock that answers
+the bus directly, and once -- compiled with `-DPAK_REAL` -- against this
+shim, where the same words have to come back through the line cache, the
+write buffer and the port handshake. That second run is what ties the
+window tests to the hardware path; the mock alone would pass with a shim
+that never issued a DDR3 access at all.
+
 At 0x0A000000 the 32 MB pak covers the page this core gives the motion
 pak, so that size shadows it -- a slot cannot hold both devices at once.
 MiSTer's dual-SDRAM mode does not help here and is not used: it
@@ -1867,6 +1874,52 @@ hold at +0.075.
 seed 2, then -0.188, -0.360 and -0.418 on seeds 4, 5 and 1. That is the
 closest thing to a failure in the table, and the seed the `.qsf` names is
 the one where it closes.
+
+Where the path is: the worst of them is `ascal|o_vcpt_pre3[3]` to
+`ascal|o_fload[1]`, both on the 148.54 MHz video clock -- 6.203 ns of data
+delay and -0.517 of skew against a 6.732 ns period. That is the
+framework's scaler (`sys/ascal.vhd`), not this core's logic, and the delay
+is nearly all routing, which is what 99 % fill leaves the fitter to work
+with.
+
+`SYNTH_TIMING_DRIVEN_SYNTHESIS`, which the `.qsf` had off, was tried
+against it and does not fix it: at seed 1 it takes `pll_hdmi` from -0.418
+to -0.228 and `emu` setup from -8.559 to -8.254, and at seed 2 it takes
+`pll_hdmi` from +0.157 to -0.259, so it moves the path both ways and the
+sign of the answer depends on the seed. It costs LABs (4,152 to
+4,164 at seed 1, 4,157 to 4,167 at seed 2) and about 200 registers, while
+`emu` setup improves on both (-8.559 to -8.254, -8.751 to -7.774) and
+TNS improves by 12,245 at seed 2. The setting stays off because the path
+it was reached for is the one it makes worse.
+
+That a path at 99 % fill can be moved half a nanosecond by a synthesis
+switch, in either direction, is the honest reading: this one is not a
+constraint mistake that a knob corrects. Closing it on every seed means
+pipelining inside `ascal` or running the scaler on the 1x pixel clock
+instead of the 2x it uses; both change video timing, and neither can be
+checked without the board.
+
+The store buffer was tried as the same kind of lever and also refused.
+Dropping the cached copy of a line instead of merging the store into it
+takes a 64-bit mask and two 64-bit merges out of the shim, and the bench
+still passes with the read after a store refetching the line. At seed 4 it
+came out worse on every axis: 4,169 to 4,172 LABs, 39,093 to 39,221 ALMs,
+33,207 to 33,341 registers, `emu` setup -8.409 to -9.672, TNS
+-51,033.563 to -58,463.849, `pll_hdmi` -0.188 to -0.299. The muxes it
+removed were shared with the read path, so the fitter had been paying for
+them once; the refetch cost is real and the saving was not. Reverted.
+
+For `emu` setup the same holds. Its worst path at seed 4 runs from
+`arm9|insn[12]` to `arm9|r14_b[1][18]`, -8.409: an instruction bit reaching
+the link register's write-data mux and the bank behind it, inside one
+14.9 ns cycle at 67.0274 MHz. Nothing settable from the `.qsf` shortens
+that by much -- timing-driven synthesis gets -7.774 at seed 2 and -8.254
+at seed 1 and takes the video path with it -- and no seed measured closes
+both domains: seed 2 closes the video clock at +0.157 and misses `emu` by
+8.751, and the same seed with the setting on misses `emu` by 7.774 and
+the video clock by 0.259. Reclaiming real slack there needs a pipeline
+stage in the ARM9 writeback path, which changes cycle behaviour and cannot
+be checked anywhere but the board.
 
 Seed 5 is the one that changed sides. On the tree before the shim's
 datapath was narrowed it packed 4,129 LABs and then ran out of routing,

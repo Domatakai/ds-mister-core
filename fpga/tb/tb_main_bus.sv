@@ -5,6 +5,10 @@
 //            rtl/bus/main_bus.sv rtl/mem/mem_arbiter.sv \
 //            rtl/cart/cheat_engine.sv && vvp /tmp/tb_bus
 //
+// Add -DPAK_REAL and rtl/mem/exp_ddr.sv to put the real DDR3 shim in the
+// 32 MB pak's place: the pak checks then have to survive its line cache,
+// write buffer and port handshake instead of a mock answering directly.
+//
 // End-to-end fabric check: both CPU masters against private regions
 // (WRAM BRAM, IO registers incl. KEYINPUT and the ARM7-only EXTKEYIN),
 // shared main RAM through
@@ -63,8 +67,13 @@ wire [23:0] exp_ddr_hw;
 reg [23:0] pk_tag [0:15];
 reg [15:0] pk_dat [0:15];
 reg        pk_val [0:15];
+`ifdef PAK_REAL
+wire        exp_done;      // driven by the real shim, not the model
+wire [15:0] exp_rdata;
+`else
 reg        exp_done = 0;
 reg [15:0] exp_rdata = 0;
+`endif
 reg [23:0] pk_last = 0;
 reg        pk_served = 0;
 
@@ -238,6 +247,111 @@ assign arb_rd_done = sd_rd_done;
 assign arb_wr_done = sd_wr_done;
 
 //------------------------------------------------------------------
+// 32 MB pak: mock by default, the real shim with -DPAK_REAL
+//------------------------------------------------------------------
+// The mock answers the bus directly, so the checks above prove the decode
+// and the window. Compiling with PAK_REAL puts the actual exp_ddr in that
+// place instead -- same twelve checks, but the bytes have to survive the
+// shim's line cache, its write buffer and the port handshake, which no
+// bench compiled this way could fake.
+`ifdef PAK_REAL
+// the DDR3 side: a tagged line table, answering out of step with the shim's
+// request so the shim's own handshake is exercised
+reg [21:0] dd_tag [0:15];
+reg [63:0] dd_line [0:15];
+reg        dd_val [0:15];
+integer    dd_i;
+initial begin
+	for (dd_i = 0; dd_i < 16; dd_i = dd_i + 1) dd_val[dd_i] = 0;
+end
+
+wire        sh_req, sh_wr, sh_done;
+wire [23:0] sh_hw;
+wire [15:0] sh_rdata;
+wire [28:0] sh_addr;
+wire [63:0] sh_din;
+wire  [7:0] sh_be;
+
+reg         d_ack = 0;
+reg  [1:0]  d_cnt = 0;
+reg  [28:0] a_addr;
+reg         a_wr;
+reg  [63:0] a_dat;
+reg   [7:0] a_be;
+integer     k;
+
+// the line this request is about, found by tag
+reg [63:0] rd_line;
+reg        rd_hit;
+always @* begin
+	rd_line = 64'd0;
+	rd_hit  = 1'b0;
+	for (k = 0; k < 16; k = k + 1)
+		if (dd_val[k] && dd_tag[k] == sh_addr[24:3]) begin
+			rd_line = dd_line[k];
+			rd_hit  = 1'b1;
+		end
+end
+
+exp_ddr shim (
+	.clk(clk), .reset(reset),
+	.req(bus_ram_req), .wr(bus_ram_wr), .hw(exp_ddr_hw),
+	.wdata(bus_ram_wdata), .be(bus_ram_be),
+	.done(sh_done), .rdata(sh_rdata),
+	.d_req(sh_req), .d_wr(sh_wr), .d_addr(sh_addr),
+	.d_din(sh_din), .d_be(sh_be),
+	.d_ack(d_ack), .d_dout(rd_line), .d_busy(1'b0)
+);
+
+assign exp_done  = sh_done;
+assign exp_rdata = sh_rdata;
+
+// two cycles from request to ack, and the write lands on the ack
+always @(posedge clk) begin
+	d_ack <= 1'b0;
+	if (reset) d_cnt <= 2'd0;
+	else if (sh_req && d_cnt == 2'd0) begin
+		a_addr <= sh_addr;
+		a_wr   <= sh_wr;
+		a_dat  <= sh_din;
+		a_be   <= sh_be;
+		d_cnt  <= 2'd2;
+	end else if (d_cnt != 2'd0) begin
+		d_cnt <= d_cnt - 2'd1;
+		if (d_cnt == 2'd1) begin
+			d_ack <= 1'b1;
+			if (a_wr) begin : land
+				integer w;
+				reg found, free_slot;
+				found = 0; free_slot = 0;
+				for (w = 0; w < 16; w = w + 1) begin
+					if (dd_val[w] && dd_tag[w] == a_addr[24:3]) begin
+						found = 1;
+						for (k = 0; k < 8; k = k + 1)
+							if (a_be[k]) dd_line[w][k*8 +: 8] = a_dat[k*8 +: 8];
+					end
+					if (!dd_val[w] && !free_slot) begin
+						free_slot = 1;
+						if (!found) begin
+							dd_val[w]  = 1;
+							dd_tag[w]  = a_addr[24:3];
+							dd_line[w] = 64'd0;
+						end
+					end
+				end
+				if (!found) begin
+					for (w = 0; w < 16; w = w + 1)
+						if (dd_tag[w] == a_addr[24:3]) begin
+							for (k = 0; k < 8; k = k + 1)
+								if (a_be[k]) dd_line[w][k*8 +: 8] = a_dat[k*8 +: 8];
+						end
+				end
+			end
+		end
+	end
+end
+`else
+//------------------------------------------------------------------
 // 32 MB pak model: the DDR3 side of the expansion
 //------------------------------------------------------------------
 // 32 MB is too much to allocate here, so the model is a tagged table: a
@@ -282,6 +396,8 @@ always @(posedge clk) begin : pak_model
 		pk_served  = 1;
 	end
 end
+
+`endif
 
 //------------------------------------------------------------------
 // cart bridge model: pulse accepted, one-cycle response

@@ -732,7 +732,9 @@ fpga/
                                                           [SIM-VERIFIED]
   tb/tb_boot_menu.sv      menu layout, bar, boot pulse, passthrough
                                                           [SIM-VERIFIED]
-  tb/tb_main_bus.sv       fabric: masters, RAM, cart, slot-2 pak, cheat, IO [SIM-VERIFIED]
+  tb/tb_main_bus.sv       fabric: masters, RAM, cart, slot-2 pak, cheat, IO
+                          [SIM-VERIFIED] (also built with -DPAK_REAL, which
+                          puts the real DDR3 shim behind the pak checks)
   tb/tb_exp_ddr.sv        the 32 MB pak's DDR3 shim: lines, lanes,
                           byte enables, held-request beats, the line
                           cache and its prefetch            [SIM-VERIFIED]
@@ -1418,6 +1420,13 @@ iverilog -g2012 -o /tmp/tb_bus tb/tb_main_bus.sv \
          rtl/bus/math_unit.sv rtl/bus/sys_io.sv rtl/bus/nds_rtc.sv \
          rtl/bus/spi.sv rtl/bus/fw_default.sv
 vvp /tmp/tb_bus
+# tb_main_bus: PASS
+
+# 2b. the same bus with the real 32 MB pak behind it: the same twelve pak
+# checks, but the bytes go through exp_ddr's line cache, its write buffer
+# and its port handshake instead of a mock that answers directly
+iverilog -g2012 -DPAK_REAL -o /tmp/tb_busre tb/tb_main_bus.sv          rtl/bus/main_bus.sv rtl/mem/mem_arbiter.sv rtl/cart/cheat_engine.sv          rtl/audio/midi_port.sv rtl/bus/ipc.sv rtl/bus/nds_timers.sv          rtl/bus/math_unit.sv rtl/bus/sys_io.sv rtl/bus/nds_rtc.sv          rtl/bus/spi.sv rtl/bus/fw_default.sv rtl/mem/exp_ddr.sv
+vvp /tmp/tb_busre
 # tb_main_bus: PASS
 
 # 5b. the 32 MB pak's DDR3 shim on its own
