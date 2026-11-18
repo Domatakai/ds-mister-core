@@ -1951,7 +1951,7 @@ path paying for it -- the endpoint it was reached for. So the runs at
 seeds 3 and 6 close because those seeds place the path, not because the
 switch helps it, and the direction matches the old tree: at seed 2 the
 switch moved `pll_hdmi` from +0.157 to -0.259 there and from +0.016 to
--0.186 here. The setting stays off.
+-0.186 here. The setting stayed off.
 
 The same two seeds were fitted again after both bank writes were captured,
 with timing-driven synthesis still on:
@@ -1970,12 +1970,32 @@ and 1,925.211 apart on TNS, and both are shallower than seed 2's -8.907;
 both also carry about a thousand fewer registers, 32,042 and 32,005
 against 33,043.
 
-That is a seed comparison as much as a switch comparison: seed 2 is the
-only seed of this tree fitted with the switch off, and the switch has not
-been tried at seed 2 here. What the pair says is that the switch did not
-keep these two seeds from fitting or from closing the video path, and not
-that it helps. The clean test -- seed 2 on this tree with the switch on --
-has not been run.
+That is a seed comparison as much as a switch comparison, so seed 2 was
+built both ways on this tree:
+
+| seed 2 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| switch off (shipped) | 4,125 | 37,668 | 33,043 | -8.907 | -44,808.642 | +0.254 | -0.064 | 3,695,232 | 1:03:38 |
+| switch on | 4,092 | 37,559 | 31,959 | -7.940 | -45,601.081 | +0.252 | -0.207 | 3,726,460 | 47:42 |
+
+One setting between them, and it is the trade the old tree showed: 0.967 ns
+of `emu` setup, 33 LABs, 109 ALMs, 1,084 registers and 15:56 of wall, paid
+for with 0.143 ns of the video path (-0.064 to -0.207), 792.439 of TNS and
+31,228 bytes of bitstream. The switch is not a way to close the video path
+on this tree either -- it spends the endpoint it was reached for, as it did
+at +0.016 to -0.186 before the deferred link register.
+
+What closes it is the seed: seed 6 reaches the same 4,092 LABs with the
+switch on and lands the video path at +0.138, and its `emu` setup is 0.082
+better than seed 2's with the switch on (-7.858 against -7.940). So on this
+tree seed 6 dominates seed 2 in both configurations -- fewer LABs than the
+shipped seed, a shallower `emu` path than either seed-2 build, and the only
+one of the three that closes the video path.
+
+The configuration has not changed: `NDS.qsf` still names seed 2 with the
+switch off. Moving to seed 6 would need a recorded bitstream and the board --
+the seed does not change the benches, and this fit changed nothing but the
+two settings.
 
 That a path at 99 % fill can be moved half a nanosecond by a synthesis
 switch, in either direction, is the honest reading: this one is not a
