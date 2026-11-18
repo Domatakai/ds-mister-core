@@ -303,12 +303,12 @@ same seed 2, same aggressive routability.
 |---|---|---|---|---|---|---|
 | before | -19.413 (emu) | -96,426.996 | -53.667 (audio) | 4,177 | 88.8/87.6/93.1 | 01:50:47 |
 | after (t11) | -8.339 (emu) | -45,936.820 | +0.203 (hdmi) | 4,160 | 84.2/83.1/91.3 | 00:45:25 |
-| current | -8.325 (emu) | -53,336.764 | +0.238 (hdmi) | 4,138 | 83.0/82.3/89.7 | 00:53:59 |
+| 2026-11-08 | -8.325 (emu) | -53,336.764 | +0.238 (hdmi) | 4,138 | 83.0/82.3/89.7 | 00:53:59 |
 
 Routing fell from 01:20:34 to 00:21:25 because the router no longer tries to
 make unrelated clocks meet, the assembler still reports 0 errors and 0 warnings
 and wrote a 3,718,564-byte `NDS.rbf`, and the fitter's warning count drops from
-20 to 18. The `current` row is that build plus two measured changes: the save
+20 to 18. The 2026-11-08 row is that build plus two measured changes: the save
 file's load path, which costs 8 LABs and 0.816 ns on its own, and
 `PLACEMENT_EFFORT_MULTIPLIER 4.0`, which gives back 9 LABs and 0.680 ns. That
 build fitted at 4,159 of 4,191 LABs. The CRT video modes then cost 27 LABs and
@@ -507,7 +507,7 @@ and writes a 3,783,032-byte `NDS.rbf`.
 
 | ten-macro build | LABs | spare | setup (`emu`) | setup TNS | hold | rbf |
 |---|---|---|---|---|---|---|
-| 2026-11-06, effort 4.0 (the `current` row above) | 4,143 | 48 | -8.313 | -47,647.790 | +0.250 | 3,718,564 |
+| 2026-11-06, effort 4.0 (the 2026-11-08 row above) | 4,143 | 48 | -8.313 | -47,647.790 | +0.250 | 3,718,564 |
 | 2026-11-07, effort 8.0 | 4,126 | 65 | -8.403 | -46,613.591 | +0.256 | 3,761,748 |
 | 2026-11-08, effort 8.0, rumble pak | 4,122 | 69 | -9.006 | -52,072.394 | +0.245 | 3,745,296 |
 | 2026-11-08 later, effort 8.0, microphone ADC | 4,138 | 53 | -8.325 | -53,336.764 | +0.238 | 3,783,032 |
@@ -620,7 +620,7 @@ Mapping shows Quartus had already shared those comparisons: 38,760 ALMs
 and 56,187 combinational ALUTs against the committed 38,732 and 56,043,
 so naming the classes cost 28 ALMs rather than saving any.
 
-| shifter amount tests | LABs | fitted regs | setup (`emu`) | setup TNS | hold | rbf |
+| shifter amount tests | LABs | fitted regs | setup (`emu`) | setup TNS | hold (worst) | rbf |
 |---|---|---|---|---|---|---|
 | as committed | 4,157 | 34,107 | -8.210 | -49,244.967 | +0.250 | 3,764,100 |
 | three-bit classes | 4,120 | 32,807 | -9.091 | -56,345.624 | +0.192 | 3,725,640 |
@@ -668,7 +668,7 @@ It maps 217 ALMs and 252 combinational ALUTs smaller: 38,515 ALMs, 55,791
 combinational ALUTs and 28,152 registers against 38,732, 56,043 and
 28,151, which is the direction the fitting margin needs.
 
-| build | LABs | regs | setup (`emu`) | TNS | hold | rbf | fit time |
+| build | LABs | regs | setup (`emu`) | TNS | hold (worst) | rbf | fit time |
 |---|---|---|---|---|---|---|---|
 | committed | 4,157 | 34,107 | -8.210 | -49,244.967 | +0.250 | 3,764,100 | 00:45 |
 | shared shifter | 4,138 | 32,805 | -14.165 | -52,338.245 | +0.158 | 3,748,048 | 03:06 |
@@ -1855,6 +1855,10 @@ count is not comparable with these.
 
 ### Across seeds
 
+Every `hold` column below is the `emu` domain's hold slack; above, a table
+whose hold is the worst across every clock says `hold (worst)` in its
+header.
+
 Four seeds, each a full compile of the tree as committed:
 
 | seed | LABs / 4,191 | ALMs | registers | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
@@ -2047,6 +2051,28 @@ about the routing. A floorplan needs a subscription licence; on this
 machine the placement half of the `emu` question is out of reach, and
 only the stage in the read path is left measurable.
 
+Seed 5 is the one that changed sides. On the tree before the shim's
+datapath was narrowed it packed 4,129 LABs and then ran out of routing,
+43:53 in, reporting 188005 (excessive demand for the available routing)
+and 11802 (cannot fit). It now routes. What the shim gave up to get there
+is the two 64-bit barrel shifters that pulled a halfword out of a cached
+line and a beat out of the store buffer, each now a four-way 16-bit mux,
+and the eight-way byte loop that folded a flushed store into a cached
+copy, now a mask and a merge.
+
+The LAB count alone does not show the edge: the rows above read 98 or
+99 % either side of the narrowing, and the two seeds fitted before it did
+so by 21 and 28 LABs. That is why the sweep is worth running after every
+change to the tree.
+
+A seed's outcome is not a property of the seed -- seed 4 failed to route
+on the tree before the expansion work and fits here -- so a sweep says
+what this tree does at the edge, not what a seed will always do. It is
+also not stable to the run: seed 5 was built twice here, and the second
+build repeated its counts to the register (4,159 LABs, 33,355 registers,
+-7.526) while its wall time moved from 01:21:54 to 48:44 under a
+different load. Counts and slacks are reproducible; minutes are not.
+
 ### Staging the bank writes, measured (2026-11-18)
 
 The two failing bank writes took the link register's treatment: the select
@@ -2057,9 +2083,12 @@ swap's entry branch; the bulk `SWAP8` still writes the bank directly,
 because it replaces all five entries at once and its path carries no read
 mux. On the ARM7 it is `lr_v`, `lr_m` and `lr_val`, read back through
 `lr_rd` by the four readers of `r14_b`, and BL's link write fills the same
-registers instead of the bank. Both commits sit at the top of their clocked
-block, so an exception entry -- which writes its own bank later in the same
-block -- still wins the edge.
+registers instead of the bank. The link-register commits sit at the top of
+their clocked block, so an exception entry -- which writes its own bank
+later in the same block -- still wins the edge. The user-bank commit is
+deliberately the last statement in its block instead: it belongs to the
+instruction before the current one and has to outrank the FIQ entry swap,
+which copies the `regs` shadow in and never saw an LDM or STM with S=1.
 
 | seed 2, TDS off | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
 |---|---|---|---|---|---|---|---|---|---|
@@ -2105,25 +2134,4 @@ costs 0.224 ns of the video path (+0.016 to -0.208), 5 LABs, 126 registers
 and 12:17 of wall time. The video path is the one that fails first here,
 so the shipped setting stays at 8.0.
 
-Seed 5 is the one that changed sides. On the tree before the shim's
-datapath was narrowed it packed 4,129 LABs and then ran out of routing,
-43:53 in, reporting 188005 (excessive demand for the available routing)
-and 11802 (cannot fit). It now routes. What the shim gave up to get there
-is the two 64-bit barrel shifters that pulled a halfword out of a cached
-line and a beat out of the store buffer, each now a four-way 16-bit mux,
-and the eight-way byte loop that folded a flushed store into a cached
-copy, now a mask and a merge.
-
-The LAB count alone does not show the edge: every row above reads 99 %,
-and the two seeds that fitted before this change did so by 21 and 28
-LABs. That is why the sweep is worth running after every change to the
-tree.
-
-A seed's outcome is not a property of the seed -- seed 4 failed to route
-on the tree before the expansion work and fits here -- so a sweep says
-what this tree does at the edge, not what a seed will always do. It is
-also not stable to the run: seed 5 was built twice here, and the second
-build repeated its counts to the register (4,159 LABs, 33,355 registers,
--7.526) while its wall time moved from 01:21:54 to 48:44 under a
-different load. Counts and slacks are reproducible; minutes are not.
 

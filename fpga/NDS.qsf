@@ -60,11 +60,11 @@ set_global_assignment -name SEED 2
 set_global_assignment -name FITTER_AGGRESSIVE_ROUTABILITY_OPTIMIZATION Always
 
 # Eight times the placement effort is what keeps the 99%-LAB build routable:
-# at 4.0 the ten-macro build places but abandons routing on congestion, at 8.0
+# at 4.0 the ten-macro build places but abandons routing on congestion; at 8.0
 # it routes into 4,126 of 4,191 LABs. The mapped logic is identical -- 38,680
-# ALMs, 56,002 ALUTs, 28,049 registers -- and only the effort changes; the
-# cost is 0.090 ns of setup (AREA.md, "The operand-form bench's decoder
-# fixes").
+# ALMs, 56,002 ALUTs, 28,049 registers -- and only the effort changes, for
+# 0.090 ns of setup. Those rows predate the pinned build stamp, so they do
+# not rebuild (AREA.md, "The operand-form bench's decoder fixes").
 set_global_assignment -name PLACEMENT_EFFORT_MULTIPLIER 8.0
 
 # Quartus 17.0's Verific front end aborts on the ARM9's register arrays with

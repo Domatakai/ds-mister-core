@@ -109,10 +109,18 @@ def parse_fit(path):
 
 def parse_fit_rpt(path):
     text = read(path)
+    found = {}
     match = re.search(r"Total LABs:[^;]*;\s*([\d,]+)\s*/\s*([\d,]+)", text)
-    if not match:
-        return {}
-    return {"labs": as_number(match.group(1)), "labs_total": as_number(match.group(2))}
+    if match:
+        found["labs"] = as_number(match.group(1))
+        found["labs_total"] = as_number(match.group(2))
+    match = re.search(r"Logic utilization \(in ALMs\)\s*;\s*([\d,]+)\s*/", text)
+    if match:
+        found["alms"] = as_number(match.group(1))
+    match = re.search(r"; Total registers\s*;\s*([\d,]+)", text)
+    if match:
+        found["regs"] = as_number(match.group(1))
+    return found
 
 
 def parse_map(path):
@@ -124,39 +132,23 @@ def parse_map(path):
 
 
 # label, document pattern, {group: evidence key}, evidence source
+#
+# The claims below are the shipped seed-2 row of AREA.md's "Staging the bank
+# writes" table, the one row every column of which comes from a single build
+# that still exists on disk. Point --dir at that build and the row is checked
+# end to end. The older tables cannot be rechecked this way: their reports
+# predate the pinned build stamp, so the figures do not rebuild, and several
+# of those directories have been overwritten by later fits -- comparing them
+# anyway produced nothing but false drift.
 CLAIMS = [
-    # The "current" row is the build the tree ships today. The `after` row is
-    # kept as history (t11, before the save file), so these claims point at the
-    # label rather than at the word "after".
-    ("setup slack", r"\| current \| (-?\d+\.\d{3}) \(emu\)", {1: "setup"}, "sta"),
-    ("setup TNS", r"\| current \| -?\d+\.\d{3} \(emu\) \| (-?[\d,]+\.\d{3})",
-     {1: "tns@setup:emu|u_pll"}, "sta"),
-    ("hold slack", r"\| current \| -?\d+\.\d{3} \(emu\) \| -?[\d,]+\.\d{3} \| "
-                    r"(\+?\d+\.\d{3}) \(\w+\) \|", {1: "hold"}, "sta"),
-    ("LABs used", r"\| current \| -?\d+\.\d{3} \(emu\) \| -?[\d,]+\.\d{3} \| "
-                  r"\+?\d+\.\d{3} \(\w+\) \| (\d{1,2},\d{3}) \|", {1: "labs"}, "fitrpt"),
-    ("fit time", r"\| current \| -?\d+\.\d{3} \(emu\) \| -?[\d,]+\.\d{3} \| "
-                 r"\+?\d+\.\d{3} \(\w+\) \| \d{1,2},\d{3} \| \d+\.\d/\d+\.\d/\d+\.\d \| "
-                 r"(\d\d:\d\d:\d\d) \|", {1: "fit_total"}, "fit"),
-    ("routing time", r"Routing falls from \d\d:\d\d:\d\d to (\d\d:\d\d:\d\d)",
-     {1: "fit_routing"}, "fit"),
-    ("rbf bytes", r"writes a ([\d,]+)-byte `NDS\.rbf`", {1: "rbf_bytes"}, "rbf"),
-    ("warning count", r"fitter's warning count drops from\s+\d+ to (\d+)", {1: "warnings"}, "fit"),
-    ("ascal ALUTs", r"`ascal` is \*\*([\d,]+)\*\* ALUTs in context", {1: "ascal_aluts"}, "map_t6"),
-    ("pll_hdmi slack", r"`pll_hdmi` is (-?\d+\.\d{3}) ns",
-     {1: "slack@setup:pll_hdmi|pll_hdmi_inst"}, "sta"),
-    ("pll_hdmi TNS", r"`pll_hdmi` is -?\d+\.\d{3} ns with (-?\d+\.\d{3}) of TNS",
-     {1: "tns@setup:pll_hdmi|pll_hdmi_inst"}, "sta"),
-    ("emu slack", r"the emu domain (-?\d+\.\d{3}) with", {1: "slack@setup:emu|u_pll"}, "sta"),
-    ("h2f_user0_clk", r"`h2f_user0_clk` is \+(\d+\.\d{3})",
-     {1: "slack@setup:h2f_user0_clk"}, "sta"),
-    ("FPGA_CLK1_50", r"`FPGA_CLK1_50` \+(\d+\.\d{3})", {1: "slack@setup:FPGA_CLK1_50"}, "sta"),
-    ("FPGA_CLK2_50", r"`FPGA_CLK2_50` \+(\d+\.\d{3})", {1: "slack@setup:FPGA_CLK2_50"}, "sta"),
-    ("pll_audio", r"`pll_audio` \+(\d+\.\d{3})", {1: "slack@setup:pll_audio"}, "sta"),
-    ("FPGA_CLK3_50", r"`FPGA_CLK3_50` \+(\d+\.\d{3})", {1: "slack@setup:FPGA_CLK3_50"}, "sta"),
-    ("recovery", r"recovery \+(\d+\.\d{3})", {1: "recovery"}, "sta"),
-    ("removal", r"removal \+(\d+\.\d{3})", {1: "removal"}, "sta"),
-    ("pulse width", r"pulse width \+(\d+\.\d{3})", {1: "pulse"}, "sta"),
+    ("bank writes captured",
+     r"\| both bank writes captured \| ([\d,]+) \| ([\d,]+) \| ([\d,]+) \| "
+     r"(-?\d+\.\d{3}) \| (-?[\d,]+\.\d{3}) \| (\+?\d+\.\d{3}) \| "
+     r"(-?\d+\.\d{3}) \| ([\d,]+) \|",
+     {1: "labs", 2: "alms", 3: "regs",
+      4: "slack@setup:emu|u_pll", 5: "tns@setup:emu|u_pll",
+      6: "slack@hold:emu|u_pll", 7: "slack@setup:pll_hdmi",
+      8: "rbf_bytes"}, "any"),
 ]
 
 
@@ -227,6 +219,12 @@ def main(argv=None):
         "rbf": {"rbf_bytes": os.path.getsize(sources["rbf"])},
     }
 
+    # One build feeds every claim, whatever section of its reports produced it.
+    merged = {"clocks": evidence["sta"].get("clocks", {})}
+    for block in (evidence["fit"], evidence["fitrpt"], evidence["map"],
+                  evidence["map_t6"], evidence["rbf"]):
+        merged.update(block)
+
     text = open(args.doc, encoding="utf-8", newline="").read()
     drifted, checked = [], 0
     for label, pattern, groups, source in CLAIMS:
@@ -239,7 +237,7 @@ def main(argv=None):
             continue
         for index, key in groups.items():
             quoted = match.group(index)
-            actual = resolve(key, evidence[source])
+            actual = resolve(key, merged)
             if actual is None:
                 print("SKIP %-16s report field %r absent" % (label, key))
                 continue

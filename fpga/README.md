@@ -1021,6 +1021,12 @@ anywhere in it. Installed as the repository's pre-push hook, with
 `exec python fpga/tools/preflight.py --fast`, it fails the push rather
 than letting a stale figure or an unwired bench through.
 
+`python fpga/tools/doc_report_check.py --dir <build>` is the same idea for
+figures that need Quartus: it reads one finished build's reports and
+compares them with the shipped seed-2 row of AREA.md's bank-write table,
+which is why it is not in the gate -- a gate cannot assume a build
+directory. Point it at the fit and the row is checked end to end.
+
 Both sides of that gate were run for real on 2026-11-10, from a
 tree staged with `git archive HEAD:fpga`. The clean tree built with
 `build.bat --record`: the gate printed `docs ok: 2 file(s)`, the flow
