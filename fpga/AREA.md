@@ -821,6 +821,15 @@ The microphone ADC (`mic_adc`, one LTC2308 channel at 48 kHz) is in that
 2026-11-08 later build: `tb_mic_adc` measures the sample path and the
 conversion rate, and the fit puts it at 4,138 LABs with setup -8.325 ns.
 
+`tools/area_audit.py` is how a row gets re-checked rather than believed: it
+reads the fit directories under `--builds`, takes each build's LAB, ALM and
+register counts, `emu` setup, TNS, hold, `pll_hdmi` slack and bitstream size,
+and matches every table row in this file to one. Against this host's `%TEMP%`
+on 2026-11-18 it checks 43 rows, matches 27, contradicts none and lists 11 as
+`no report` -- those ran in directories a later fit reused, so their figures
+survive only in this document, and the pre-stamp ones would not rebuild to
+them anyway.
+
 ### Sharing the ARM9 barrel shifter (2026-11-08)
 
 The single-transfer fix added `sdt_sh`, a second 32-bit barrel shifter with all
@@ -1859,7 +1868,8 @@ Every `hold` column below is the `emu` domain's hold slack; above, a table
 whose hold is the worst across every clock says `hold (worst)` in its
 header.
 
-Four seeds, each a full compile of the tree as committed:
+Four seeds, each a full compile of the tree before the two bank writes were
+captured:
 
 | seed | LABs / 4,191 | ALMs | registers | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
 |---|---|---|---|---|---|---|---|---|---|
@@ -1869,8 +1879,8 @@ Four seeds, each a full compile of the tree as committed:
 | 5 | 4,150 | 38,303 | 32,693 | -8.295 | -48,901.867 | +0.242 | -0.033 | 3,743,120 | 59:47 |
 
 All four fit, with 45, 39, 40 and 41 LABs to spare. Nothing fails that
-did not fail before: seed 2 closes the video path, and seeds 5, 4 and 1
-miss it by 0.033, 0.061 and 0.370.
+did not fail before: seed 2 closed the video path, and seeds 5, 4 and 1
+missed it by 0.033, 0.061 and 0.370.
 
 The same four seeds on the tree before the deferred link-register write,
 kept because the paragraphs below quote it:
@@ -1894,8 +1904,8 @@ together.
 
 `pll_hdmi` is the one path that does not clear on most of them: +0.157 on
 seed 2, then -0.188, -0.360 and -0.418 on seeds 4, 5 and 1. That is the
-closest thing to a failure in the table, and the seed the `.qsf` names is
-the one where it closes.
+closest thing to a failure in the table, and on that tree the seed the
+`.qsf` names was the one where it closed.
 
 Where the path is: the worst of them is `ascal|o_vcpt_pre3[3]` to
 `ascal|o_fload[1]`, both on the 148.54 MHz video clock -- 6.203 ns of data

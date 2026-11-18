@@ -1027,6 +1027,13 @@ compares them with the shipped seed-2 row of AREA.md's bank-write table,
 which is why it is not in the gate -- a gate cannot assume a build
 directory. Point it at the fit and the row is checked end to end.
 
+`python fpga/tools/area_audit.py --builds <dir>` goes the other way: it
+matches every table row in `AREA.md` against the fit directories it finds,
+and separates the rows a build contradicts from the rows no build covers
+any more. A row whose directory was reused by a later fit reports as
+`no report` rather than passing, which is the difference between a figure
+that was checked and one that was merely not contradicted.
+
 Both sides of that gate were run for real on 2026-11-10, from a
 tree staged with `git archive HEAD:fpga`. The clean tree built with
 `build.bat --record`: the gate printed `docs ok: 2 file(s)`, the flow
