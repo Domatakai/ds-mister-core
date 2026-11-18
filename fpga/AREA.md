@@ -1979,6 +1979,18 @@ is both deep and spread: the same shape as the video path, one level
 further in, and `r8u_b` is the user-mode r8..r12 bank taking the same
 instruction-driven write select that `r14_b` took.
 
+Whether that select is worth attacking was measured on the same fit, not
+assumed. Of the 200 worst `emu` setup paths, 200 start at `regs[...]` and
+none at `insn[...]`, and the worst path that does start at the
+instruction word is `arm7|insn[0]` to `arm7|r13_b~154` at -7.728 -- 0.911
+ns clear of the worst path and better than every one of the 200. So the
+select cone is not on the failing list: the 25 cells of the worst path
+carry value from the register file into the bank, and deferring a write
+select there -- the change that took `r14_b` from -8.409 to -8.034 --
+would shorten a path that already clears the failure by 0.9 ns. The next
+lever for `emu` setup is placement or a stage in the read path, not
+another deferred select.
+
 Seed 5 is the one that changed sides. On the tree before the shim's
 datapath was narrowed it packed 4,129 LABs and then ran out of routing,
 43:53 in, reporting 188005 (excessive demand for the available routing)
