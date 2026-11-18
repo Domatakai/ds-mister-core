@@ -122,6 +122,20 @@ reg  [4:0] mode;
 // banked r13/r14 (0 usr/sys, 1 fiq, 2 irq, 3 svc, 4 abt, 5 und)
 reg [31:0] r13_b [0:5];
 reg [31:0] r14_b [0:5];
+
+// The banked link register is written a cycle after the instruction decodes.
+// Its enable is a compare on the instruction word, and that cone -- one bit of
+// Rd reaching every bit of the bank write -- is the longest path in the `emu`
+// domain, so the select is captured instead and committed on the next edge.
+// Nothing architectural moves: the readers below take the pending value, which
+// is what a same-cycle write would have shown them.
+reg        lr_v   = 1'b0;
+reg  [2:0] lr_m   = 3'd0;
+reg [31:0] lr_val = 32'd0;
+
+function [31:0] lr_rd(input [2:0] idx);
+	lr_rd = (lr_v && lr_m == idx) ? lr_val : r14_b[idx];
+endfunction
 // r8..r12 exist in two banks: the FIQ set and the user set. Only one of them
 // is visible in `regs`, so the other one has to be kept separately — that is
 // what the ARM7 core was missing, and what makes LDM/STM with the ^ bit (and
@@ -255,7 +269,7 @@ endfunction
 function [31:0] rread_user (input [4:0] r);
 	begin
 		if      (r == 5'd13)                rread_user = r13_b[0];
-		else if (r == 5'd14)                rread_user = r14_b[0];
+		else if (r == 5'd14)                rread_user = lr_rd(3'd0);
 		else if (r >= 5'd8 && r <= 5'd12)   rread_user = r8u_b[r[2:0]];   // 5 entries: 3 bits
 		else                                rread_user = regs[r[3:0]];
 	end
@@ -321,7 +335,7 @@ endfunction
 	begin \
 		regs[(sel)] <= (val); \
 		if ((sel) == 5'd13) r13_b[cur_m] <= (val); \
-		if ((sel) == 5'd14) r14_b[cur_m] <= (val); \
+		if ((sel) == 5'd14) begin lr_v <= 1'b1; lr_m <= cur_m; lr_val <= (val); end \
 		if ((sel) >= 5'd8 && (sel) <= 5'd12) begin \
 			if (cur_m == 3'd1) r8f_b[bidx(sel)] <= (val); \
 			else               r8u_b[bidx(sel)] <= (val); \
@@ -333,7 +347,7 @@ endfunction
 `define WUSR(sel, val) \
 	begin \
 		if ((sel) == 5'd13)                    r13_b[0] <= (val); \
-		else if ((sel) == 5'd14)               r14_b[0] <= (val); \
+		else if ((sel) == 5'd14) begin lr_v <= 1'b1; lr_m <= 3'd0; lr_val <= (val); end \
 		else if ((sel) >= 5'd8 && (sel) <= 5'd12) r8u_b[bidx(sel)] <= (val); \
 		else                                   regs[(sel)] <= (val); \
 	end
@@ -390,7 +404,7 @@ task psr_write (input [31:0] val, input [3:0] mask, input spsr_sel);
 					`SWAP8(val[4:0])
 					mode     <= val[4:0];
 					regs[13] <= r13_b[midx(val[4:0])];
-					regs[14] <= r14_b[midx(val[4:0])];
+					regs[14] <= lr_rd(midx(val[4:0]));
 				end
 			end
 			if (mask[3]) begin
@@ -444,7 +458,7 @@ endtask
 		`SWAP8(t32b[4:0]) \
 		mode     <= t32b[4:0]; \
 		regs[13] <= r13_b[midx(t32b[4:0])]; \
-		regs[14] <= r14_b[midx(t32b[4:0])]; \
+		regs[14] <= lr_rd(midx(t32b[4:0])); \
 		pc       <= (val); \
 		state    <= S_FETCH; \
 	end
@@ -833,7 +847,11 @@ integer rk;
 reg bl_pending;   // seen the high half of a Thumb BL/BLX pair
 
 always @(posedge clk) begin
+	// the pending banked link register, committed on the edge after its
+	// instruction; this cycle's readers see it through lr_rd
+	if (lr_v) r14_b[lr_m] <= lr_val;
 	if (reset) begin
+		lr_v     <= 1'b0;
 		pc       <= boot_pc;
 		n <= 1'b0; z <= 1'b0; c <= 1'b0; v <= 1'b0; q <= 1'b0;
 		i <= 1'b1; f <= 1'b1; t <= 1'b0;
@@ -948,7 +966,7 @@ always @(posedge clk) begin
 					if (hle_wr3) regs[3] <= hle_res3;
 					// the SVC bank was set up at the trap, so the core's own
 					// exception return is exactly the way back out
-					`EXC_RET(r14_b[3])
+					`EXC_RET(lr_rd(3'd3))
 				end else begin
 					// not in the bank: vector as before, high or low
 					pc <= vbase + 32'h0000_0008;

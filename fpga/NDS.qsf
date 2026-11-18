@@ -47,6 +47,10 @@ set_global_assignment -name ECO_OPTIMIZE_TIMING ON
 set_global_assignment -name PERIPHERY_TO_CORE_PLACEMENT_AND_ROUTING_OPTIMIZATION ON
 set_global_assignment -name PHYSICAL_SYNTHESIS_ASYNCHRONOUS_SIGNAL_PIPELINING ON
 set_global_assignment -name ALM_REGISTER_PACKING_EFFORT HIGH
+# The seed this core ships with. Seeds 1, 2, 4 and 5 are measured in
+# AREA.md; all four fit, and 2 is the one where pll_hdmi closes. On the
+# tree with the deferred link-register write that seed is 4,152 LABs and
+# +0.016 ns. Changing this line retires that table.
 set_global_assignment -name SEED 2
 # The reduced NDS build is 99% LAB-full; routing it needs aggressive
 # routability and a seed that places well (AREA.md, "Decoupling the
