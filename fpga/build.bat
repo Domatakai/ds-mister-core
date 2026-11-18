@@ -128,6 +128,12 @@ if defined BUILD_STAMP (
 ) else (
   echo Build stamp: none pinned - the build used today's date.
 )
+rem Bank the fit's figures before anything can reuse the report directory:
+rem the document audit reads them back from reports\fits.csv when the
+rem output_files folder is gone. A staged build passes --label to name it.
+echo Recording the fit for the document audit...
+python "tools\area_audit.py" --record . --ledger "reports\fits.csv"
+if errorlevel 9009 echo python was not found - record it later with tools\area_audit.py --record .
 echo.
 if defined RECORD_FLAG goto :dorecord
 choice /c YN /n /m "Record output_files\NDS.rbf.stamp for this build? [Y/N] "

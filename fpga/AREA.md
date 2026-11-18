@@ -822,13 +822,17 @@ The microphone ADC (`mic_adc`, one LTC2308 channel at 48 kHz) is in that
 conversion rate, and the fit puts it at 4,138 LABs with setup -8.325 ns.
 
 `tools/area_audit.py` is how a row gets re-checked rather than believed: it
-reads the fit directories under `--builds`, takes each build's LAB, ALM and
-register counts, `emu` setup, TNS, hold, `pll_hdmi` slack and bitstream size,
-and matches every table row in this file to one. Against this host's `%TEMP%`
-on 2026-11-18 it checks 43 rows, matches 27, contradicts none and lists 11 as
-`no report` -- those ran in directories a later fit reused, so their figures
-survive only in this document, and the pre-stamp ones would not rebuild to
-them anyway.
+takes each finished fit's LAB, ALM and register counts, `emu` setup, TNS,
+hold, worst hold, `pll_hdmi` slack and bitstream size from the directories
+under `--builds` and from the ledger in `reports/fits.csv`, and matches every
+table row in this file to one. `--record` appends a finished fit to that
+ledger, and `build.bat` calls it after a successful flow, so a figure
+survives the report directory being reused by the next fit. Against this
+host on 2026-11-18 it checks 43 rows, matches 27, contradicts none and lists
+11 as `no report` -- those ran before the ledger existed, in directories a
+later fit reused, so their figures survive only in this document and the
+pre-stamp ones would not rebuild to them anyway. The 37 builds whose reports
+still existed that day are in the ledger.
 
 ### Sharing the ARM9 barrel shifter (2026-11-08)
 

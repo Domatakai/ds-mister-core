@@ -1028,11 +1028,19 @@ which is why it is not in the gate -- a gate cannot assume a build
 directory. Point it at the fit and the row is checked end to end.
 
 `python fpga/tools/area_audit.py --builds <dir>` goes the other way: it
-matches every table row in `AREA.md` against the fit directories it finds,
-and separates the rows a build contradicts from the rows no build covers
-any more. A row whose directory was reused by a later fit reports as
-`no report` rather than passing, which is the difference between a figure
-that was checked and one that was merely not contradicted.
+matches every table row in `AREA.md` against the fit directories it finds
+and the ledger in `reports/fits.csv`, and separates the rows a build
+contradicts from the rows no build covers any more. A row whose directory
+was reused by a later fit reports as `no report` rather than passing, which
+is the difference between a figure that was checked and one that was merely
+not contradicted.
+
+`--record <build>` writes one ledger line per finished fit -- counts, slacks,
+bitstream size and the seed, timing-driven synthesis and placement effort
+that produced them -- and `build.bat` calls it after a successful flow. That
+is what keeps a figure checkable after the `output_files` folder is reused:
+`python fpga/tools/area_audit.py --record %TEMP%\nds-my-build` is the same
+thing by hand. `test_area_audit.py` runs its cases in the preflight gate.
 
 Both sides of that gate were run for real on 2026-11-10, from a
 tree staged with `git archive HEAD:fpga`. The clean tree built with

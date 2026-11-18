@@ -29,6 +29,7 @@ GUARDS = [
     ("test_check_docs.py", []),
     ("test_check_memmap.py", []),
     ("test_check_benches.py", []),
+    ("test_area_audit.py", []),
     ("test_bump_build_id.py", []),
 ]
 
