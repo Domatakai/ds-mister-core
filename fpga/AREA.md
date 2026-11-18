@@ -1859,16 +1859,34 @@ Four seeds, each a full compile of the tree as committed:
 
 | seed | LABs / 4,191 | ALMs | registers | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
 |---|---|---|---|---|---|---|---|---|---|
+| 1 | 4,146 | 38,376 | 32,757 | -7.777 | -45,942.094 | +0.251 | -0.370 | 3,679,600 | 52:13 |
+| 2 | 4,152 | 38,243 | 32,551 | -8.639 | -43,118.502 | +0.254 | +0.016 | 3,707,912 | 52:01 |
+| 4 | 4,151 | 38,301 | 32,590 | -8.034 | -49,973.143 | +0.250 | -0.061 | 3,754,852 | 1:09:44 |
+| 5 | 4,150 | 38,303 | 32,693 | -8.295 | -48,901.867 | +0.242 | -0.033 | 3,743,120 | 59:47 |
+
+All four fit, with 45, 39, 40 and 41 LABs to spare. Nothing fails that
+did not fail before: seed 2 closes the video path, and seeds 5, 4 and 1
+miss it by 0.033, 0.061 and 0.370.
+
+The same four seeds on the tree before the deferred link-register write,
+kept because the paragraphs below quote it:
+
+| seed | LABs / 4,191 | ALMs | registers | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
+|---|---|---|---|---|---|---|---|---|---|
 | 1 | 4,152 | 39,169 | 33,318 | -8.559 | -53,402.246 | +0.249 | -0.418 | 3,794,856 | 51:12 |
 | 2 | 4,157 | 39,119 | 33,283 | -8.751 | -54,941.052 | +0.259 | +0.157 | 3,738,524 | 01:06:02 |
 | 4 | 4,169 | 39,093 | 33,207 | -8.409 | -51,033.563 | +0.075 | -0.188 | 3,731,896 | 59:30 |
 | 5 | 4,159 | 39,241 | 33,355 | -7.526 | -47,247.484 | +0.253 | -0.360 | 3,764,240 | 48:44 |
 
-All four fit, with 39, 34, 32 and 22 LABs to spare for seeds 1, 2, 5 and
-4. They differ by 17 LABs, 1.225 ns on setup, 7,694 on TNS and 0.184 ns
-on hold, and the spread does not follow the order of the seeds: seed 5
-closes highest at -7.526, seed 2 lowest at -8.751, seed 4 tightest on
-hold at +0.075.
+All four fitted there too, with 39, 34, 32 and 22 LABs to spare. They
+differed by 17 LABs, 1.225 ns on setup, 7,694 on TNS and 0.184 ns on
+hold, and the spread did not follow the order of the seeds: seed 5
+closed highest at -7.526, seed 2 lowest at -8.751, seed 4 tightest on
+hold at +0.075. Comparing the two tables is the point of keeping both:
+the `emu` column reordered -- seed 1 best at -7.777 where it was -8.559,
+seed 5 third where it was best -- so setup at this fill follows the seed
+and a change to the tree reshuffles the rows instead of shifting them
+together.
 
 `pll_hdmi` is the one path that does not clear on most of them: +0.157 on
 seed 2, then -0.188, -0.360 and -0.418 on seeds 4, 5 and 1. That is the
@@ -1916,6 +1934,30 @@ seeds 3 and 6 close because those seeds place the path, not because the
 switch helps it, and the direction matches the old tree: at seed 2 the
 switch moved `pll_hdmi` from +0.157 to -0.259 there and from +0.016 to
 -0.186 here. The setting stays off.
+
+The same two seeds were fitted again after both bank writes were captured,
+with timing-driven synthesis still on:
+
+| seed | LABs / 4,191 | ALMs | registers | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| 3 | 4,096 | 37,552 | 32,042 | -8.329 | -40,481.898 | +0.248 | +0.013 | 3,702,672 | 48:51 |
+| 6 | 4,092 | 37,463 | 32,005 | -7.858 | -42,407.109 | +0.252 | +0.138 | 3,686,540 | 1:01:56 |
+
+Both fit with more room than any row above -- 95 and 99 LABs spare, where
+the four-seed sweep's best was 45 -- and 116 and 205 fewer ALMs than the
+shipped seed. Both close the video path, seed 6 by 0.138 ns against seed
+3's 0.013, where the shipped seed 2 with the switch off misses it at
+-0.064. On `emu` setup the two seeds land 0.471 apart (-8.329 and -7.858)
+and 1,925.211 apart on TNS, and both are shallower than seed 2's -8.907;
+both also carry about a thousand fewer registers, 32,042 and 32,005
+against 33,043.
+
+That is a seed comparison as much as a switch comparison: seed 2 is the
+only seed of this tree fitted with the switch off, and the switch has not
+been tried at seed 2 here. What the pair says is that the switch did not
+keep these two seeds from fitting or from closing the video path, and not
+that it helps. The clean test -- seed 2 on this tree with the switch on --
+has not been run.
 
 That a path at 99 % fill can be moved half a nanosecond by a synthesis
 switch, in either direction, is the honest reading: this one is not a
@@ -1991,24 +2033,6 @@ would shorten a path that already clears the failure by 0.9 ns. The next
 lever for `emu` setup is placement or a stage in the read path, not
 another deferred select.
 
-With seeds 1 and 5 rebuilt on this tree, the four shipped rows read:
-
-| seed | LABs / 4,191 | ALMs | registers | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
-|---|---|---|---|---|---|---|---|---|---|
-| 1 | 4,146 | 38,376 | 32,757 | -7.777 | -45,942.094 | +0.251 | -0.370 | 3,679,600 | 52:13 |
-| 2 | 4,152 | 38,243 | 32,551 | -8.639 | -43,118.502 | +0.254 | +0.016 | 3,707,912 | 52:01 |
-| 4 | 4,151 | 38,301 | 32,590 | -8.034 | -49,973.143 | +0.250 | -0.061 | 3,754,852 | 1:09:44 |
-| 5 | 4,150 | 38,303 | 32,693 | -8.295 | -48,901.867 | +0.242 | -0.033 | 3,743,120 | 59:47 |
-
-All four fit, with 45, 39, 40 and 41 LABs to spare where the old table
-had 39, 34, 32 and 22, and nothing fails that did not fail before: seed
-2 still closes the video path, and seeds 5, 4 and 1 miss it by 0.033,
-0.061 and 0.370. The `emu` column reordered, though -- seed 1 has the
-best setup at -7.777 where it had -8.559, and seed 5 is third at -8.295
-where it had the best at -7.526. That is the lesson the old table's
-spread already taught: setup at this fill follows the seed, so a change
-to the tree reshuffles the rows instead of shifting them together.
-
 A LogicLock region around the ARM9, the obvious next try for those 17 ns
 of routing, cannot be measured here. This install is Quartus Prime Lite
 17.0, and the mapper reports Critical Warning (140003) twice -- once per
@@ -2022,6 +2046,64 @@ before placement, which means the build is seed 2 again and says nothing
 about the routing. A floorplan needs a subscription licence; on this
 machine the placement half of the `emu` question is out of reach, and
 only the stage in the read path is left measurable.
+
+### Staging the bank writes, measured (2026-11-18)
+
+The two failing bank writes took the link register's treatment: the select
+and the value are captured and committed on the next edge, and the readers
+take the pending entry. On the ARM9 that is `r8u_v`, `r8u_i` and `r8u_val`,
+read back through `r8u_rd` by the user-bank read port and by the FIQ
+swap's entry branch; the bulk `SWAP8` still writes the bank directly,
+because it replaces all five entries at once and its path carries no read
+mux. On the ARM7 it is `lr_v`, `lr_m` and `lr_val`, read back through
+`lr_rd` by the four readers of `r14_b`, and BL's link write fills the same
+registers instead of the bank. Both commits sit at the top of their clocked
+block, so an exception entry -- which writes its own bank later in the same
+block -- still wins the edge.
+
+| seed 2, TDS off | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| link register captured | 4,152 | 38,243 | 32,551 | -8.639 | -43,118.502 | +0.254 | +0.016 | 3,707,912 | 52:01 |
+| both bank writes captured | 4,125 | 37,668 | 33,043 | -8.907 | -44,808.642 | +0.254 | -0.064 | 3,695,232 | 1:03:38 |
+
+Both paths the change was reached for are gone: of the 30 worst `emu` setup
+paths on the new fit, none ends at `r8u_b` or `r14_b`, where the previous
+fit's worst path was `arm9|regs[4][29]` to `r8u_b[2][10]` at -8.639. What
+replaced it is the write into `regs` itself -- `arm9|rp_ic[2]~3` to
+`arm9|regs[13][7]`, -8.907 -- which is the register file's one write port
+and cannot be deferred without putting a cycle in front of every
+instruction.
+
+So the fit moves the wrong way by 0.268 ns of `emu` setup and 1,690.140 of
+TNS while using 27 fewer LABs (66 spare instead of 39), 575 fewer ALMs, 492
+more registers and a 12,680-byte smaller bitstream. The video path moved
+from +0.016 to -0.064 on the same `ascal|o_vcpt_pre3` endpoints, so seed 2
+no longer closes it on this tree. Neither number is attributable to the
+captures at this fill -- the netlist changed and the seed places it again --
+but both are what the shipped build now does, and the LAB margin is the one
+that decides whether the next change fits at all. The bench suite is 47
+step(s), 47 passed, 0 failed with both captures in.
+
+### Placement effort above 8.0 (2026-11-18)
+
+`PLACEMENT_EFFORT_MULTIPLIER` was swept up from the shipped 8.0 at seed 2,
+on the tree with the deferred link register only, so the rows differ in
+nothing but the multiplier:
+
+| effort | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| 8.0 (shipped) | 4,152 | 38,243 | 32,551 | -8.639 | -43,118.502 | +0.254 | +0.016 | 3,707,912 | 52:01 |
+| 10.0 | 4,147 | 38,243 | 32,677 | -7.557 | -42,383.255 | +0.253 | -0.208 | 3,707,004 | 1:04:18 |
+| 12.0 | 4,147 | 38,243 | 32,677 | -7.557 | -42,383.255 | +0.253 | -0.208 | 3,707,004 | 55:30 |
+
+The 12.0 row is not a rounding: the fitter says so itself -- `Warning
+(170136): Design uses Placement Effort Multiplier = 12.0` -- and its
+`NDS.rbf` is bit-identical to the 10.0 one, the same md5 over 3,707,004
+bytes. Effort above 10.0 reaches nothing this design has, so 10.0 is the
+top of the lever. It buys 1.082 ns of `emu` setup and 735.247 of TNS, and
+costs 0.224 ns of the video path (+0.016 to -0.208), 5 LABs, 126 registers
+and 12:17 of wall time. The video path is the one that fails first here,
+so the shipped setting stays at 8.0.
 
 Seed 5 is the one that changed sides. On the tree before the shim's
 datapath was narrowed it packed 4,129 LABs and then ran out of routing,

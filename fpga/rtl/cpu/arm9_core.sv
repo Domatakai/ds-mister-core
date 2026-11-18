@@ -142,6 +142,22 @@ endfunction
 // an FIQ handler that returns) work.
 reg [31:0] r8f_b [0:4];
 reg [31:0] r8u_b [0:4];
+
+// The user bank's single-register writes take the link register's treatment:
+// the value is captured and committed on the next edge, and the readers take
+// the pending value through r8u_rd. This is the write the `emu` domain fails
+// on -- `regs[4][29]` through the read mux and the `t32b` aligner into
+// `r8u_b` -- so the capture register is what splits that 22.7 ns path. The
+// bulk FIQ swap still writes the bank directly: it replaces all five entries
+// at once, which is 160 flops to defer, and its path is `regs` to `r8u_b`
+// without the read mux in it.
+reg        r8u_v   = 1'b0;
+reg  [2:0] r8u_i   = 3'd0;
+reg [31:0] r8u_val = 32'd0;
+
+function [31:0] r8u_rd(input [2:0] idx);
+	r8u_rd = (r8u_v && r8u_i == idx) ? r8u_val : r8u_b[idx];
+endfunction
 // banked SPSRs
 reg [31:0] spsr_fiq, spsr_irq, spsr_svc, spsr_abt, spsr_und;
 
@@ -270,7 +286,7 @@ function [31:0] rread_user (input [4:0] r);
 	begin
 		if      (r == 5'd13)                rread_user = r13_b[0];
 		else if (r == 5'd14)                rread_user = lr_rd(3'd0);
-		else if (r >= 5'd8 && r <= 5'd12)   rread_user = r8u_b[r[2:0]];   // 5 entries: 3 bits
+		else if (r >= 5'd8 && r <= 5'd12)   rread_user = r8u_rd(r[2:0]);  // 5 entries: 3 bits
 		else                                rread_user = regs[r[3:0]];
 	end
 endfunction
@@ -338,7 +354,7 @@ endfunction
 		if ((sel) == 5'd14) begin lr_v <= 1'b1; lr_m <= cur_m; lr_val <= (val); end \
 		if ((sel) >= 5'd8 && (sel) <= 5'd12) begin \
 			if (cur_m == 3'd1) r8f_b[bidx(sel)] <= (val); \
-			else               r8u_b[bidx(sel)] <= (val); \
+			else begin r8u_v <= 1'b1; r8u_i <= bidx(sel); r8u_val <= (val); end \
 		end \
 	end
 
@@ -348,7 +364,7 @@ endfunction
 	begin \
 		if ((sel) == 5'd13)                    r13_b[0] <= (val); \
 		else if ((sel) == 5'd14) begin lr_v <= 1'b1; lr_m <= 3'd0; lr_val <= (val); end \
-		else if ((sel) >= 5'd8 && (sel) <= 5'd12) r8u_b[bidx(sel)] <= (val); \
+		else if ((sel) >= 5'd8 && (sel) <= 5'd12) begin r8u_v <= 1'b1; r8u_i <= bidx(sel); r8u_val <= (val); end \
 		else                                   regs[(sel)] <= (val); \
 	end
 
@@ -357,8 +373,9 @@ endfunction
 `define SWAP8(nm) \
 	begin \
 		if (cur_m == 3'd1 && (nm) != 5'h11) begin \
-			regs[8]  <= r8u_b[0]; regs[9]  <= r8u_b[1]; regs[10] <= r8u_b[2]; \
-			regs[11] <= r8u_b[3]; regs[12] <= r8u_b[4]; \
+			regs[8]  <= r8u_rd(3'd0); regs[9]  <= r8u_rd(3'd1); \
+			regs[10] <= r8u_rd(3'd2); regs[11] <= r8u_rd(3'd3); \
+			regs[12] <= r8u_rd(3'd4); \
 		end \
 		if (cur_m != 3'd1 && (nm) == 5'h11) begin \
 			r8u_b[0] <= regs[8];  r8u_b[1] <= regs[9];  r8u_b[2] <= regs[10]; \
@@ -852,6 +869,7 @@ always @(posedge clk) begin
 	if (lr_v) r14_b[lr_m] <= lr_val;
 	if (reset) begin
 		lr_v     <= 1'b0;
+		r8u_v    <= 1'b0;
 		pc       <= boot_pc;
 		n <= 1'b0; z <= 1'b0; c <= 1'b0; v <= 1'b0; q <= 1'b0;
 		i <= 1'b1; f <= 1'b1; t <= 1'b0;
@@ -1970,6 +1988,11 @@ always @(posedge clk) begin
 
 		default: state <= S_FETCH;
 		endcase
+		// The deferred user-bank write lands last on its edge. It belongs to
+		// the instruction before this one, so it has to outrank the FIQ entry
+		// swap above -- that one copies the `regs` shadow in, which never saw
+		// an LDM/STM with S=1 (WUSR writes only the bank).
+		if (r8u_v) r8u_b[r8u_i] <= r8u_val;
 	end
 end
 

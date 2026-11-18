@@ -118,6 +118,20 @@ reg  [4:0]  mode;
 // banked r13/r14 (0 usr/sys, 1 fiq, 2 irq, 3 svc, 4 abt, 5 und)
 reg [31:0] r13_b [0:5];
 reg [31:0] r14_b [0:5];
+
+// The banked link register takes the ARM9 core's treatment: the write's
+// select is a compare on Rd and its value comes from the shifter/ALU cone,
+// and the two together are the longest path an ARM7 instruction starts. So
+// the select and the value are captured and committed on the next edge, and
+// every reader takes the pending value through lr_rd -- which is what a
+// same-cycle write would have shown it. Nothing architectural moves.
+reg        lr_v   = 1'b0;
+reg  [2:0] lr_m   = 3'd0;
+reg [31:0] lr_val = 32'd0;
+
+function [31:0] lr_rd(input [2:0] idx);
+	lr_rd = (lr_v && lr_m == idx) ? lr_val : r14_b[idx];
+endfunction
 // banked r8..r12 for FIQ
 reg [31:0] r8f_b [0:4];
 // banked SPSRs
@@ -470,7 +484,7 @@ reg [4:0]  tidx;
 	begin \
 		regs[(sel)] <= (val); \
 		if ((sel) == 5'd13) r13_b[cur_m] <= (val); \
-		if ((sel) == 5'd14) r14_b[cur_m] <= (val); \
+		if ((sel) == 5'd14) begin lr_v <= 1'b1; lr_m <= cur_m; lr_val <= (val); end \
 		if (cur_m == 3'd1 && (sel) >= 5'd8 && (sel) <= 5'd12) \
 			r8f_b[bidx(sel)] <= (val); \
 	end
@@ -516,6 +530,9 @@ endfunction
 // The machine
 //------------------------------------------------------------------
 always @(posedge clk) begin
+	// the pending banked link register, committed on the edge after its
+	// instruction; this cycle's readers see it through lr_rd
+	if (lr_v) r14_b[lr_m] <= lr_val;
 	if (reset) begin
 		pc       <= boot_pc;
 		n <= 1'b0; z <= 1'b0; c <= 1'b0; v <= 1'b0;
@@ -525,6 +542,7 @@ always @(posedge clk) begin
 		regs[14] <= 32'd0;
 		r13_b[3] <= boot_sp;
 		r14_b[3] <= 32'd0;
+		lr_v     <= 1'b0;
 		state    <= S_FETCH;
 		bus_rd   <= 1'b0;
 		bus_wr   <= 1'b0;
@@ -626,7 +644,7 @@ always @(posedge clk) begin
 					t <= spsr_svc[5];
 					mode     <= spsr_svc[4:0];
 					regs[13] <= r13_b[midx(spsr_svc[4:0])];
-					regs[14] <= r14_b[midx(spsr_svc[4:0])];
+					regs[14] <= lr_rd(midx(spsr_svc[4:0]));
 					if (midx(spsr_svc[4:0]) == 3'd1) begin
 						regs[8]  <= r8f_b[0];
 						regs[9]  <= r8f_b[1];
@@ -634,7 +652,7 @@ always @(posedge clk) begin
 						regs[11] <= r8f_b[3];
 						regs[12] <= r8f_b[4];
 					end
-					pc   <= r14_b[3];
+					pc   <= lr_rd(3'd3);
 				end else begin
 					// not in the bank: vector as before
 					pc <= 32'h0000_0008;
@@ -1145,7 +1163,7 @@ always @(posedge clk) begin
 								if (cpsr_mode_ok(t32[4:0]) && t32[4:0] != mode) begin
 									mode     <= t32[4:0];
 									regs[13] <= r13_b[midx(t32[4:0])];
-									regs[14] <= r14_b[midx(t32[4:0])];
+									regs[14] <= lr_rd(midx(t32[4:0]));
 									if (midx(t32[4:0]) == 3'd1) begin
 										regs[8]  <= r8f_b[0];
 										regs[9]  <= r8f_b[1];
@@ -1195,7 +1213,7 @@ always @(posedge clk) begin
 							t <= t32b[5];
 							mode     <= t32b[4:0];
 							regs[13] <= r13_b[midx(t32b[4:0])];
-							regs[14] <= r14_b[midx(t32b[4:0])];
+							regs[14] <= lr_rd(midx(t32b[4:0]));
 							if (midx(t32b[4:0]) == 3'd1) begin
 								regs[8]  <= r8f_b[0];
 								regs[9]  <= r8f_b[1];
@@ -1265,9 +1283,12 @@ always @(posedge clk) begin
 					if (insn[24]) begin          // BL: LR takes the return address
 						// written out rather than through `WREG: with a constant
 						// selector the macro's bank tests fold to a constant, which
-						// is warning 10037 for no reason
+						// is warning 10037 for no reason. It fills the same
+						// pending link register the macro's r14 branch does.
 						regs[14]     <= pc;
-						r14_b[cur_m] <= pc;
+						lr_v         <= 1'b1;
+						lr_m         <= cur_m;
+						lr_val       <= pc;
 					end
 					// the branch offset is relative to the instruction address
 					// plus eight, and `pc` is already past it by four
