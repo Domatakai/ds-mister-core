@@ -1991,6 +1991,24 @@ would shorten a path that already clears the failure by 0.9 ns. The next
 lever for `emu` setup is placement or a stage in the read path, not
 another deferred select.
 
+With seeds 1 and 5 rebuilt on this tree, the four shipped rows read:
+
+| seed | LABs / 4,191 | ALMs | registers | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 4,146 | 38,376 | 32,757 | -7.777 | -45,942.094 | +0.251 | -0.370 | 3,679,600 | 52:13 |
+| 2 | 4,152 | 38,243 | 32,551 | -8.639 | -43,118.502 | +0.254 | +0.016 | 3,707,912 | 52:01 |
+| 4 | 4,151 | 38,301 | 32,590 | -8.034 | -49,973.143 | +0.250 | -0.061 | 3,754,852 | 1:09:44 |
+| 5 | 4,150 | 38,303 | 32,693 | -8.295 | -48,901.867 | +0.242 | -0.033 | 3,743,120 | 59:47 |
+
+All four fit, with 45, 39, 40 and 41 LABs to spare where the old table
+had 39, 34, 32 and 22, and nothing fails that did not fail before: seed
+2 still closes the video path, and seeds 5, 4 and 1 miss it by 0.033,
+0.061 and 0.370. The `emu` column reordered, though -- seed 1 has the
+best setup at -7.777 where it had -8.559, and seed 5 is third at -8.295
+where it had the best at -7.526. That is the lesson the old table's
+spread already taught: setup at this fill follows the seed, so a change
+to the tree reshuffles the rows instead of shifting them together.
+
 Seed 5 is the one that changed sides. On the tree before the shim's
 datapath was narrowed it packed 4,129 LABs and then ran out of routing,
 43:53 in, reporting 188005 (excessive demand for the available routing)
