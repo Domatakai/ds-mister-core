@@ -1893,24 +1893,29 @@ TNS improves by 12,245 at seed 2. The setting stays off because, on that
 tree, the path it was reached for is the one it makes worse.
 
 Timing-driven synthesis on the tree with the deferred link-register write
-was measured at seeds 3 and 6, both with it on, and the answer changes:
+was measured at seeds 3 and 6, both with it on:
 
 | seed | LABs / 4,191 | ALMs | registers | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
 |---|---|---|---|---|---|---|---|---|---|
 | 3 | 4,118 | 38,203 | 32,140 | -9.381 | -44,749.704 | +0.250 | +0.150 | 3,755,072 | 55:14 |
 | 6 | 4,143 | 38,159 | 32,193 | -8.212 | -42,160.637 | +0.235 | +0.047 | 3,719,736 | 44:54 |
 
-Both fit, with 73 and 48 LABs to spare. Seeds 3 and 6 are the first
-measured on this tree that close the video path with the switch on, and
-seed 2, rebuilt without it on the same tree, closes it too at +0.016, so
-the switch is not the only way there. Nor is it an attribution: before
-that, the only row on this tree without the switch was seed 4, and the
-table above already shows seeds of one tree 1.225 ns apart on `emu`
-setup. Their `emu` setup, -9.381 and -8.212, is 1.347 and 0.178 worse
-than seed 4's -8.034, and only the first of those sits outside that
-spread. The switch stays off in the `.qsf`: a seed built both ways on
-this tree is what would separate the switch from the seed, and that has
-not been run.
+Both fit, with 73 and 48 LABs to spare, and both close the video path.
+That is the seed and not the switch, and seed 2 built both ways on this
+tree is what says so:
+
+| seed 2 | LABs | ALMs | registers | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| switch off | 4,152 | 38,243 | 32,551 | -8.639 | -43,118.502 | +0.254 | +0.016 | 3,707,912 | 52:01 |
+| switch on | 4,153 | 38,195 | 32,234 | -8.115 | -41,635.751 | +0.251 | -0.186 | 3,724,716 | 45:53 |
+
+One setting between them: the switch buys 0.524 ns of `emu` setup, 317
+registers, 48 ALMs and 1,483 of TNS, and spends 0.202 ns of the video
+path paying for it -- the endpoint it was reached for. So the runs at
+seeds 3 and 6 close because those seeds place the path, not because the
+switch helps it, and the direction matches the old tree: at seed 2 the
+switch moved `pll_hdmi` from +0.157 to -0.259 there and from +0.016 to
+-0.186 here. The setting stays off.
 
 That a path at 99 % fill can be moved half a nanosecond by a synthesis
 switch, in either direction, is the honest reading: this one is not a
@@ -1961,6 +1966,18 @@ video path still closes, by 0.016 ns where the old row had 0.157, and
 `emu` setup and TNS both move the good way against that row (-8.751 to
 -8.639, 11,823 shallower), so the deferred write did not cost the shipped
 seed the one domain it was closing.
+
+Which path is next was measured on that same seed-2 fit. The worst `emu`
+setup path is no longer the link register: it runs from
+`arm9|regs[4][29]` to `r8u_b[2][10]`, -8.639, through 25 cells and 25
+hops, 22.733 ns of data path against a 14.917 ns relationship. 17.174 of
+those nanoseconds are routing, 0.69 a hop, and the hops walk from X29 to
+X27 to X19 and back to X29; the remainder is 25 cells, mostly the
+register-file read mux (`rp_c[29]`) and the `t32b` decode, with the
+fitter's own LUT (`OTERM1910`) in front of the banked write. So this one
+is both deep and spread: the same shape as the video path, one level
+further in, and `r8u_b` is the user-mode r8..r12 bank taking the same
+instruction-driven write select that `r14_b` took.
 
 Seed 5 is the one that changed sides. On the tree before the shim's
 datapath was narrowed it packed 4,129 LABs and then ran out of routing,
