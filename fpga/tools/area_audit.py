@@ -188,6 +188,59 @@ def record(directory, ledger, label):
     return 0
 
 
+def shipped_settings(folder):
+    """The three settings that identify the configuration the core ships."""
+    qsf = os.path.join(folder, "NDS.qsf")
+    synthesis = qsf_value(qsf, "SYNTH_TIMING_DRIVEN_SYNTHESIS").lower()
+    return {"seed": qsf_value(qsf, "SEED"),
+            "tds": "on" if synthesis == "on" else "off",
+            "effort": qsf_value(qsf, "PLACEMENT_EFFORT_MULTIPLIER")}
+
+
+def check_shipped(document, ledger, folder):
+    """Does the row the document calls shipped agree with a build it shipped?"""
+    settings = shipped_settings(folder)
+    qsf = os.path.join(folder, "NDS.qsf")
+    if not settings["seed"]:
+        sys.stderr.write("no SEED assignment in %s\n" % qsf)
+        return 1
+    found = None
+    for lineno, header, cells in rows(document):
+        if cells and cells[0].strip().lower() == "both bank writes captured":
+            found = (lineno, header, cells)
+            break
+    if found is None:
+        sys.stderr.write("no 'both bank writes captured' row in %s\n" % document)
+        return 1
+    lineno, header, cells = found
+    values = claimed(header, cells)
+    matching = [row for row in ledger_rows(ledger)
+                if row["seed"] == settings["seed"]
+                and row["tds"] == settings["tds"]
+                and row["effort"] == settings["effort"]]
+    if not matching:
+        sys.stderr.write("no archived fit with seed %s, timing-driven synthesis "
+                         "%s, effort %s: record one, or fix %s\n"
+                         % (settings["seed"], settings["tds"],
+                            settings["effort"], qsf))
+        return 1
+    closest = None
+    for row in matching:
+        metrics = {key: (number(row[key]) if row[key] else None)
+                   for key in COUNTS + SLACKS}
+        bad = disagrees(metrics, values)
+        if not bad:
+            print("shipped row (line %d) matches %s: %s LABs, %s setup, %s pll_hdmi"
+                  % (lineno, row["label"], row["labs"], row["setup"],
+                     row["hdmi"]))
+            return 0
+        if closest is None or len(bad) < len(closest[1]):
+            closest = (row["label"], bad)
+    sys.stderr.write("the shipped row (line %d) disagrees with %s: %s\n"
+                     % (lineno, closest[0], closest[1]))
+    return 1
+
+
 def rows(document):
     """Yield (line number, header cells, row cells) for every table row."""
     header = None
@@ -318,6 +371,10 @@ def main(argv=None):
     parser.add_argument("--record", metavar="BUILD_DIR",
                         help="append this build's figures to the ledger")
     parser.add_argument("--label", help="ledger name (default: directory name)")
+    parser.add_argument("--check-shipped", action="store_true",
+                        help="check the shipped row against the ledger")
+    parser.add_argument("--folder", default=".",
+                        help="directory holding the NDS.qsf to read")
     parser.add_argument("--verbose", action="store_true",
                         help="print every matching row, not just the summary")
     args = parser.parse_args(argv)
@@ -326,6 +383,8 @@ def main(argv=None):
     if not os.path.isfile(args.doc):
         sys.stderr.write("document not found: %s\n" % args.doc)
         return 2
+    if args.check_shipped:
+        return check_shipped(args.doc, args.ledger, args.folder)
     if not os.path.isdir(args.builds) and not os.path.isfile(args.ledger):
         sys.stderr.write("neither a build directory (%s) nor a ledger (%s)\n"
                          % (args.builds, args.ledger))

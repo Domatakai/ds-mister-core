@@ -2002,7 +2002,13 @@ switch, in either direction, is the honest reading: this one is not a
 constraint mistake that a knob corrects. Closing it on every seed means
 pipelining inside `ascal` or running the scaler on the 1x pixel clock
 instead of the 2x it uses; both change video timing, and neither can be
-checked without the board.
+checked without the board. Nor is gate-level timing simulation an
+alternative on this install: `quartus_eda NDS --simulation --tool=modelsim
+--format=verilog` writes `simulation/modelsim/NDS.vo` in 22 seconds, but the
+writer reports `Warning (10905)` that the functional netlist is the only type
+this device supports, so there is no `.sdo` to back-annotate. Static timing
+analysis and the bench suite are what this machine can check; the board is
+the rest.
 
 The store buffer was tried as the same kind of lever and also refused.
 Dropping the cached copy of a line instead of merging the store into it
@@ -2137,6 +2143,19 @@ replaced it is the write into `regs` itself -- `arm9|rp_ic[2]~3` to
 and cannot be deferred without putting a cycle in front of every
 instruction.
 
+Seed 6 places that wall from a different start and keeps it: its worst `emu`
+path is `arm9|insn[26]` to `arm9|regs[1][20]` at -7.858, 21.956 ns of data
+delay against the same 14.917 ns relationship, and all 30 of its worst paths
+end at a `regs` write. None ends at `r8u_b` or `r14_b`, so the captures hold
+at that seed too; only the margin moves. That is why the seed is a decision
+about where the wall sits, not a fix for it.
+
+The fitter also warns once per build that `r8u_b` is assigned but never read.
+It is read: the bank appears in the map report as 32-bit `r8u_b[n][m]` cells,
+and `tb_arm9`'s STMIA^ and LDMIA^ cases write it and read it back. The front
+end does not follow the read through `r8u_rd`, so the warning is a tool
+artefact rather than a bank that optimised away.
+
 So the fit moves the wrong way by 0.268 ns of `emu` setup and 1,690.140 of
 TNS while using 27 fewer LABs (66 spare instead of 39), 575 fewer ALMs, 492
 more registers and a 12,680-byte smaller bitstream. The video path moved
@@ -2167,5 +2186,20 @@ top of the lever. It buys 1.082 ns of `emu` setup and 735.247 of TNS, and
 costs 0.224 ns of the video path (+0.016 to -0.208), 5 LABs, 126 registers
 and 12:17 of wall time. The video path is the one that fails first here,
 so the shipped setting stays at 8.0.
+
+The same lever measured on the tree with both captures does not pay. At
+seed 2 with the switch off, effort 10.0 gives:
+
+| effort, both captures | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| 8.0 (shipped) | 4,125 | 37,668 | 33,043 | -8.907 | -44,808.642 | +0.254 | -0.064 | 3,695,232 | 1:03:38 |
+| 10.0 | 4,119 | 37,668 | 32,988 | -8.206 | -49,184.182 | +0.254 | -0.980 | 3,779,332 | 54:44 |
+
+Every timing number moves the wrong way: 0.701 ns of `emu` setup, 4,375.540
+of TNS, and the video path from -0.064 to -0.980 with 6.461 of TNS of its
+own. That is the opposite of what the lever did before the captures (+1.082
+on setup, +735.247 on TNS), so the effort multiplier is one more knob whose
+sign belongs to the tree rather than to the setting. Six LABs come back and
+the flow is 8:54 shorter; the shipped setting stays at 8.0.
 
 

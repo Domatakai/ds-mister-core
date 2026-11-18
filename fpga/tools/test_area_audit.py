@@ -114,6 +114,23 @@ def audit(root, doc="AREA.md", builds="fits", ledger="reports/fits.csv"):
     return run(root, "--doc", doc, "--builds", builds, "--ledger", ledger)
 
 
+def write_qsf(root, name, seed="2", tds="OFF", effort="8.0"):
+    return write(root, name,
+                 "set_global_assignment -name SEED %s\n"
+                 "set_global_assignment -name SYNTH_TIMING_DRIVEN_SYNTHESIS %s\n"
+                 "set_global_assignment -name PLACEMENT_EFFORT_MULTIPLIER %s\n"
+                 % (seed, tds, effort))
+
+
+def shipped(root, folder="fits/shipped", doc="AREA.md"):
+    return run(root, "--check-shipped", "--doc", doc, "--ledger",
+               "reports/fits.csv", "--folder", folder)
+
+
+SHIPPED_ROW = ("both bank writes captured",) + ROW
+SHIPPED_HEAD = ["fit"] + ROWH
+
+
 def main():
     root = new()
     fit(os.path.join(root, "fits", "nds-tree-s2"))
@@ -216,6 +233,37 @@ def main():
     rc, out = audit(root)
     check("the summary counts every row",
           rc == 0 and "rows checked: 2" in out and "matched: 2" in out, out)
+
+    root = new()
+    build = fit(os.path.join(root, "fits", "shipped"))
+    write(root, "AREA.md", document(SHIPPED_ROW, header=SHIPPED_HEAD))
+    run(root, "--record", build, "--ledger", "reports/fits.csv")
+    rc, out = shipped(root)
+    check("the shipped row matches the recorded build",
+          rc == 0 and "matches shipped" in out, out)
+
+    drifted = list(SHIPPED_ROW)
+    drifted[5] = "-40,000.000"
+    write(root, "AREA.md", document(tuple(drifted), header=SHIPPED_HEAD))
+    rc, out = shipped(root)
+    check("a shipped row that drifted fails the check",
+          rc == 1 and "disagrees" in out, out)
+
+    root = new()
+    build = fit(os.path.join(root, "fits", "seed6"), seed="6")
+    write_qsf(root, "qsf/NDS.qsf")
+    write(root, "AREA.md", document(SHIPPED_ROW, header=SHIPPED_HEAD))
+    run(root, "--record", build, "--ledger", "reports/fits.csv")
+    rc, out = shipped(root, folder="qsf")
+    check("a shipped setting with no recorded fit fails",
+          rc == 1 and "no archived fit" in out, out)
+
+    root = new()
+    fit(os.path.join(root, "fits", "shipped"))
+    write(root, "AREA.md", document(ROW, header=SHIPPED_HEAD))
+    rc, out = shipped(root)
+    check("a document without the shipped row fails",
+          rc == 1 and "no 'both bank writes captured' row" in out, out)
 
     if failures:
         print("%d of %d cases failed" % (len(failures), count))
