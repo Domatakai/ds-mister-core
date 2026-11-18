@@ -2009,6 +2009,20 @@ where it had the best at -7.526. That is the lesson the old table's
 spread already taught: setup at this fill follows the seed, so a change
 to the tree reshuffles the rows instead of shifting them together.
 
+A LogicLock region around the ARM9, the obvious next try for those 17 ns
+of routing, cannot be measured here. This install is Quartus Prime Lite
+17.0, and the mapper reports Critical Warning (140003) twice -- once per
+stage -- that the licence does not support LogicLock regions and that
+the software removes them automatically. The assignment syntax itself is
+accepted, which is what made the first attempt look possible: region
+properties take `-section_id` (`LL_ENABLED`, `LL_AUTO_SIZE`, `LL_STATE`,
+`LL_CORE_ONLY`) and membership takes both `-to` and `-section_id`, so the
+project parses and fits with the block in the `.qsf`. It is deleted
+before placement, which means the build is seed 2 again and says nothing
+about the routing. A floorplan needs a subscription licence; on this
+machine the placement half of the `emu` question is out of reach, and
+only the stage in the read path is left measurable.
+
 Seed 5 is the one that changed sides. On the tree before the shim's
 datapath was narrowed it packed 4,129 LABs and then ran out of routing,
 43:53 in, reporting 188005 (excessive demand for the available routing)
