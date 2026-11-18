@@ -1956,7 +1956,7 @@ row that shows what it did.
 
 Seed 2, the shipped one, was rebuilt on this tree afterwards: 4,152
 LABs / 4,191, 38,243 ALMs, 32,551 registers, `emu` setup -8.639, TNS
--43,118.502, hold +0.268, `pll_hdmi` +0.016, 3,707,912 bytes, 52:01. The
+-43,118.502, hold +0.254, `pll_hdmi` +0.016, 3,707,912 bytes, 52:01. The
 video path still closes, by 0.016 ns where the old row had 0.157, and
 `emu` setup and TNS both move the good way against that row (-8.751 to
 -8.639, 11,823 shallower), so the deferred write did not cost the shipped
