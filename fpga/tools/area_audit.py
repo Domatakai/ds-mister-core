@@ -35,6 +35,7 @@ through it is in the ledger without anyone remembering.
 
 import argparse
 import csv
+import hashlib
 import os
 import re
 import sys
@@ -44,7 +45,8 @@ TOLERANCE = {"setup": 0.0006, "tns": 0.0006, "hold": 0.0006,
 
 COUNTS = ("labs", "alms", "regs", "rbf")
 SLACKS = ("setup", "tns", "hold", "glhold", "hdmi")
-LEDGER_HEADER = ["label", "seed", "tds", "effort"] + list(COUNTS) + list(SLACKS)
+LEDGER_HEADER = (["label", "tree", "seed", "tds", "effort"]
+                 + list(COUNTS) + list(SLACKS))
 
 
 def number(text):
@@ -142,6 +144,98 @@ def ledger_metrics(path):
     return found
 
 
+DESIGN_FILES = ("NDS.qsf", "NDS.sdc", "NDS.sv", "files.qip")
+DESIGN_DIRS = ("rtl", "sys")
+
+
+def normalised(path):
+    """A file's bytes with the line endings flattened.
+
+    A staged build is copied and then edited in place -- `sed` for the seed,
+    the timing switch, the effort -- and some of those edits rewrite every
+    line ending in the file. That is not a change to the design, and the
+    fingerprint should not call it one.
+    """
+    with open(path, "rb") as handle:
+        return b"\n".join(handle.read().splitlines())
+
+
+def design_files(folder):
+    """Every file that decides what the fit contains, in a stable order."""
+    found = []
+    for name in DESIGN_FILES:
+        path = os.path.join(folder, name)
+        if os.path.isfile(path):
+            found.append(path)
+    for name in DESIGN_DIRS:
+        for root, folders, files in os.walk(os.path.join(folder, name)):
+            folders.sort()
+            for entry in sorted(files):
+                found.append(os.path.join(root, entry))
+    return sorted(found, key=lambda path: os.path.relpath(path, folder))
+
+
+SETTINGS_ASSIGNMENTS = ("SEED", "SYNTH_TIMING_DRIVEN_SYNTHESIS",
+                        "PLACEMENT_EFFORT_MULTIPLIER")
+
+
+def qsf_design(path):
+    """The .qsf with the parts that are not the design taken out.
+
+    Comments and the three settings the ledger already records as their own
+    columns are choices made about a fit, not part of what is fitted. Two
+    fits of one design at different seeds are the same tree, and a comment
+    edited after a fit does not stop that row being evidence for it. Pins
+    and everything else stay in.
+    """
+    lines = []
+    for line in read(path).splitlines():
+        text = line.strip()
+        if not text or text.startswith("#"):
+            continue
+        parts = text.split()
+        if (len(parts) >= 4 and parts[0] == "set_global_assignment"
+                and parts[2] in SETTINGS_ASSIGNMENTS):
+            continue
+        lines.append(" ".join(parts))
+    return "\n".join(lines).encode("utf-8")
+
+
+def tree_id(folder):
+    """A short fingerprint of the design a fit was built from.
+
+    A ledger row outlives the report directory it came from, and a row
+    measured on one tree matches a document describing another without
+    complaint: the figures have the same shape either way. The fingerprint
+    is what lets a row say which tree produced it, so the shipped-row check
+    can refuse a row that is evidence for a different design. Paths go in
+    with the contents, so a renamed module and an edited one are both a
+    different tree; the seed and the effort do not, since those are rows of
+    their own.
+    """
+    digest = hashlib.sha256()
+    for path in design_files(folder):
+        rel = os.path.relpath(path, folder).replace(os.sep, "/")
+        body = qsf_design(path) if rel == "NDS.qsf" else normalised(path)
+        digest.update(rel.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(body)
+        digest.update(b"\0")
+    return digest.hexdigest()[:12]
+
+
+def write_ledger(ledger, rows):
+    """Rewrite the ledger, one line per label, in a stable order."""
+    folder = os.path.dirname(os.path.abspath(ledger))
+    if not os.path.isdir(folder):
+        os.makedirs(folder)
+    rows.sort(key=lambda row: row["label"])
+    with open(ledger, "w", newline="") as handle:
+        writer = csv.DictWriter(handle, LEDGER_HEADER)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def qsf_value(qsf, name):
     """The value a build's own .qsf gave an assignment, or an empty string."""
     if not os.path.isfile(qsf):
@@ -165,6 +259,7 @@ def record(directory, ledger, label):
              "seed": qsf_value(qsf, "SEED"),
              "tds": "on" if qsf_value(qsf, "SYNTH_TIMING_DRIVEN_SYNTHESIS").lower() == "on" else "off",
              "effort": qsf_value(qsf, "PLACEMENT_EFFORT_MULTIPLIER")}
+    entry["tree"] = tree_id(directory)
     for key in COUNTS:
         value = metrics.get(key)
         entry[key] = "" if value is None else str(int(value))
@@ -174,17 +269,66 @@ def record(directory, ledger, label):
 
     rows = [row for row in ledger_rows(ledger) if row["label"] != entry["label"]]
     rows.append(entry)
-    rows.sort(key=lambda row: row["label"])
-    folder = os.path.dirname(os.path.abspath(ledger))
-    if not os.path.isdir(folder):
-        os.makedirs(folder)
-    with open(ledger, "w", newline="") as handle:
-        writer = csv.DictWriter(handle, LEDGER_HEADER)
-        writer.writeheader()
-        writer.writerows(rows)
-    print("recorded %s: %s LABs, %s setup, %s pll_hdmi, %s bytes (seed %s, tds %s, effort %s)"
+    write_ledger(ledger, rows)
+    print("recorded %s: %s LABs, %s setup, %s pll_hdmi, %s bytes "
+          "(seed %s, tds %s, effort %s, tree %s)"
           % (entry["label"], entry["labs"], entry["setup"], entry["hdmi"],
-             entry["rbf"], entry["seed"] or "?", entry["tds"], entry["effort"] or "?"))
+             entry["rbf"], entry["seed"] or "?", entry["tds"],
+             entry["effort"] or "?", entry["tree"]))
+    return 0
+
+
+def agrees(row, metrics):
+    """Is this directory still the fit the row describes?"""
+    for key in ("labs", "regs", "rbf"):
+        value = number(row[key]) if row[key] else None
+        if value is not None and metrics.get(key) is not None and value != metrics[key]:
+            return False
+    for key in ("setup", "hdmi", "hold"):
+        value = number(row[key]) if row[key] else None
+        if (value is not None and metrics.get(key) is not None
+                and abs(value - metrics[key]) > TOLERANCE[key]):
+            return False
+    return True
+
+
+def bind_tree(root, ledger):
+    """Give every row the fingerprint of the tree it was built from.
+
+    A row can only be bound to the tree it was built from, so this reads the
+    staged directory the row names instead of trusting its label -- and only
+    when that directory still reproduces the row's own figures, since a
+    directory gets reused by later fits. A row whose build is gone stays
+    unbound, and the shipped-row check goes on refusing it: that is the
+    honest state, not a gap to paper over.
+    """
+    rows = ledger_rows(ledger)
+    bound, unbound, moved = [], [], []
+    for row in rows:
+        directory = os.path.join(root, row["label"])
+        metrics = build_metrics(directory) if os.path.isdir(directory) else None
+        if metrics is None:
+            if not row["tree"]:
+                unbound.append(row["label"])
+            continue
+        if not agrees(row, metrics):
+            moved.append(row["label"])
+            row["tree"] = ""
+            continue
+        tree = tree_id(directory)
+        if row["tree"] != tree:
+            row["tree"] = tree
+            bound.append((row["label"], tree))
+    if bound or moved:
+        write_ledger(ledger, rows)
+    for label, tree in bound:
+        print("bound %s to tree %s" % (label, tree))
+    if moved:
+        print("directory now holds another fit: %s" % ", ".join(sorted(moved)))
+    if unbound:
+        print("still unbound: %s" % ", ".join(sorted(unbound)))
+    print("bound %d row(s), %d left unbound, in %s"
+          % (len(bound), len(unbound), ledger))
     return 0
 
 
@@ -224,15 +368,35 @@ def check_shipped(document, ledger, folder):
                          % (settings["seed"], settings["tds"],
                             settings["effort"], qsf))
         return 1
+    # A row is evidence for one tree. The settings identify the build; the
+    # fingerprint says what it was a build of, and a fit of another tree can
+    # reproduce every setting and still say nothing about this design.
+    current = tree_id(folder)
+    same = [row for row in matching if row["tree"] == current]
+    if not same:
+        unbound = [row["label"] for row in matching if not row["tree"]]
+        if unbound:
+            sys.stderr.write("the fit(s) with these settings are unbound (%s): "
+                             "recorded before rows carried a tree, so they are "
+                             "not evidence for this one -- bind them with "
+                             "--bind-tree, or record a fit of this tree\n"
+                             % ", ".join(unbound))
+        else:
+            sys.stderr.write("the fit(s) with these settings are from tree %s; "
+                             "this tree is %s -- record a fit of this tree\n"
+                             % (", ".join(sorted({row["tree"] for row in matching})),
+                                current))
+        return 1
     closest = None
-    for row in matching:
+    for row in same:
         metrics = {key: (number(row[key]) if row[key] else None)
                    for key in COUNTS + SLACKS}
         bad = disagrees(metrics, values)
         if not bad:
-            print("shipped row (line %d) matches %s: %s LABs, %s setup, %s pll_hdmi"
-                  % (lineno, row["label"], row["labs"], row["setup"],
-                     row["hdmi"]))
+            print("shipped row (line %d) matches %s on tree %s: %s LABs, "
+                  "%s setup, %s pll_hdmi"
+                  % (lineno, row["label"], row["tree"], row["labs"],
+                     row["setup"], row["hdmi"]))
             return 0
         if closest is None or len(bad) < len(closest[1]):
             closest = (row["label"], bad)
@@ -373,6 +537,8 @@ def main(argv=None):
     parser.add_argument("--label", help="ledger name (default: directory name)")
     parser.add_argument("--check-shipped", action="store_true",
                         help="check the shipped row against the ledger")
+    parser.add_argument("--bind-tree", metavar="BUILD_ROOT",
+                        help="give rows recorded before the tree column an id")
     parser.add_argument("--folder", default=".",
                         help="directory holding the NDS.qsf to read")
     parser.add_argument("--verbose", action="store_true",
@@ -380,6 +546,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.record:
         return record(args.record, args.ledger, args.label)
+    if args.bind_tree:
+        return bind_tree(args.bind_tree, args.ledger)
     if not os.path.isfile(args.doc):
         sys.stderr.write("document not found: %s\n" % args.doc)
         return 2

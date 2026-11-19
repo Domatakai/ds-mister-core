@@ -1042,6 +1042,17 @@ is what keeps a figure checkable after the `output_files` folder is reused:
 `python fpga/tools/area_audit.py --record %TEMP%\nds-my-build` is the same
 thing by hand. `test_area_audit.py` runs its cases in the preflight gate.
 
+Each line also carries a `tree` fingerprint of the design inputs the fit was
+built from -- `rtl`, `sys`, `NDS.sdc`, `NDS.sv`, `files.qip` and the pin
+assignments in `NDS.qsf`, with the seed, the timing-driven switch and the
+effort left to their own columns, so two seeds fitted from one design share
+an id. `--check-shipped` will not accept a row recorded from another tree:
+the settings identify the build, the fingerprint says what it was a build
+of. `--bind-tree <dir>` fills the column for rows written before it existed
+by reading the build directory each row names, and only when that directory
+still reproduces the row's own figures -- a row whose build is gone stays
+unbound, and the check keeps refusing it.
+
 Both sides of that gate were run for real on 2026-11-10, from a
 tree staged with `git archive HEAD:fpga`. The clean tree built with
 `build.bat --record`: the gate printed `docs ok: 2 file(s)`, the flow

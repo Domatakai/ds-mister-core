@@ -12,6 +12,7 @@ One line per case; exits 1 if any of them fails. Nothing outside a temporary
 directory is touched, and nothing here needs Quartus.
 """
 
+import csv
 import io
 import os
 import shutil
@@ -125,6 +126,22 @@ def write_qsf(root, name, seed="2", tds="OFF", effort="8.0"):
 def shipped(root, folder="fits/shipped", doc="AREA.md"):
     return run(root, "--check-shipped", "--doc", doc, "--ledger",
                "reports/fits.csv", "--folder", folder)
+
+
+def ledger_of(root, path="reports/fits.csv"):
+    with io.open(os.path.join(root, path), encoding="utf-8", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def strip_trees(root, path="reports/fits.csv"):
+    """A ledger as it was written before rows carried a tree."""
+    rows = ledger_of(root, path)
+    with io.open(os.path.join(root, path), "w", newline="") as handle:
+        writer = csv.DictWriter(handle, list(rows[0].keys()))
+        writer.writeheader()
+        for row in rows:
+            row["tree"] = ""
+            writer.writerow(row)
 
 
 SHIPPED_ROW = ("both bank writes captured",) + ROW
@@ -264,6 +281,75 @@ def main():
     rc, out = shipped(root)
     check("a document without the shipped row fails",
           rc == 1 and "no 'both bank writes captured' row" in out, out)
+
+    root = new()
+    one = fit(os.path.join(root, "fits", "one"))
+    two = fit(os.path.join(root, "fits", "two"))
+    write(root, "/".join(["fits", "one", "rtl", "core.sv"]), "module core; endmodule\n")
+    write(root, "/".join(["fits", "two", "rtl", "core.sv"]), "module core; endmodule\n")
+    run(root, "--record", one, "--ledger", "reports/fits.csv")
+    run(root, "--record", two, "--ledger", "reports/fits.csv")
+    rows = ledger_of(root)
+    check("a row records a twelve-digit tree id",
+          len(rows) == 2 and all(len(row["tree"]) == 12 for row in rows), rows)
+    check("two builds of one design share a tree id",
+          rows[0]["tree"] == rows[1]["tree"], rows)
+
+    write(root, "/".join(["fits", "two", "rtl", "core.sv"]), "module core (input a); endmodule\n")
+    run(root, "--record", two, "--ledger", "reports/fits.csv")
+    rows = ledger_of(root)
+    check("a one-word edit is a different tree",
+          rows[0]["tree"] != rows[1]["tree"], rows)
+
+    root = new()
+    build = fit(os.path.join(root, "fits", "shipped"))
+    write(root, "/".join(["fits", "shipped", "rtl", "core.sv"]), "module core; endmodule\n")
+    write_qsf(root, "qsf/NDS.qsf")
+    write(root, "/".join(["qsf", "rtl", "core.sv"]), "module core; endmodule\n")
+    write(root, "AREA.md", document(SHIPPED_ROW, header=SHIPPED_HEAD))
+    run(root, "--record", build, "--ledger", "reports/fits.csv")
+    rc, out = shipped(root, folder="qsf")
+    check("a fit of the same tree opens the gate",
+          rc == 0 and "on tree" in out, out)
+
+    write(root, "/".join(["qsf", "rtl", "core.sv"]), "module core (input a); endmodule\n")
+    rc, out = shipped(root, folder="qsf")
+    check("a fit of another tree does not stand in",
+          rc == 1 and "from tree" in out, out)
+
+    strip_trees(root)
+    rc, out = shipped(root, folder="qsf")
+    check("an unbound fit is not evidence for a tree",
+          rc == 1 and "unbound" in out, out)
+
+    rc, out = run(root, "--bind-tree", "fits", "--ledger", "reports/fits.csv")
+    check("--bind-tree reads the directory a row names",
+          rc == 0 and "bound 1 row(s)" in out, out)
+
+    rc, out = shipped(root, folder="fits/shipped")
+    check("the bound row then stands for its tree",
+          rc == 0 and "matches shipped" in out, out)
+
+    strip_trees(root)
+    rc, out = run(root, "--bind-tree", "nowhere", "--ledger", "reports/fits.csv")
+    check("a row whose build is gone stays unbound",
+          rc == 0 and "1 left unbound" in out, out)
+
+    root = new()
+    one = fit(os.path.join(root, "fits", "one"))
+    two = fit(os.path.join(root, "fits", "two"), seed="6")
+    write(root, "fits/one/rtl/core.sv", "module core; endmodule\n")
+    write(root, "fits/two/rtl/core.sv", "module core; endmodule\n")
+    write(root, "fits/one/NDS.qsf",
+          "# a note about the pins\n"
+          "set_global_assignment -name SEED 2\n"
+          "set_global_assignment -name SYNTH_TIMING_DRIVEN_SYNTHESIS OFF\n"
+          "set_global_assignment -name PLACEMENT_EFFORT_MULTIPLIER 8.0\n")
+    run(root, "--record", one, "--ledger", "reports/fits.csv")
+    run(root, "--record", two, "--ledger", "reports/fits.csv")
+    rows = ledger_of(root)
+    check("a seed choice and a .qsf comment are not a new tree",
+          rows[0]["tree"] == rows[1]["tree"], rows)
 
     if failures:
         print("%d of %d cases failed" % (len(failures), count))
