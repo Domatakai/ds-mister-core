@@ -1053,6 +1053,11 @@ by reading the build directory each row names, and only when that directory
 still reproduces the row's own figures -- a row whose build is gone stays
 unbound, and the check keeps refusing it.
 
+`--record` also refuses a fit whose figures a line already holds under
+another label: one run captured twice would read as two independent fits
+agreeing on every column, which is the strongest evidence the audit shows,
+from one bitstream. `--allow-duplicate` records it anyway.
+
 Both sides of that gate were run for real on 2026-11-10, from a
 tree staged with `git archive HEAD:fpga`. The clean tree built with
 `build.bat --record`: the gate printed `docs ok: 2 file(s)`, the flow

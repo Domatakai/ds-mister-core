@@ -225,6 +225,34 @@ def main():
           rc == 0 and len(rows_again) == 2, chr(10).join(rows_again))
 
     root = new()
+    one = fit(os.path.join(root, "fits", "one"))
+    twin = fit(os.path.join(root, "fits", "twin"))
+    write(root, "fits/one/rtl/core.sv", "module core; endmodule\n")
+    write(root, "fits/twin/rtl/core.sv", "module core; endmodule\n")
+    run(root, "--record", one, "--ledger", "reports/fits.csv")
+    rc, out = run(root, "--record", twin, "--ledger", "reports/fits.csv")
+    check("one fit captured under a second label is refused",
+          rc == 2 and "already holds this fit's figures" in out, out)
+    check("the refused capture leaves one line",
+          len(ledger_of(root)) == 1, ledger_of(root))
+
+    rc, out = run(root, "--record", twin, "--allow-duplicate",
+                  "--ledger", "reports/fits.csv")
+    check("--allow-duplicate records it anyway",
+          rc == 0 and len(ledger_of(root)) == 2, out)
+
+    root = new()
+    one = fit(os.path.join(root, "fits", "one"))
+    other = fit(os.path.join(root, "fits", "other"), labs="4,096",
+                regs="32,551", setup="-8.329")
+    write(root, "fits/one/rtl/core.sv", "module core; endmodule\n")
+    write(root, "fits/other/rtl/core.sv", "module core; endmodule\n")
+    run(root, "--record", one, "--ledger", "reports/fits.csv")
+    rc, out = run(root, "--record", other, "--ledger", "reports/fits.csv")
+    check("a fit with its own figures still records",
+          rc == 0 and len(ledger_of(root)) == 2, out)
+
+    root = new()
     fit(os.path.join(root, "fits", "nds-tree-s2"))
     rc, out = run(root, "--record", os.path.join(root, "fits", "nothing"),
                   "--ledger", "reports/fits.csv")
@@ -284,7 +312,7 @@ def main():
 
     root = new()
     one = fit(os.path.join(root, "fits", "one"))
-    two = fit(os.path.join(root, "fits", "two"))
+    two = fit(os.path.join(root, "fits", "two"), labs="4,096")
     write(root, "/".join(["fits", "one", "rtl", "core.sv"]), "module core; endmodule\n")
     write(root, "/".join(["fits", "two", "rtl", "core.sv"]), "module core; endmodule\n")
     run(root, "--record", one, "--ledger", "reports/fits.csv")
@@ -337,7 +365,7 @@ def main():
 
     root = new()
     one = fit(os.path.join(root, "fits", "one"))
-    two = fit(os.path.join(root, "fits", "two"), seed="6")
+    two = fit(os.path.join(root, "fits", "two"), labs="4,096", seed="6")
     write(root, "fits/one/rtl/core.sv", "module core; endmodule\n")
     write(root, "fits/two/rtl/core.sv", "module core; endmodule\n")
     write(root, "fits/one/NDS.qsf",

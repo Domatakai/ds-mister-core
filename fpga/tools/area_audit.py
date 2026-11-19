@@ -247,7 +247,25 @@ def qsf_value(qsf, name):
     return ""
 
 
-def record(directory, ledger, label):
+METRIC_KEYS = COUNTS + SLACKS
+
+
+def same_measurement(entry, rows):
+    """An existing line that carries exactly the figures this fit measured.
+
+    One finished fit captured under two labels is still one run, and in the
+    ledger it would read as two independent fits agreeing on every column --
+    the strongest evidence an audit can show, from a single bitstream. So a
+    label's figures are only news when no other line already holds them.
+    """
+    for row in rows:
+        if row["label"] != entry["label"] and all(
+                row[key] == entry[key] for key in METRIC_KEYS):
+            return row
+    return None
+
+
+def record(directory, ledger, label, allow_duplicate=False):
     """Append one finished fit to the ledger, replacing any earlier line."""
     metrics = build_metrics(directory)
     if metrics is None:
@@ -268,6 +286,14 @@ def record(directory, ledger, label):
         entry[key] = "" if value is None else "%.3f" % value
 
     rows = [row for row in ledger_rows(ledger) if row["label"] != entry["label"]]
+    if not allow_duplicate:
+        twin = same_measurement(entry, rows)
+        if twin is not None:
+            sys.stderr.write("%s already holds this fit's figures: one run "
+                             "recorded twice would look like two. Pass "
+                             "--allow-duplicate to record it anyway.\n"
+                             % twin["label"])
+            return 2
     rows.append(entry)
     write_ledger(ledger, rows)
     print("recorded %s: %s LABs, %s setup, %s pll_hdmi, %s bytes "
@@ -535,6 +561,9 @@ def main(argv=None):
     parser.add_argument("--record", metavar="BUILD_DIR",
                         help="append this build's figures to the ledger")
     parser.add_argument("--label", help="ledger name (default: directory name)")
+    parser.add_argument("--allow-duplicate", action="store_true",
+                        help="with --record, keep a fit whose figures another "
+                             "line already holds")
     parser.add_argument("--check-shipped", action="store_true",
                         help="check the shipped row against the ledger")
     parser.add_argument("--bind-tree", metavar="BUILD_ROOT",
@@ -545,7 +574,8 @@ def main(argv=None):
                         help="print every matching row, not just the summary")
     args = parser.parse_args(argv)
     if args.record:
-        return record(args.record, args.ledger, args.label)
+        return record(args.record, args.ledger, args.label,
+                      args.allow_duplicate)
     if args.bind_tree:
         return bind_tree(args.bind_tree, args.ledger)
     if not os.path.isfile(args.doc):
