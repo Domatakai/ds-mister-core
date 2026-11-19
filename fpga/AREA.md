@@ -2216,10 +2216,14 @@ synthesis off, placement effort 8.0:
 `emu` setup moves 2.192 ns and TNS 19,070.594 in the fit's favour with
 the seed, the switch and the effort unchanged. The seed alone moved setup
 by 0.740 ns on the tree before this one, so 2.192 ns is more than a
-placement roll; it is the write port leaving the path the earlier fits
-identified. That reading is the fit's slacks, not a path listing: this
-Quartus writes no path detail into `NDS.sta.rpt`, so the paths were not
-re-inspected here.
+placement roll. A standalone `quartus_sta` probe of the fit says where it
+went: all 30 of the worst `emu` setup paths end at `arm7|regs`, led by
+`arm7|insn[3]` and `arm7|insn_thumb` into `arm7|regs[6][20]` at -6.715,
+20.789 ns of data delay against the 14.917 ns relationship. None of the
+30 touches the ARM9's register file or `r8u_b`, where the previous fit's
+worst path ended, so the ARM9 write port left the wall -- and the same
+wall now sits on the ARM7, which still writes its register file
+immediately.
 
 Area is close to a wash: one LAB more, 65 spare instead of 66, 935 more
 ALMs and 1,425 fewer registers. The deferred port is 41 flops --
@@ -2227,6 +2231,19 @@ ALMs and 1,425 fewer registers. The deferred port is 41 flops --
 lost 1,466 registers as the decode left the bank. The bitstream is
 54,396 bytes larger, hold is 0.009 ns tighter, the video path improves
 0.022 ns and still misses at -0.042, and the fit took 9:08 longer.
+
+Seed 4 was fitted on this tree as well, because it was the one seed that
+closed the video path on the tree before it. It does not repeat that here:
+
+| seed 4, TDS off | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| seed 4 on this tree | 4,144 | 38,678 | 31,642 | -7.127 | -31,937.036 | +0.245 | -0.337 | 3,732,324 | 53:46 |
+
+Eighteen more LABs, 47 spare instead of 65, and worse on both slacks:
+0.412 ns of `emu` setup and 0.295 ns of the video path. The seed that
+closed the video path on the tree before this one does not close it here,
+which is the sweep's point seen from the other side: a seed's outcome
+belongs to the tree it places, not to the seed. The shipped seed stays 2.
 
 The bench suite was run against this tree before the fit: 47 step(s), 47
 passed, 0 failed.
