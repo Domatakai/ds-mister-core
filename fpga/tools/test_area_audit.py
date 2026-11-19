@@ -232,7 +232,8 @@ def main():
     run(root, "--record", one, "--ledger", "reports/fits.csv")
     rc, out = run(root, "--record", twin, "--ledger", "reports/fits.csv")
     check("one fit captured under a second label is refused",
-          rc == 2 and "already holds this fit's figures" in out, out)
+          rc == 2 and "already holds these figures" in out
+          and "one capture, not two" in out, out)
     check("the refused capture leaves one line",
           len(ledger_of(root)) == 1, ledger_of(root))
 

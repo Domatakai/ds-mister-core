@@ -250,13 +250,14 @@ def qsf_value(qsf, name):
 METRIC_KEYS = COUNTS + SLACKS
 
 
-def same_measurement(entry, rows):
+def same_capture(entry, rows):
     """An existing line that carries exactly the figures this fit measured.
 
-    One finished fit captured under two labels is still one run, and in the
-    ledger it would read as two independent fits agreeing on every column --
-    the strongest evidence an audit can show, from a single bitstream. So a
-    label's figures are only news when no other line already holds them.
+    One capture under two labels is still one capture, and in the ledger it
+    would read as two fits agreeing on every column -- the strongest
+    evidence an audit can show, from one bitstream. The quartus flow is
+    deterministic, so a re-run of one configuration reproduces these figures
+    too; that is still not a second witness, and is refused the same way.
     """
     for row in rows:
         if row["label"] != entry["label"] and all(
@@ -287,12 +288,15 @@ def record(directory, ledger, label, allow_duplicate=False):
 
     rows = [row for row in ledger_rows(ledger) if row["label"] != entry["label"]]
     if not allow_duplicate:
-        twin = same_measurement(entry, rows)
+        twin = same_capture(entry, rows)
         if twin is not None:
-            sys.stderr.write("%s already holds this fit's figures: one run "
-                             "recorded twice would look like two. Pass "
-                             "--allow-duplicate to record it anyway.\n"
-                             % twin["label"])
+            sys.stderr.write("%s already holds these figures for tree %s "
+                             "(seed %s, tds %s, effort %s): that is one "
+                             "capture, not two. Pass --allow-duplicate to "
+                             "record it anyway.\n"
+                             % (twin["label"], twin["tree"],
+                                twin["seed"] or "?", twin["tds"],
+                                twin["effort"] or "?"))
             return 2
     rows.append(entry)
     write_ledger(ledger, rows)
