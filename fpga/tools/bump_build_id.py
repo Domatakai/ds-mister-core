@@ -55,9 +55,9 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
-    from area_audit import tree_id
+    from area_audit import design_files, tree_id
 except ImportError:  # the two tools ship together; a lone copy stamps none
-    tree_id = None
+    design_files = tree_id = None
 
 STAMP = re.compile(r"^\d{6}$")
 
@@ -140,7 +140,9 @@ def record(rbf, stamp):
     data = io.open(rbf, "rb").read()
     # Which design made this bitstream, not just when it was built: a stamp
     # that names only a date cannot say the rbf predates an RTL edit.
-    tree = tree_id(project_dir()) if tree_id is not None else ""
+    tree = ""
+    if tree_id is not None and design_files(project_dir()):
+        tree = tree_id(project_dir())
     lines = [
         "build stamp: %s" % stamp,
         "bitstream: %s" % os.path.basename(rbf),

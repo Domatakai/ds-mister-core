@@ -1049,12 +1049,15 @@ Each line also carries a `tree` fingerprint of the design inputs the fit was
 built from -- `rtl`, `sys`, `NDS.sdc`, `NDS.sv`, `files.qip` and the pin
 assignments in `NDS.qsf`, with the seed, the timing-driven switch and the
 effort left to their own columns, so two seeds fitted from one design share
-an id. `--check-shipped` will not accept a row recorded from another tree:
-the settings identify the build, the fingerprint says what it was a build
-of. `--bind-tree <dir>` fills the column for rows written before it existed
-by reading the build directory each row names, and only when that directory
-still reproduces the row's own figures -- a row whose build is gone stays
-unbound, and the check keeps refusing it.
+an id. The release stamp in `sys/build_id.txt` is left out as well: it is a
+label, not logic, and a bumped date must not retire a row -- the record
+written beside the bitstream names the stamp itself. `--check-shipped` will
+not accept a row recorded from another tree: the settings identify the
+build, the fingerprint says what it was a build of. `--bind-tree <dir>`
+fills the column for rows written before it existed by reading the build
+directory each row names, and only when that directory still reproduces the
+row's own figures -- a row whose build is gone stays unbound, and the check
+keeps refusing it.
 
 `--record` also refuses a fit whose figures a line already holds under
 another label: one run captured twice would read as two independent fits

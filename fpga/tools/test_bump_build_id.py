@@ -63,6 +63,8 @@ def tree(stamp="261108", build_date="261108"):
     write(os.path.join(root, "README.md"),
           b"A clean document." + bytes([10]))
     set_pin(root, stamp)
+    write(os.path.join(root, "sys", "design.sv"),
+          b"module design; endmodule" + bytes([10]))
     write(os.path.join(root, "build_id.v"),
           ('`define BUILD_DATE "%s"\n' % build_date).encode("utf-8"))
     write(os.path.join(root, "output_files", "NDS.rbf"), RBF)
@@ -532,11 +534,8 @@ def main():
               rc == 0 and len(stamped) == 12 and "tree: " + stamped in out,
               out)
 
-        write(os.path.join(root, "sys", "build_id.txt"),
-              ("# pinned for the release\r\n"
-               "# moved by tools/bump_build_id.py\r\n"
-               "# one more line moves the design\r\n261108\r\n")
-              .encode("utf-8"))
+        write(os.path.join(root, "sys", "design.sv"),
+              b"module design (input a); endmodule" + bytes([10]))
         rc, out = run(root, "--verify")
         check("verify catches a design changed since the record",
               rc == 1 and "record holds tree %s" % stamped in out

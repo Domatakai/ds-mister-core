@@ -146,6 +146,11 @@ def ledger_metrics(path):
 
 DESIGN_FILES = ("NDS.qsf", "NDS.sdc", "NDS.sv", "files.qip")
 DESIGN_DIRS = ("rtl", "sys")
+# The release stamp is a label baked into one constant, not logic. Counting
+# it would retire every row whenever the date in the core is bumped, and
+# force a re-fit per release for a metadata edit; `NDS.rbf.stamp` records
+# the stamp itself, so it is checked where it belongs.
+DESIGN_SKIP = ("sys/build_id.txt",)
 
 
 def normalised(path):
@@ -171,7 +176,10 @@ def design_files(folder):
         for root, folders, files in os.walk(os.path.join(folder, name)):
             folders.sort()
             for entry in sorted(files):
-                found.append(os.path.join(root, entry))
+                path = os.path.join(root, entry)
+                rel = os.path.relpath(path, folder).replace(os.sep, "/")
+                if rel not in DESIGN_SKIP:
+                    found.append(path)
     return sorted(found, key=lambda path: os.path.relpath(path, folder))
 
 
@@ -210,8 +218,8 @@ def tree_id(folder):
     is what lets a row say which tree produced it, so the shipped-row check
     can refuse a row that is evidence for a different design. Paths go in
     with the contents, so a renamed module and an edited one are both a
-    different tree; the seed and the effort do not, since those are rows of
-    their own.
+    different tree; the seed, the effort and the release stamp do not,
+    since a label must not retire a measurement.
     """
     digest = hashlib.sha256()
     for path in design_files(folder):

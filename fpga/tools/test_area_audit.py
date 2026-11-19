@@ -380,6 +380,25 @@ def main():
     check("a seed choice and a .qsf comment are not a new tree",
           rows[0]["tree"] == rows[1]["tree"], rows)
 
+    root = new()
+    one = fit(os.path.join(root, "fits", "one"))
+    two = fit(os.path.join(root, "fits", "two"), labs="4,096")
+    write(root, "fits/one/rtl/core.sv", "module core; endmodule\n")
+    write(root, "fits/two/rtl/core.sv", "module core; endmodule\n")
+    write(root, "fits/one/sys/build_id.txt", "# pin\n261108\n")
+    write(root, "fits/two/sys/build_id.txt", "# pin\n261201\n")
+    run(root, "--record", one, "--ledger", "reports/fits.csv")
+    run(root, "--record", two, "--ledger", "reports/fits.csv")
+    rows = ledger_of(root)
+    check("a moved release stamp is not a new tree",
+          rows[0]["tree"] == rows[1]["tree"], rows)
+
+    write(root, "fits/two/sys/another.sv", "module another; endmodule\n")
+    run(root, "--record", two, "--ledger", "reports/fits.csv")
+    rows = ledger_of(root)
+    check("any other sys file is part of the tree",
+          rows[0]["tree"] != rows[1]["tree"], rows)
+
     if failures:
         print("%d of %d cases failed" % (len(failures), count))
         print("test_area_audit: FAIL")
