@@ -1059,7 +1059,9 @@ unbound, and the check keeps refusing it.
 `--record` also refuses a fit whose figures a line already holds under
 another label: one run captured twice would read as two independent fits
 agreeing on every column, which is the strongest evidence the audit shows,
-from one bitstream. `--allow-duplicate` records it anyway.
+from one bitstream. A re-run of one configuration reproduces those figures
+because the flow is deterministic, so it is refused for the same reason.
+`--allow-duplicate` records it anyway.
 
 Both sides of that gate were run for real on 2026-11-10, from a
 tree staged with `git archive HEAD:fpga`. The clean tree built with
