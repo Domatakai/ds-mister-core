@@ -24,6 +24,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOL = os.path.join(HERE, "bump_build_id.py")
+AUDIT_TOOL = os.path.join(HERE, "area_audit.py")
 DOCS_TOOL = os.path.join(HERE, "check_docs.py")
 BUILD_BAT = os.path.join(HERE, os.pardir, "build.bat")
 RBF = bytes(range(256))
@@ -56,6 +57,7 @@ def tree(stamp="261108", build_date="261108"):
     for name in ("tools", "sys", "output_files"):
         os.makedirs(os.path.join(root, name))
     shutil.copy2(TOOL, os.path.join(root, "tools", "bump_build_id.py"))
+    shutil.copy2(AUDIT_TOOL, os.path.join(root, "tools", "area_audit.py"))
     shutil.copy2(DOCS_TOOL, os.path.join(root, "tools",
                             "check_docs.py"))
     write(os.path.join(root, "README.md"),
@@ -522,6 +524,23 @@ def main():
         rc, out = run(root, "--verify")
         check("verify accepts a matching record",
               rc == 0 and "matches NDS.rbf" in out, out)
+
+        root = new()
+        rc, out = run(root, "--record")
+        stamped = fields(root).get("tree", "")
+        check("record stamps the tree id",
+              rc == 0 and len(stamped) == 12 and "tree: " + stamped in out,
+              out)
+
+        write(os.path.join(root, "sys", "build_id.txt"),
+              ("# pinned for the release\r\n"
+               "# moved by tools/bump_build_id.py\r\n"
+               "# one more line moves the design\r\n261108\r\n")
+              .encode("utf-8"))
+        rc, out = run(root, "--verify")
+        check("verify catches a design changed since the record",
+              rc == 1 and "record holds tree %s" % stamped in out
+              and "rebuild before shipping" in out, out)
 
         root = new()
         run(root, "--record")

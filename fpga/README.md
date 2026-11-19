@@ -957,9 +957,12 @@ first. It moves the pinned build stamp -- today's date unless you pass YYMMDD
 same fit. After the build, `python fpga/tools/bump_build_id.py --record` writes
 `output_files/NDS.rbf.stamp` beside the bitstream with the stamp, its size and
 SHA-256; it refuses when the bitstream predates `build_id.v` or when
-that file disagrees with the pin. `--verify` re-reads that record against the
-bitstream and the current pin, so a record left behind by an earlier build
-cannot vouch for the file you are about to copy.
+that file disagrees with the pin. The record also carries `tree:` --
+the same design fingerprint the fit ledger uses -- so `--verify` refuses
+a bitstream whose design has changed since it was recorded. `--verify`
+re-reads that record against the bitstream and the current pin, so a
+record left behind by an earlier build cannot vouch for the file you are
+about to copy.
 
 Release checklist:
 

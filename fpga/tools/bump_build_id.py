@@ -12,7 +12,10 @@ After the build, record which stamp the bitstream carries:
 
   python fpga/tools/bump_build_id.py --record
 
-That writes output_files/NDS.rbf.stamp with the stamp, its size and SHA-256.
+That writes output_files/NDS.rbf.stamp with the stamp, its size, its
+SHA-256 and the `tree` fingerprint of the design that produced it (the
+same id the fit ledger carries), so `--verify` can refuse a bitstream
+whose design has changed since it was recorded.
 It refuses when the bitstream is older than the stamp or when build_id.v
 disagrees with it. Before copying a bitstream to a card, check a record
 that is already there against the file and the current pin:
@@ -46,7 +49,15 @@ import hashlib
 import io
 import os
 import re
+import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+try:
+    from area_audit import tree_id
+except ImportError:  # the two tools ship together; a lone copy stamps none
+    tree_id = None
 
 STAMP = re.compile(r"^\d{6}$")
 
@@ -127,13 +138,18 @@ def record(rbf, stamp):
                   % os.path.basename(rbf))
             return 1
     data = io.open(rbf, "rb").read()
+    # Which design made this bitstream, not just when it was built: a stamp
+    # that names only a date cannot say the rbf predates an RTL edit.
+    tree = tree_id(project_dir()) if tree_id is not None else ""
     lines = [
         "build stamp: %s" % stamp,
         "bitstream: %s" % os.path.basename(rbf),
         "bytes: %d" % len(data),
         "sha256: %s" % hashlib.sha256(data).hexdigest(),
-        "recorded: %s" % time.strftime("%Y-%m-%d %H:%M:%S"),
     ]
+    if tree:
+        lines.append("tree: %s" % tree)
+    lines.append("recorded: %s" % time.strftime("%Y-%m-%d %H:%M:%S"))
     payload = "\r\n".join(lines) + "\r\n"
     io.open(rbf + ".stamp", "wb").write(payload.encode("utf-8"))
     print("recorded %s -> %s"
@@ -176,6 +192,12 @@ def verify(rbf, stamp, strict=False, max_age=None):
         problems.append("record holds sha256 %s, the bitstream hashes %s"
                         % ((fields.get("sha256") or "none")[:12],
                            digest[:12]))
+    if fields.get("tree") and tree_id is not None:
+        current = tree_id(project_dir())
+        if current != fields["tree"]:
+            problems.append("record holds tree %s, the design is now %s: "
+                            "rebuild before shipping this bitstream"
+                            % (fields["tree"], current))
     if max_age is not None:
         when, written = written_time(side)
         seconds = int(time.time() - written)

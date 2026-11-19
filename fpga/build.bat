@@ -172,7 +172,7 @@ echo Optional BIOS files go to E:\BIOS\ (bios7.bin + bios9.bin).
 echo.
 if not exist "output_files\NDS.rbf.stamp" goto :finished
 echo Record for output_files\NDS.rbf:
-findstr /b /c:"build stamp:" /c:"sha256:" "output_files\NDS.rbf.stamp"
+findstr /b /c:"build stamp:" /c:"sha256:" /c:"tree:" "output_files\NDS.rbf.stamp"
 python "tools\bump_build_id.py" --age
 if errorlevel 9009 findstr /b /c:"recorded:" "output_files\NDS.rbf.stamp"
 :finished
