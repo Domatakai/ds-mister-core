@@ -196,6 +196,15 @@ reg        wb_en;
 reg  [4:0] wb_reg;
 reg [31:0] wb_val;
 
+// The deferred register write. The value is captured in the state that
+// computed it and committed at the next edge, so the register file's
+// write port is driven by flops instead of by the shifter and the
+// operand mux behind it.
+reg        pw_en;
+reg  [4:0] pw_sel;
+reg [31:0] pw_val;
+reg  [2:0] pw_mode;
+
 // swap
 reg        swap_en, swap_phase;
 reg [31:0] swap_src, swap_val;
@@ -366,6 +375,19 @@ endfunction
 		else if ((sel) == 5'd14) begin lr_v <= 1'b1; lr_m <= 3'd0; lr_val <= (val); end \
 		else if ((sel) >= 5'd8 && (sel) <= 5'd12) begin r8u_v <= 1'b1; r8u_i <= bidx(sel); r8u_val <= (val); end \
 		else                                   regs[(sel)] <= (val); \
+	end
+
+// The deferred form of the same write, for the single-register paths.
+// Every site that uses it ends in `state <= S_FETCH`, and the fetch
+// state reads no general register, so the value is committed before the
+// next instruction decodes: the register is not written a cycle late, it
+// is written by a flop.
+`define WREG_P(sel, val) \
+	begin \
+		pw_en   <= 1'b1; \
+		pw_sel  <= (sel); \
+		pw_val  <= (val); \
+		pw_mode <= cur_m; \
 	end
 
 // FIQ swaps r8..r12 with the user bank on entry and exit. `nm` is the mode
@@ -891,12 +913,27 @@ always @(posedge clk) begin
 		swap_en  <= 1'b0;
 		swap_phase <= 1'b0;
 		wb_en    <= 1'b0;
+		pw_en    <= 1'b0;
 		dw_run   <= 1'b0;
 		dw_phase <= 1'b0;
 		f_valid  <= 1'b0;
 		bl_pending <= 1'b0;
 		hle_go   <= 1'b0;
 	end else if (ce) begin
+		// commit the deferred write: the value this edge, the bank it was
+		// captured in, and the readers that take a pending value
+		if (pw_en) begin
+			regs[pw_sel] <= pw_val;
+			if (pw_sel == 5'd13) r13_b[pw_mode] <= pw_val;
+			if (pw_sel == 5'd14) begin
+				lr_v <= 1'b1; lr_m <= pw_mode; lr_val <= pw_val;
+			end
+			if (pw_sel >= 5'd8 && pw_sel <= 5'd12) begin
+				if (pw_mode == 3'd1) r8f_b[bidx(pw_sel)] <= pw_val;
+				else begin r8u_v <= 1'b1; r8u_i <= bidx(pw_sel); r8u_val <= pw_val; end
+			end
+			pw_en <= 1'b0;
+		end
 		case (state)
 
 		//--------------------------------------------------------
@@ -1040,7 +1077,7 @@ always @(posedge clk) begin
 					n <= t32b[31];
 					z <= (t32b == 32'd0);
 					c <= c_tmp;
-					`WREG(tidx, t32b)
+					`WREG_P(tidx, t32b)
 					state <= S_FETCH;
 
 				end else if (insn[15:13] == 3'b000) begin
@@ -1056,7 +1093,7 @@ always @(posedge clk) begin
 					z <= (wide[31:0] == 32'd0);
 					c <= wide[32];
 					v <= v_tmp;
-					`WREG(tidx, wide[31:0])
+					`WREG_P(tidx, wide[31:0])
 					state <= S_FETCH;
 
 				end else if (insn[15:13] == 3'b001) begin
@@ -1068,7 +1105,7 @@ always @(posedge clk) begin
 					2'b00: begin                       // MOV
 						n <= insn[7];
 						z <= (t32b == 32'd0);
-						`WREG(tidx, t32b)
+						`WREG_P(tidx, t32b)
 					end
 					2'b01: begin                       // CMP
 						wide = {1'b0, t32} - {1'b0, t32b};
@@ -1079,13 +1116,13 @@ always @(posedge clk) begin
 						wide = {1'b0, t32} + {1'b0, t32b};
 						n <= wide[31]; z <= (wide[31:0] == 32'd0); c <= wide[32];
 						v <= (t32[31] == t32b[31]) & (wide[31] != t32[31]);
-						`WREG(tidx, wide[31:0])
+						`WREG_P(tidx, wide[31:0])
 					end
 					default: begin                     // SUB
 						wide = {1'b0, t32} - {1'b0, t32b};
 						n <= wide[31]; z <= (wide[31:0] == 32'd0); c <= wide[32];
 						v <= (t32[31] ^ t32b[31]) & (t32[31] ^ wide[31]);
-						`WREG(tidx, wide[31:0])
+						`WREG_P(tidx, wide[31:0])
 					end
 					endcase
 					state <= S_FETCH;
@@ -1178,7 +1215,7 @@ always @(posedge clk) begin
 					endcase
 					if (!(insn[9:6] == 4'h8 || insn[9:6] == 4'hA ||
 					      insn[9:6] == 4'hB))
-						`WREG(tidx, t32c)
+						`WREG_P(tidx, t32c)
 					state <= S_FETCH;
 
 				end else if (insn[15:10] == 6'b010001) begin
@@ -1192,7 +1229,7 @@ always @(posedge clk) begin
 						if (tidx == 5'd15) begin
 							pc <= t32c; state <= S_FETCH;
 						end else begin
-							`WREG(tidx, t32c)
+							`WREG_P(tidx, t32c)
 							state <= S_FETCH;
 						end
 					end
@@ -1204,7 +1241,7 @@ always @(posedge clk) begin
 					end
 					2'b10: begin   // MOV (no flags)
 						if (tidx == 5'd15) pc <= t32;
-						else               `WREG(tidx, t32)
+						else               `WREG_P(tidx, t32)
 						state <= S_FETCH;
 					end
 					default: begin // BX
@@ -1284,7 +1321,7 @@ always @(posedge clk) begin
 				end else if (insn[15:12] == 4'b1010) begin
 					// ---- 11. ADD Rd, PC/SP, #imm ----
 					t32b = insn[11] ? r13_b[cur_m] : ((pc + 32'd2) & 32'hFFFF_FFFC);
-					`WREG({1'b0, insn[10:8]}, t32b + {22'd0, insn[7:0], 2'b00})
+					`WREG_P({1'b0, insn[10:8]}, t32b + {22'd0, insn[7:0], 2'b00})
 					state <= S_FETCH;
 
 				end else if (insn[15:8] == 8'b10110000) begin
@@ -1485,7 +1522,7 @@ always @(posedge clk) begin
 									n <= t64[31];
 									z <= (t64[31:0] == 32'd0);
 								end
-								`WREG(insn[19:16], t64[31:0])
+								`WREG_P(insn[19:16], t64[31:0])
 								state <= S_FETCH;
 							end
 						end
@@ -1562,7 +1599,7 @@ always @(posedge clk) begin
 							end else if (insn[23:20] == 4'b0110 && insn[11:8] == 4'hF &&
 							             insn[7:4] == 4'b0001) begin
 								// ---- CLZ (ARMv5T) ----
-								`WREG(insn[15:12], {26'd0, count_lead_zeros(rp_b)})
+								`WREG_P(insn[15:12], {26'd0, count_lead_zeros(rp_b)})
 								state <= S_FETCH;
 							end else
 								`UND
@@ -1599,7 +1636,7 @@ always @(posedge clk) begin
 								if (v_tmp) t32c = t32[31] ? 32'h8000_0000 : 32'h7FFF_FFFF;
 								else       t32c = wide[31:0];
 								q <= q | v_tmp | c_tmp;
-								`WREG(insn[15:12], t32c)
+								`WREG_P(insn[15:12], t32c)
 								state <= S_FETCH;
 							end else
 								`UND
@@ -1633,7 +1670,7 @@ always @(posedge clk) begin
 							// result just wraps.
 							t64  = $signed(t32[15:0]) * $signed(t32b[15:0]);
 							t32c = t64[31:0] + rp_d;
-							`WREG(insn[19:16], t32c)
+							`WREG_P(insn[19:16], t32c)
 							state <= S_FETCH;
 						end
 						4'h2: begin
@@ -1642,8 +1679,8 @@ always @(posedge clk) begin
 							// Rd is bits 19:16 and SMLAWy accumulates from 15:12.
 							t64  = $signed(t32e) * $signed(t32b[15:0]);
 							t32c = t64[47:16];
-							if (insn[5]) `WREG(insn[19:16], t32c)
-							else         `WREG(insn[19:16], t32c + rp_d)
+							if (insn[5]) `WREG_P(insn[19:16], t32c)
+							else         `WREG_P(insn[19:16], t32c + rp_d)
 							state <= S_FETCH;
 						end
 						4'h4: begin
@@ -1660,7 +1697,7 @@ always @(posedge clk) begin
 						4'h6: begin
 							// SMULxy: Rd (bits 19:16) = Rm_x * Rs_y
 							t64 = $signed(t32[15:0]) * $signed(t32b[15:0]);
-							`WREG(insn[19:16], t64[31:0])
+							`WREG_P(insn[19:16], t64[31:0])
 							state <= S_FETCH;
 						end
 						default: `UND
@@ -1672,7 +1709,7 @@ always @(posedge clk) begin
 					             (insn[21:20] == 2'b00 || insn[21:20] == 2'b10)) begin
 						// ---- MRS / MSR (register and immediate) ----
 						if (insn[21:20] == 2'b00) begin
-							`WREG(insn[15:12], insn[22] ? cur_spsr() : cpsr_w)
+							`WREG_P(insn[15:12], insn[22] ? cur_spsr() : cpsr_w)
 						end else
 							psr_write(rp_b, insn[19:16], insn[22]);
 						state <= S_FETCH;
@@ -1707,12 +1744,12 @@ always @(posedge clk) begin
 								z <= (t32 == 32'd0);
 								c <= dp_c;
 								v <= dp_v;
-								`WREG(tidx, t32)
+								`WREG_P(tidx, t32)
 								state <= S_FETCH;
 							end
 						end else begin
 							if (tidx == 5'd15) pc <= t32;
-							else               `WREG(tidx, t32)
+							else               `WREG_P(tidx, t32)
 							state <= S_FETCH;
 						end
 					end
@@ -1779,7 +1816,7 @@ always @(posedge clk) begin
 							// MRC: c0 is the identification space (read
 							// only) and c7 is write-only maintenance, both
 							// of which `cprd` above already accounts for
-							`WREG(insn[15:12], cprd)
+							`WREG_P(insn[15:12], cprd)
 						end else begin
 							// MCR: keep the register whole. A write to the
 							// read-only c0 is dropped, c1 opcode_2 1 is the
