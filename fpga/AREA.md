@@ -2133,7 +2133,7 @@ which copies the `regs` shadow in and never saw an LDM or STM with S=1.
 | seed 2, TDS off | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
 |---|---|---|---|---|---|---|---|---|---|
 | link register captured | 4,152 | 38,243 | 32,551 | -8.639 | -43,118.502 | +0.254 | +0.016 | 3,707,912 | 52:01 |
-| both bank writes captured | 4,125 | 37,668 | 33,043 | -8.907 | -44,808.642 | +0.254 | -0.064 | 3,695,232 | 1:03:38 |
+| both bank writes captured, immediate port | 4,125 | 37,668 | 33,043 | -8.907 | -44,808.642 | +0.254 | -0.064 | 3,695,232 | 1:03:38 |
 
 Both paths the change was reached for are gone: of the 30 worst `emu` setup
 paths on the new fit, none ends at `r8u_b` or `r14_b`, where the previous
@@ -2162,9 +2162,79 @@ more registers and a 12,680-byte smaller bitstream. The video path moved
 from +0.016 to -0.064 on the same `ascal|o_vcpt_pre3` endpoints, so seed 2
 no longer closes it on this tree. Neither number is attributable to the
 captures at this fill -- the netlist changed and the seed places it again --
-but both are what the shipped build now does, and the LAB margin is the one
+but both are what that build does, and the LAB margin is the one
 that decides whether the next change fits at all. The bench suite is 47
 step(s), 47 passed, 0 failed with both captures in.
+
+### Seeds on the bank-write tree (2026-11-18)
+
+Four seeds fitted from the tree that carries both bank writes, at the
+shipped timing switch and placement effort, so the rows differ in
+nothing but the seed:
+
+| seed | LABs / 4,191 | ALMs | registers | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 4,123 | 37,711 | 32,966 | -8.694 | -45,129.477 | +0.239 | -0.313 | 3,714,024 | 47:39 |
+| 2 (shipped) | 4,125 | 37,668 | 33,043 | -8.907 | -44,808.642 | +0.254 | -0.064 | 3,695,232 | 1:03:38 |
+| 4 | 4,140 | 37,657 | 33,002 | -8.167 | -48,683.455 | +0.248 | +0.075 | 3,719,728 | 55:54 |
+| 5 | 4,129 | 37,731 | 33,036 | -8.426 | -47,619.350 | +0.252 | -0.182 | 3,695,044 | 1:02:26 |
+
+All four route. The `emu` domain fails at every seed, between -8.167 and
+-8.907; what its worst path is was measured at seeds 2 and 6 above, and
+nothing here moves it, because the seed cannot move a wall that the
+netlist built. The seed does move the number by 0.740 ns, which is the
+size of the effect a single fit would otherwise attribute to the change
+that shares its tree.
+
+Area moves by 17 LABs across the four (4,123 to 4,140), less than the 66
+LABs of headroom the seed-2 fit leaves. The seed that uses the most of
+it -- 4 -- is also the only one that closes the video path, at +0.075
+where seed 2 on that tree sits at -0.064: 15 LABs and 0.740 ns of `emu`
+setup for a path that clears instead of missing. That is not a free
+switch of the shipped seed, because the release was measured at seed 2
+and a shipped-seed change has to be run through the release path, not
+read off this table.
+
+The wall times spread from 47:39 to 1:03:38 for the same work, so they
+are machine load rather than the seed; the counts and the slacks are the
+seed's.
+
+### Driving the write port from flops (2026-11-18)
+
+The `emu` domain failed on paths into the register file's write port, so
+the single-register decode sites now capture their value and the port is
+committed from flops on the next edge. Every converted site ends in
+`S_FETCH`, which reads no general register, so the value is in `regs`
+before the next instruction decodes. Both fits are seed 2, timing-driven
+synthesis off, placement effort 8.0:
+
+| seed 2, TDS off | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| both bank writes captured, immediate port | 4,125 | 37,668 | 33,043 | -8.907 | -44,808.642 | +0.254 | -0.064 | 3,695,232 | 1:03:38 |
+| both bank writes captured | 4,126 | 38,603 | 31,618 | -6.715 | -25,738.048 | +0.245 | -0.042 | 3,749,628 | 1:12:46 |
+
+`emu` setup moves 2.192 ns and TNS 19,070.594 in the fit's favour with
+the seed, the switch and the effort unchanged. The seed alone moved setup
+by 0.740 ns on the tree before this one, so 2.192 ns is more than a
+placement roll; it is the write port leaving the path the earlier fits
+identified. That reading is the fit's slacks, not a path listing: this
+Quartus writes no path detail into `NDS.sta.rpt`, so the paths were not
+re-inspected here.
+
+Area is close to a wash: one LAB more, 65 spare instead of 66, 935 more
+ALMs and 1,425 fewer registers. The deferred port is 41 flops --
+`pw_en`, `pw_sel`, `pw_val` and `pw_mode` -- so the rest of the design
+lost 1,466 registers as the decode left the bank. The bitstream is
+54,396 bytes larger, hold is 0.009 ns tighter, the video path improves
+0.022 ns and still misses at -0.042, and the fit took 9:08 longer.
+
+The bench suite was run against this tree before the fit: 47 step(s), 47
+passed, 0 failed.
+
+This is the tree the core ships from now. The `(shipped)` tags in the
+tables above name the settings -- seed 2, timing-driven synthesis off,
+effort 8.0 -- which have not changed; the figures beside them are the
+tree before this change.
 
 ### Placement effort above 8.0 (2026-11-18)
 
