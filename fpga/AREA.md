@@ -2390,6 +2390,63 @@ Area moves by 29 LABs across the four, against 162 spare. The wall
 times spread from 40:56 to 42:16 for the same work, so they are machine
 load rather than the seed; the counts and the slacks are the seed's.
 
+### MUL, MLA and the Thumb MUL, split across two states (2026-11-20)
+
+The long forms' two states were extended to the rest of the multiply
+space: MUL and MLA in the ARM encodings, and the Thumb ALU's MUL, which
+still computed their product in the cycle that decoded and wrote it. The
+same states carry them now -- `ml_single` selects a 32-bit result from
+`ml_a * ml_b`, `ml_rd` names the one destination, and the flags come from
+the low word. The bench suite ran first: 47 step(s), 47 passed.
+
+| seed 2, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| both bank writes captured | 4,029 | 34,353 | 31,675 | -4.375 | -12,115.231 | +0.250 | +0.316 | 3,650,576 | 40:56 |
+| 32-bit multiplies split | 4,036 | 34,171 | 31,454 | -4.656 | -17,557.912 | +0.249 | +0.079 | 3,664,300 | 49:02 |
+
+`emu` gains 0.281 ns, and the ARM9 stops limiting the domain at all:
+the probe's worst paths now start at `cart_slot|hdr[45][6]` and run into
+`arm7_core|Mux3~2`, and no multiply is among the four it reports. Area
+comes back as well, 182 ALMs and 221 registers of it, for 7 LABs.
+
+The video path gives back 0.237 ns (to +0.079), TNS 5,442 and the
+bitstream 13,724 bytes, and `emu` still fails. That is the seed-1 trade
+and the condition latch's trade a third time: margin on the path the
+release is timed on is not spent on a gain that is not a fix. It was
+reverted; the split belongs with whatever next frees the video path
+rather than ahead of it.
+
+### Latching the condition (2026-11-20)
+
+The probe on the split-multiply tree named the condition check as the
+worst `emu` path: `n` into the condition function, its mux, and then the
+whole decode cone it gates. Latching the answer where the instruction is
+fetched -- `cond_r`, taken from the same word the instruction comes from,
+and tested by the decode instead of computed in it -- removes that path
+outright. It is also the change that does not pay:
+
+| seed 2, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| both bank writes captured | 4,029 | 34,353 | 31,675 | -4.375 | -12,115.231 | +0.250 | +0.316 | 3,650,576 | 40:56 |
+| condition latched at fetch | 4,036 | 34,425 | 31,982 | -4.323 | -13,890.762 | +0.247 | +0.276 | 3,655,488 | 52:32 |
+
+0.052 ns of `emu` setup, for 1,775.531 of TNS, 0.040 ns of video margin,
+7 LABs, 72 ALMs, 307 registers and 4,912 bytes. `emu` fails either way
+and `pll_hdmi` is the path the release is timed on, so this is the seed-1
+trade again: a number that is not a fix, paid for on the limit. It was
+reverted.
+
+The probe on that fit also says the flagged path was not the wall by
+itself. The new worst four are all between -4.16 and -4.32 and all start
+at `blk_list`: bit 0 into the encoder that produces `blk_idx` (fanout 110
+and 129 on its two cells), out through the register read mux into `dp_a`,
+and into a register at the core's edge -- 18.396 ns of data delay in 10
+levels for the first, and -4.211, -4.184 and -4.161 for the next three
+from `blk_list[4]` and `blk_list[1]`. So the domain is limited by a
+cluster that one deep path used to hide, and the list walk is where the
+cluster sits: a 16-bit register into a lowest-set-bit encoder that drives
+a read-port index.
+
 ### Placement effort above 8.0 (2026-11-18)
 
 `PLACEMENT_EFFORT_MULTIPLIER` was swept up from the shipped 8.0 at seed 2,
