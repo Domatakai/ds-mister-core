@@ -205,6 +205,19 @@ reg  [4:0] pw_sel;
 reg [31:0] pw_val;
 reg  [2:0] pw_mode;
 
+// The long multiply, in three pieces. Read, a 32x32 product and a 64-bit
+// accumulate in one S_EXEC cycle was the domain's worst path: 19.324 ns
+// against 14.917, from a bit of `regs` through the read port, the
+// multiplier, a DSP carry chain and a 64-bit adder into the write port,
+// and on into the read-through mux of the register it had just written.
+// The operands are captured where the instruction decodes, S_ML1 latches
+// the product and S_ML2 adds the accumulator and writes both halves.
+reg        ml_half;            // 16x16 signed halves (SMLALxy)
+reg        ml_acc;             // add {ml_ah, ml_al}
+reg        ml_flags;           // set N and Z from the 64-bit result
+reg [31:0] ml_a, ml_b, ml_al, ml_ah;
+reg [63:0] ml_p;
+
 // swap
 reg        swap_en, swap_phase;
 reg [31:0] swap_src, swap_val;
@@ -229,7 +242,9 @@ localparam S_RST  = 4'd0,
            S_MW   = 4'd5,
            S_BLK  = 4'd6,
            S_HALT = 4'd7,
-           S_SWI  = 4'd8;   // a BIOS call, running on the HLE bank
+           S_SWI  = 4'd8,   // a BIOS call, running on the HLE bank
+           S_ML1  = 4'd9,   // long multiply: the product
+           S_ML2  = 4'd10;  // and the 64-bit accumulate and write
 reg [3:0] state;
 
 // BIOS SWI hand-off (see swi_hle and swi_share): the core traps the call,
@@ -1501,19 +1516,14 @@ always @(posedge clk) begin
 								// ---- long multiply: bit 23 separates UMULL/UMLAL/
 								// SMULL/SMLAL from MUL/MLA, and only these four set
 								// the flags (from the whole 64-bit result)
-								t32e = rp_b;
-								t32f = rp_c;
-								if (insn[22]) t64 = $signed(t32e) * $signed(t32f);
-								else          t64 = {32'd0, t32e} * {32'd0, t32f};
-								if (insn[21])
-									t64 = t64 + {rp_a, rp_d};
-								if (insn[20]) begin
-									n <= t64[63];
-									z <= (t64 == 64'd0);
-								end
-								`WREG(insn[15:12], t64[31:0])
-								`WREG(insn[19:16], t64[63:32])
-								state <= S_FETCH;
+								ml_half  <= 1'b0;
+								ml_acc   <= insn[21];
+								ml_flags <= insn[20];
+								ml_a     <= rp_b;          // Rm
+								ml_b     <= rp_c;          // Rs
+								ml_al    <= rp_d;          // RdLo's old value
+								ml_ah    <= rp_a;          // RdHi's old value
+								state    <= S_ML1;
 							end else begin
 								// ---- MUL / MLA ----
 								t64 = rp_b * rp_c;
@@ -1686,13 +1696,14 @@ always @(posedge clk) begin
 						4'h4: begin
 							// SMLALxy: the 64-bit accumulate. It is the one media
 							// instruction that touches flags (N and Z).
-							t64 = $signed(t32[15:0]) * $signed(t32b[15:0]);
-							t64 = t64 + {rp_a, rp_d};
-							n <= t64[63];
-							z <= (t64 == 64'd0);
-							`WREG(insn[15:12], t64[31:0])
-							`WREG(insn[19:16], t64[63:32])
-							state <= S_FETCH;
+							ml_half  <= 1'b1;
+							ml_acc   <= 1'b1;
+							ml_flags <= 1'b1;
+							ml_a     <= t32;           // Rm's selected half
+							ml_b     <= t32b;          // Rs's selected half
+							ml_al    <= rp_d;
+							ml_ah    <= rp_a;
+							state    <= S_ML1;
 						end
 						4'h6: begin
 							// SMULxy: Rd (bits 19:16) = Rm_x * Rs_y
@@ -1998,6 +2009,35 @@ always @(posedge clk) begin
 		//--------------------------------------------------------
 		// block transfer beats
 		//--------------------------------------------------------
+		//--------------------------------------------------------
+		// long multiply, in two cycles: the product,
+		//--------------------------------------------------------
+		S_ML1: begin
+			if (ml_half)
+				t64 = $signed(ml_a[15:0]) * $signed(ml_b[15:0]);
+			else if (insn[22])
+				t64 = $signed(ml_a) * $signed(ml_b);
+			else
+				t64 = {32'd0, ml_a} * {32'd0, ml_b};
+			ml_p  <= t64;
+			state <= S_ML2;
+		end
+
+		//--------------------------------------------------------
+		// ... and the accumulate and the two writes
+		//--------------------------------------------------------
+		S_ML2: begin
+			t64 = ml_p;
+			if (ml_acc) t64 = t64 + {ml_ah, ml_al};
+			if (ml_flags) begin
+				n <= t64[63];
+				z <= (t64 == 64'd0);
+			end
+			`WREG(insn[15:12], t64[31:0])
+			`WREG(insn[19:16], t64[63:32])
+			state <= S_FETCH;
+		end
+
 		S_BLK: begin
 			if (blk_list == 16'd0) begin
 				if (wb_en && !blk_pc_hit) `WREG(wb_reg, wb_val)

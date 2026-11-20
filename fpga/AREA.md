@@ -2272,7 +2272,7 @@ timing-driven synthesis off, placement effort 8.0:
 | seed 2, TDS off | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
 |---|---|---|---|---|---|---|---|---|---|
 | ARM9 port from flops, ARM7 immediate | 4,126 | 38,603 | 31,618 | -6.715 | -25,738.048 | +0.245 | -0.042 | 3,749,628 | 1:12:46 |
-| both bank writes captured | 4,105 | 37,529 | 31,713 | -5.207 | -18,145.820 | +0.255 | +0.109 | 3,726,228 | 49:07 |
+| both bank writes captured, ARM7 port from flops | 4,105 | 37,529 | 31,713 | -5.207 | -18,145.820 | +0.255 | +0.109 | 3,726,228 | 49:07 |
 
 Every column moves the right way this time: 1.508 ns of `emu` setup,
 7,592.228 of TNS, 21 LABs (86 spare of 4,191 instead of 65), 1,074 ALMs,
@@ -2301,8 +2301,57 @@ write port is nowhere in the worst 30.
 The bench suite was run against this tree before the fit: 47 step(s), 47
 passed, 0 failed.
 
-This is the tree the core ships from now.
+That tree shipped for one fit; the ARM9's long multiply came next.
 
+
+### The ARM9's long multiply, split across two states (2026-11-20)
+
+The probe on the ARM7-port tree left its worst `emu` path on the ARM9's
+long multiply: `regs[4][15]` through the `rp_c` read port into
+`Mult1|ay[15]`, out through a DSP carry chain and the 64-bit `Add45`
+chain into two write muxes, and on into the read-through mux of the
+register it had just written -- 19.324 ns of data delay against a
+14.917 ns relationship, 47 cells in 10 levels. Three quarters of that
+is one cycle doing four things: read, a 32x32 product, a 64-bit
+accumulate and two writes.
+
+Both long-multiply groups -- UMULL/UMLAL/SMULL/SMLAL under `insn[23]`,
+and SMLALxy -- now capture their operands where the instruction
+decodes, `S_ML1` latches the product into `ml_p`, and `S_ML2` adds the
+accumulator, sets N and Z and writes both halves. Real ARM9 silicon
+takes five to six cycles for these; this takes three, and no longer
+tries to take one. Both fits are seed 2, timing-driven synthesis off,
+placement effort 8.0:
+
+| seed 2, TDS off | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| ARM7 port from flops, one-cycle multiply | 4,105 | 37,529 | 31,713 | -5.207 | -18,145.820 | +0.255 | +0.109 | 3,726,228 | 49:07 |
+| both bank writes captured | 4,029 | 34,353 | 31,675 | -4.375 | -12,115.231 | +0.250 | +0.316 | 3,650,576 | 40:56 |
+
+Everything moves the right way, and the area is the surprise: 76 LABs
+and 3,176 ALMs come back, 38 registers with them, the bitstream shrinks
+75,652 bytes and the flow 8:11. The registered multiplier is what the
+fitter wanted -- the LUT partial-product tree it had built around the
+DSP block goes away. `emu` setup gains 0.832 ns and TNS 6,030.589,
+the video path 0.207 (to +0.316), and hold gives back 0.005.
+
+`emu` still fails, and a probe of the new fit says why: the wall is no
+longer the multiply. It starts at the flags -- `arm9|n` into `n~5`,
+then `Selector995~6`, `cond_hold~0`, `Mux35` and `f~1` -- and runs
+through `regs~194` into the read muxes (`regs[12][8]`,
+`regs[12][21]`, `rm_val[21]`) for 18.493 ns in 10 levels. Three of
+those hops are a single interconnect each, 2.169, 2.681 and 2.171 ns,
+so the condition is being evaluated in the cycle the read happens and
+the two sides of its mux sit far apart.
+
+The label `both bank writes captured` is the one `area_audit.py
+--check-shipped` looks for, so it stays on the shipped row; the name is
+history, not this change.
+
+The bench suite was run against this tree before the fit: 47 step(s),
+47 passed, 0 failed.
+
+This is the tree the core ships from now.
 
 ### Placement effort above 8.0 (2026-11-18)
 
