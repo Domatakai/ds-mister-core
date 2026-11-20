@@ -2353,6 +2353,43 @@ The bench suite was run against this tree before the fit: 47 step(s),
 
 This is the tree the core ships from now.
 
+### Seeds on the split-multiply tree (2026-11-20)
+
+Four seeds fitted from the tree that carries the two-state long
+multiply, at the shipped timing switch and placement effort, so the
+rows differ in nothing but the seed:
+
+| seed | LABs / 4,191 | ALMs | registers | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 4,021 | 34,353 | 31,652 | -3.665 | -11,552.085 | +0.255 | +0.043 | 3,660,444 | 41:30 |
+| 2 (shipped) | 4,029 | 34,353 | 31,675 | -4.375 | -12,115.231 | +0.250 | +0.316 | 3,650,576 | 40:56 |
+| 4 | 4,049 | 34,329 | 31,684 | -4.140 | -14,485.416 | +0.240 | +0.331 | 3,631,904 | 42:16 |
+| 5 | 4,050 | 34,360 | 31,694 | -3.560 | -11,760.407 | +0.249 | -0.082 | 3,591,320 | 42:06 |
+
+All four route. `emu` fails at every seed, between -3.560 and -4.375,
+and the 0.815 ns between the best and the worst is the size of the
+effect a single fit would otherwise credit to the change sharing its
+tree; the previous sweep measured 0.740 on its own tree. No seed closes
+the domain, and the shipped seed is not the best one at it: 5 is
+0.815 ns ahead and 1 is 0.710.
+
+The seed moves the video path as well, and not in the order the `emu`
+ranking would predict: 5 leads on setup and is the only seed that
+fails the video path (-0.082), while 2 and 4 clear it at +0.316 and
++0.331 and 1 by 0.043. Three seeds of four close a path the bank-write
+tree closed at one in four, and seed 2 keeps the widest margin of the
+three that do.
+
+The shipped seed stays 2. Seed 1 would buy 0.710 ns of `emu` and still
+clear the video path, but `emu` fails at both, so that gain is a number
+and not a fix, and it costs 0.273 ns of the video margin -- the path
+that actually limits the release. A shipped-seed change also has to go
+through the release path rather than be read off a table.
+
+Area moves by 29 LABs across the four, against 162 spare. The wall
+times spread from 40:56 to 42:16 for the same work, so they are machine
+load rather than the seed; the counts and the slacks are the seed's.
+
 ### Placement effort above 8.0 (2026-11-18)
 
 `PLACEMENT_EFFORT_MULTIPLIER` was swept up from the shipped 8.0 at seed 2,
