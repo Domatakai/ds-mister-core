@@ -301,7 +301,7 @@ same seed 2, same aggressive routability.
 
 | build | setup worst | setup TNS | hold worst | LABs | interconnect | fit |
 |---|---|---|---|---|---|---|
-| before | -19.413 (emu) | -96,426.996 | -53.667 (audio) | 4,177 | 88.8/87.6/93.1 | 01:50:47 |
+| before† | -19.413 (emu) | -96,426.996 | -53.667 (audio) | 4,177 | 88.8/87.6/93.1 | 01:50:47 |
 | after (t11) | -8.339 (emu) | -45,936.820 | +0.203 (hdmi) | 4,160 | 84.2/83.1/91.3 | 00:45:25 |
 | 2026-11-08 | -8.325 (emu) | -53,336.764 | +0.238 (hdmi) | 4,138 | 83.0/82.3/89.7 | 00:53:59 |
 
@@ -345,7 +345,7 @@ already occupy, and the mux goes with it.
 
 | build | ALMs | registers | LABs | peak interconnect | setup worst | setup TNS | rbf | fit |
 |---|---|---|---|---|---|---|---|---|
-| pak tree | 39,729 | 31,179 | 4,181 | 86.8/85.9/91.6 | -8.354 | -44,563.505 | 3,730,440 | 00:50:53 |
+| pak tree† | 39,729 | 31,179 | 4,181 | 86.8/85.9/91.6 | -8.354 | -44,563.505 | 3,730,440 | 00:50:53 |
 | flag in the shadow RAM | 39,083 | 30,691 | **4,154** | 79.8/78.8/83.8 | -8.376 | -41,728.820 | 3,764,604 | 00:46:36 |
 
 The map says the flag landed where it was meant to: registers fall 502 while
@@ -688,7 +688,7 @@ against 38,693 and 56,108 -- and the fit ends after 02:06 with 188026 and
 
 | rumble tree | map ALMs | LABs | setup (`emu`) | TNS | bitstream | fit |
 |---|---|---|---|---|---|---|
-| committed | 38,693 | 4,118 | -8.752 | -58,562.464 | 3,735,040 | 01:25:59 |
+| committed† | 38,693 | 4,118 | -8.752 | -58,562.464 | 3,735,040 | 01:25:59 |
 | shared shifter | 38,426 | none | - | - | none | 02:06, failed |
 
 So the one change that reduced mapped area helped neither tree: it cost
@@ -828,11 +828,12 @@ under `--builds` and from the ledger in `reports/fits.csv`, and matches every
 table row in this file to one. `--record` appends a finished fit to that
 ledger, and `build.bat` calls it after a successful flow, so a figure
 survives the report directory being reused by the next fit. Against this
-host on 2026-11-18 it checks 43 rows, matches 27, contradicts none and lists
-11 as `no report` -- those ran before the ledger existed, in directories a
-later fit reused, so their figures survive only in this document and the
-pre-stamp ones would not rebuild to them anyway. The 37 builds whose reports
-still existed that day are in the ledger.
+host it checks 54 rows, matches 38 and contradicts none. Ten rows carry a
+dagger: those ran before the ledger existed, in directories a later fit
+reused, so their figures survive only in this document and the pre-stamp
+ones would not rebuild to them anyway. The dagger is the document saying a
+row cannot be checked, as against one nobody has checked -- an unmarked
+row with no report is still counted as a gap.
 
 ### Sharing the ARM9 barrel shifter (2026-11-08)
 
@@ -885,8 +886,8 @@ result register `t64`. Measured, it is a loss:
 
 | build | ALMs | DSP | LABs | interconnect | setup worst | setup TNS | rbf |
 |---|---|---|---|---|---|---|---|
-| t11 | 39,685 | 63 | 4,160 | 84.2/83.1/91.3 | -8.339 | -45,936.820 | 3,749,124 |
-| t12, `t64` on DSP | 39,884 | 67 | 4,186 | 87.7/85.8/93.8 | -8.618 | -39,865.075 | 3,780,460 |
+| t11† | 39,685 | 63 | 4,160 | 84.2/83.1/91.3 | -8.339 | -45,936.820 | 3,749,124 |
+| t12, `t64` on DSP† | 39,884 | 67 | 4,186 | 87.7/85.8/93.8 | -8.618 | -39,865.075 | 3,780,460 |
 
 The attribute did what it advertises: `arm9_core` goes from 11 to 15 DSP blocks
 and the multiply leaves the failing set -- the worst t12 path is no longer the
@@ -1601,11 +1602,11 @@ LABs.
 
 | build | ALMs | registers | LABs | peak interconnect | setup worst | fit |
 |---|---|---|---|---|---|---|
-| shipping | 39,254 | 31,129 | 4,168 | 89.3% | -9.155 | 00:56:15 |
-| register + router duplication off | 39,254 | 29,492 | 4,168 | 84.8% | not run | 00:49:29 |
+| shipping† | 39,254 | 31,129 | 4,168 | 89.3% | -9.155 | 00:56:15 |
+| register + router duplication off† | 39,254 | 29,492 | 4,168 | 84.8% | not run | 00:49:29 |
 | `PLACEMENT_EFFORT_MULTIPLIER 4.0` | 39,254 | 31,394 | **4,159** | 90.0% | **-8.475** | 00:45:00 |
-| that setting + the CRT video modes + the RAM expansion pak (the pak tree) | 39,729 | 31,179 | 4,181 | 91.6% | -8.354 | 00:50:53 |
-| that + the firmware shadow's flag in its block RAM (today's tree) | 39,083 | 30,691 | 4,154 | 79.8% | -8.376 | 00:46:36 |
+| that setting + the CRT video modes + the RAM expansion pak (the pak tree)† | 39,729 | 31,179 | 4,181 | 91.6% | -8.354 | 00:50:53 |
+| that + the firmware shadow's flag in its block RAM (today's tree)† | 39,083 | 30,691 | 4,154 | 79.8% | -8.376 | 00:46:36 |
 
 **Duplication off.** `PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION OFF` removed
 1,637 duplicate registers -- 31,129 to 29,492 -- and changed the ALM count by
@@ -1687,7 +1688,7 @@ the difference above belongs to the seed rather than the logic:
 
 | seed | result | LABs | `emu` setup | `emu` TNS | worst hold |
 |---|---|---|---|---|---|
-| 2 | fits | 4,142 | -8.417 | -56,615.113 | +0.216 |
+| 2† | fits | 4,142 | -8.417 | -56,615.113 | +0.216 |
 | 4 | failed to route (188026 / 11802) | -- | -- | -- | -- |
 | 5 | fits | 4,132 | -10.975 | -56,916.851 | +0.256 |
 
@@ -2211,7 +2212,7 @@ synthesis off, placement effort 8.0:
 | seed 2, TDS off | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
 |---|---|---|---|---|---|---|---|---|---|
 | both bank writes captured, immediate port | 4,125 | 37,668 | 33,043 | -8.907 | -44,808.642 | +0.254 | -0.064 | 3,695,232 | 1:03:38 |
-| both bank writes captured | 4,126 | 38,603 | 31,618 | -6.715 | -25,738.048 | +0.245 | -0.042 | 3,749,628 | 1:12:46 |
+| both bank writes captured, ARM7 port immediate | 4,126 | 38,603 | 31,618 | -6.715 | -25,738.048 | +0.245 | -0.042 | 3,749,628 | 1:12:46 |
 
 `emu` setup moves 2.192 ns and TNS 19,070.594 in the fit's favour with
 the seed, the switch and the effort unchanged. The seed alone moved setup
@@ -2248,10 +2249,60 @@ belongs to the tree it places, not to the seed. The shipped seed stays 2.
 The bench suite was run against this tree before the fit: 47 step(s), 47
 passed, 0 failed.
 
-This is the tree the core ships from now. The `(shipped)` tags in the
-tables above name the settings -- seed 2, timing-driven synthesis off,
-effort 8.0 -- which have not changed; the figures beside them are the
-tree before this change.
+That was the tree the core shipped from for one fit. The `(shipped)` tags
+in the tables above name the settings -- seed 2, timing-driven synthesis
+off, effort 8.0 -- which have not changed; the figures beside them are the
+tree before this change. The ARM7's port came next, below.
+
+### Driving the ARM7 write port from flops (2026-11-20)
+
+The probe above left the wall on the ARM7: all 30 of that fit's worst
+`emu` paths ended at `arm7|regs`, led by `arm7|insn[3]` into
+`arm7|regs[6][20]` at -6.715, while the ARM9's port -- already moved
+behind flops -- had left the list. The same treatment goes to the other
+core now: 15 single-register decode sites capture their select and value
+into `pw_en`/`pw_sel`/`pw_val`/`pw_mode`, and the port is committed on
+the next edge. Each of them ends in `S_FETCH`, which reads no general
+register, so the value is in `regs` before the next instruction decodes.
+The four sites that write two registers from one instruction -- a long
+multiply's pair, a load with its writeback -- keep the immediate port,
+because one pending write cannot carry both. Both fits are seed 2,
+timing-driven synthesis off, placement effort 8.0:
+
+| seed 2, TDS off | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| ARM9 port from flops, ARM7 immediate | 4,126 | 38,603 | 31,618 | -6.715 | -25,738.048 | +0.245 | -0.042 | 3,749,628 | 1:12:46 |
+| both bank writes captured | 4,105 | 37,529 | 31,713 | -5.207 | -18,145.820 | +0.255 | +0.109 | 3,726,228 | 49:07 |
+
+Every column moves the right way this time: 1.508 ns of `emu` setup,
+7,592.228 of TNS, 21 LABs (86 spare of 4,191 instead of 65), 1,074 ALMs,
+23,400 bytes off the bitstream and 23:39 off the flow, for 95 more
+registers. The video path clears at this seed for the first time, -0.042
+to +0.109, and its worst path is a different one: `ascal|o_vcpt_pre3`
+is out of the top five, which `ascal|o_v_hmin_adj[11]` into
+`ascal|o_radl3[11]` now leads at +0.109.
+
+A `quartus_sta` probe of the new fit says where the wall went, and it is
+not the same wall. All 30 of the worst `emu` paths now *start* at the
+ARM9's register file -- `arm9|regs[4][15]`, `arm9|regs[1][8]`,
+`arm9|regs[6][8]~DUPLICATE` -- and end in the operand mux behind it,
+`arm9|rm_val[30]~60_OTERM5278` and `arm9|rp_c[30]~130_OTERM5246`, led by
+-5.207 with 19.324 ns of data delay against the 14.917 ns relationship.
+None of them touches the ARM7's register file any more. That is a read
+path, not a write port: the array drives the mux that feeds the shifter,
+and no capture in front of a write address changes it.
+
+One fit at one seed, so 1.508 ns is this build's number rather than a
+repeatable effect: the seed spread measured two trees back was 0.740 ns
+at a fixed tree, and this is twice that, but that spread belongs to
+another netlist. What the fit does say without a sweep is that the ARM7
+write port is nowhere in the worst 30.
+
+The bench suite was run against this tree before the fit: 47 step(s), 47
+passed, 0 failed.
+
+This is the tree the core ships from now.
+
 
 ### Placement effort above 8.0 (2026-11-18)
 

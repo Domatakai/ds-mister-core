@@ -489,6 +489,30 @@ reg [4:0]  tidx;
 			r8f_b[bidx(sel)] <= (val); \
 	end
 
+// The deferred form, for the single-register paths. The `emu` domain's
+// worst path on the fit that captured the two bank writes ended at this
+// core's register file, led by `insn` into `regs`, so the select and the
+// value are captured here and committed on the next edge instead of being
+// driven into the write port by the decode and the shifter.
+//
+// Every site that uses it ends in `S_FETCH`, which reads no general
+// register, so the value is in `regs` before the next instruction decodes.
+// A site that writes two registers for one instruction (a long multiply, a
+// load with writeback) keeps the immediate port: one pending write cannot
+// carry both.
+reg        pw_en   = 1'b0;
+reg  [4:0] pw_sel  = 5'd0;
+reg [31:0] pw_val  = 32'd0;
+reg  [2:0] pw_mode = 3'd0;
+
+`define WREG_P(sel, val) \
+	begin \
+		pw_en   <= 1'b1; \
+		pw_sel  <= (sel); \
+		pw_val  <= (val); \
+		pw_mode <= cur_m; \
+	end
+
 reg [31:0] t32b, t32c, t32d;
 
 // architectural registers start at zero in simulation (a real part has no
@@ -551,9 +575,23 @@ always @(posedge clk) begin
 		swap_en  <= 1'b0;
 		swap_phase <= 1'b0;
 		wb_en    <= 1'b0;
+		pw_en    <= 1'b0;
 		f_valid  <= 1'b0;
 		hle_go   <= 1'b0;
 	end else if (ce) begin
+		// commit the deferred register write: the value this edge, the bank
+		// it was captured in, and the banked link register through the same
+		// pending slot every reader already sees through lr_rd
+		if (pw_en) begin
+			regs[pw_sel] <= pw_val;
+			if (pw_sel == 5'd13) r13_b[pw_mode] <= pw_val;
+			if (pw_sel == 5'd14) begin
+				lr_v <= 1'b1; lr_m <= pw_mode; lr_val <= pw_val;
+			end
+			if (pw_mode == 3'd1 && pw_sel >= 5'd8 && pw_sel <= 5'd12)
+				r8f_b[bidx(pw_sel)] <= pw_val;
+			pw_en <= 1'b0;
+		end
 		case (state)
 
 		//--------------------------------------------------------
@@ -707,7 +745,7 @@ always @(posedge clk) begin
 					n <= t32b[31];
 					z <= (t32b == 32'd0);
 					c <= c_tmp;
-					`WREG(tidx, t32b)
+					`WREG_P(tidx, t32b)
 					state <= S_FETCH;
 
 				end else if (insn[15:13] == 3'b000) begin
@@ -723,7 +761,7 @@ always @(posedge clk) begin
 					z <= (wide[31:0] == 32'd0);
 					c <= wide[32];
 					v <= v_tmp;
-					`WREG(tidx, wide[31:0])
+					`WREG_P(tidx, wide[31:0])
 					state <= S_FETCH;
 
 				end else if (insn[15:13] == 3'b001) begin
@@ -735,7 +773,7 @@ always @(posedge clk) begin
 					2'b00: begin                       // MOV
 						n <= insn[7];
 						z <= (t32b == 32'd0);
-						`WREG(tidx, t32b)
+						`WREG_P(tidx, t32b)
 					end
 					2'b01: begin                       // CMP
 						wide = {1'b0, t32} - {1'b0, t32b};
@@ -746,13 +784,13 @@ always @(posedge clk) begin
 						wide = {1'b0, t32} + {1'b0, t32b};
 						n <= wide[31]; z <= (wide[31:0] == 32'd0); c <= wide[32];
 						v <= (t32[31] == t32b[31]) & (wide[31] != t32[31]);
-						`WREG(tidx, wide[31:0])
+						`WREG_P(tidx, wide[31:0])
 					end
 					default: begin                     // SUB
 						wide = {1'b0, t32} - {1'b0, t32b};
 						n <= wide[31]; z <= (wide[31:0] == 32'd0); c <= wide[32];
 						v <= (t32[31] ^ t32b[31]) & (t32[31] ^ wide[31]);
-						`WREG(tidx, wide[31:0])
+						`WREG_P(tidx, wide[31:0])
 					end
 					endcase
 					state <= S_FETCH;
@@ -845,7 +883,7 @@ always @(posedge clk) begin
 					endcase
 					if (!(insn[9:6] == 4'h8 || insn[9:6] == 4'hA ||
 					      insn[9:6] == 4'hB))
-						`WREG(tidx, t32c)
+						`WREG_P(tidx, t32c)
 					state <= S_FETCH;
 
 				end else if (insn[15:10] == 6'b010001) begin
@@ -859,7 +897,7 @@ always @(posedge clk) begin
 						if (tidx == 5'd15) begin
 							pc <= t32c; state <= S_FETCH;
 						end else begin
-							`WREG(tidx, t32c)
+							`WREG_P(tidx, t32c)
 							state <= S_FETCH;
 						end
 					end
@@ -871,7 +909,7 @@ always @(posedge clk) begin
 					end
 					2'b10: begin   // MOV (no flags)
 						if (tidx == 5'd15) pc <= t32;
-						else               `WREG(tidx, t32)
+						else               `WREG_P(tidx, t32)
 						state <= S_FETCH;
 					end
 					default: begin // BX
@@ -949,7 +987,7 @@ always @(posedge clk) begin
 				end else if (insn[15:12] == 4'b1010) begin
 					// ---- 11. ADD Rd, PC/SP, #imm ----
 					t32b = insn[11] ? r13_b[cur_m] : ((pc + 32'd2) & 32'hFFFF_FFFC);
-					`WREG({1'b0, insn[10:8]}, t32b + {22'd0, insn[7:0], 2'b00})
+					`WREG_P({1'b0, insn[10:8]}, t32b + {22'd0, insn[7:0], 2'b00})
 					state <= S_FETCH;
 
 				end else if (insn[15:8] == 8'b10110000) begin
@@ -1099,7 +1137,7 @@ always @(posedge clk) begin
 							n <= t64[31];
 							z <= (t64[31:0] == 32'd0);
 						end
-						`WREG(insn[19:16], t64[31:0])
+						`WREG_P(insn[19:16], t64[31:0])
 						state <= S_FETCH;
 					end
 
@@ -1137,7 +1175,7 @@ always @(posedge clk) begin
 				             (insn[21:20] == 2'b00 || insn[21:20] == 2'b10)) begin
 					// ---- MRS / MSR ----
 					if (insn[21:20] == 2'b00) begin
-						`WREG(insn[15:12], insn[22] ? cur_spsr() : cpsr_w)
+						`WREG_P(insn[15:12], insn[22] ? cur_spsr() : cpsr_w)
 					end else begin
 						t32  = insn[25] ? imm32 : rread(insn[3:0]);
 						tidx = insn[19:16];
@@ -1227,11 +1265,11 @@ always @(posedge clk) begin
 							z <= (t32 == 32'd0);
 							c <= dp_c;
 							v <= dp_v;
-							`WREG(tidx, t32)
+							`WREG_P(tidx, t32)
 						end
 					end else begin
 						if (tidx == 5'd15) pc <= t32;
-						else               `WREG(tidx, t32)
+						else               `WREG_P(tidx, t32)
 					end
 					state <= S_FETCH;
 				end
@@ -1360,7 +1398,7 @@ always @(posedge clk) begin
 							blk_pc_val <= bus_rdata;
 						end else begin
 							tidx = {1'b0, blk_idx};
-							`WREG(tidx, bus_rdata)
+							`WREG_P(tidx, bus_rdata)
 						end
 					end
 					blk_list <= blk_list & ~(16'd1 << blk_idx);
@@ -1377,7 +1415,7 @@ always @(posedge clk) begin
 					end else begin
 						swap_en    <= 1'b0;
 						swap_phase <= 1'b0;
-						`WREG(insn[15:12], swap_val)
+						`WREG_P(insn[15:12], swap_val)
 						state <= S_FETCH;
 					end
 				end else begin
@@ -1420,7 +1458,7 @@ always @(posedge clk) begin
 		//--------------------------------------------------------
 		S_BLK: begin
 			if (blk_list == 16'd0) begin
-				if (wb_en && !blk_pc_hit) `WREG(wb_reg, wb_val)
+				if (wb_en && !blk_pc_hit) `WREG_P(wb_reg, wb_val)
 				if (blk_pc_hit) pc <= blk_pc_val;
 				blk_run <= 1'b0;
 				state   <= S_FETCH;

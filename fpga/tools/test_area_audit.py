@@ -23,6 +23,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOL = os.path.join(HERE, "area_audit.py")
 EOL = chr(13) + chr(10)
+LOST = chr(0x2020)   # the document's "my report is gone" mark
 
 failures = []
 count = 0
@@ -181,6 +182,16 @@ def main():
     rc, out = audit(root)
     check("a row with no build is reported, not failed",
           rc == 0 and "no report: 1" in out, out)
+
+    root = new()
+    fit(os.path.join(root, "fits", "nds-tree-s2"))
+    gone = ["a tree from before the ledger" + LOST] + list(ROW)
+    gone[1] = "4,096"            # no build carries this count
+    write(root, "AREA.md", document(gone, header=["fit"] + ROWH))
+    rc, out = audit(root)
+    check("a daggered row nothing covers is declared lost",
+          rc == 0 and "declared lost: 1" in out
+          and "no report: 0" in out, out)
 
     root = new()
     fit(os.path.join(root, "fits", "nds-tree-s2"))

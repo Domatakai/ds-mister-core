@@ -1128,6 +1128,58 @@ synthesis itself has already passed -- the same sources copied to a plain
 local directory finish with 0 errors. Pause the sync client, or build from a
 copy outside the synced tree.
 
+### Branch switching in this checkout
+
+`git checkout` of a branch that changes files under `fpga/` fails here:
+
+```
+warning: unable to unlink 'fpga': Directory not empty
+fatal: cannot create directory at 'fpga': Directory not empty
+```
+
+The working tree is not what is wrong. A directory OneDrive keeps as a
+cloud placeholder carries `FILE_ATTRIBUTE_REPARSE_POINT`; git's
+`create_directories` (`entry.c`) asks `has_dirs_only_path` about each
+component first, and that test needs a real directory. The placeholder
+fails it, so git tries to `mkdir` the directory it is already standing in,
+gets `EEXIST`, tries to `unlink` it -- that is the warning -- and dies on
+the rmdir's `ENOTEMPTY`. `git status`, `git add` and every read work;
+only the create-directory path fails.
+
+Measured 2026-11-20: `fpga`, `fpga/rtl` and `fpga/rtl/cpu` were tagged
+(`0x410`), while `docs`, `src` and `public` were plain (`0x10`) -- the
+failure follows the directories OneDrive has not materialised.
+
+Pinning the tree hydrates it and clears the tags, and is the fix when it
+sticks:
+
+```
+attrib +P /s /d fpga
+```
+
+757 of the 760 entries cleared within minutes and those writes worked
+again. The last three -- `fpga`, `fpga/rtl` and `fpga/rtl/cpu` -- did not,
+and a OneDrive restart, a pause/resume and `fsutil reparsepoint delete`
+all leave them tagged: the cloud filter refuses the delete with `Error
+395: Access to the cloud file is denied`, so there is no shell-level
+repair. `OneDrive.exe /reset` from the Run dialog is the one that rebuilds
+the placeholder database, at the cost of re-scanning the whole account.
+
+While a tag is stuck, do branch work in a worktree outside the synced
+tree: it is a plain directory and switches normally, and it is the same
+copy the fitter already needs.
+
+```
+git worktree add --detach %TEMP%
+ds-branch main
+cd %TEMP%
+ds-branch
+git checkout regs-write
+```
+
+The synced checkout keeps `main`, since git will not check one branch out
+twice, so commits land there or in the worktree after a merge.
+
 One Quartus 17 front-end defect is worked around rather than fixed, because
 it is in the tool: on the ARM9's register arrays (`regs`, the r13/r14/r8
 banks, `cp15_r` — 1.5 kbit of registers) Verific tries to infer RAM blocks

@@ -17,10 +17,15 @@ row:
   DIFF       a build that is demonstrably the same one disagrees
   close      a build shares the LAB count but is a different build
   no report  nothing on disk or in the ledger carries that LAB count
+  declared   nothing carries it either, and the row says so with a dagger:
+             its report is gone for good, which is not the same statement
+             as a row nobody has checked
 
 Exit code 1 means at least one row claims something a build contradicts.
-The other two categories are listed but pass: several rows predate the
-pinned build stamp and could not rebuild to their recorded figures anyway.
+The other three categories are listed but pass: several rows predate the
+pinned build stamp and could not rebuild to their recorded figures anyway,
+and the ones that know their reports are gone carry a dagger so that the
+gap left in the audit is a real one.
 
 The ledger is how a row stops being unverifiable. `--record` appends one
 line per finished fit -- counts, slacks, bitstream size and the settings
@@ -499,6 +504,20 @@ def claimed(header, cells):
     return values
 
 
+# The document's own statement that a row can never be checked again: the
+# build it came from is gone, so its figures survive only in the text. A
+# dagger in the row's first cell is that statement, and it is the
+# difference between a row nobody has verified and a row that cannot be.
+# Nothing else about the row changes -- it is still read, still matched
+# against builds that carry the same count, and still contradicts one.
+LOST = "\u2020"
+
+
+def declared_lost(cells):
+    """Does this row say, itself, that its report is gone?"""
+    return bool(cells) and cells[0].rstrip().endswith(LOST)
+
+
 def disagrees(metrics, values):
     """Columns where a build and a row disagree."""
     bad = []
@@ -517,7 +536,7 @@ def audit(document, root, ledger, verbose):
     print("%d completed build(s) under %s, %d archived row(s) in %s"
           % (len(live), root, len(archived), ledger))
     checked = matched = 0
-    diffs, close, missing = [], [], []
+    diffs, close, missing, lost = [], [], [], []
     for lineno, header, cells in rows(document):
         values = claimed(header, cells)
         if "labs" not in values:
@@ -527,7 +546,8 @@ def audit(document, root, ledger, verbose):
                       if m["labs"] == values["labs"] and
                       (values.get("alms") is None or m["alms"] == values["alms"])]
         if not candidates:
-            missing.append((lineno, cells))
+            (lost if declared_lost(cells) else missing).append(
+                (lineno, cells))
             continue
         scored = sorted((len(disagrees(m, values)), name, disagrees(m, values))
                         for name, m in candidates)
@@ -548,13 +568,17 @@ def audit(document, root, ledger, verbose):
             diffs.append((lineno, cells, name, detail))
         else:
             close.append((lineno, cells, name, detail))
-    print("\nrows checked: %d  matched: %d  contradicted: %d  no report: %d"
-          % (checked, matched, len(diffs), len(missing)))
+    print("\nrows checked: %d  matched: %d  contradicted: %d  "
+          "declared lost: %d  no report: %d"
+          % (checked, matched, len(diffs), len(lost), len(missing)))
     for lineno, cells, name, bad in close:
         print("close     line %d: %s" % (lineno, " | ".join(cells)))
         print("          build %s shares the count, disagrees on %s" % (name, bad))
     for lineno, cells in missing:
         print("no report line %d: %s" % (lineno, " | ".join(cells)))
+    if verbose:
+        for lineno, cells in lost:
+            print("declared  line %d: %s" % (lineno, " | ".join(cells)))
     for lineno, cells, name, bad in diffs:
         print("DIFF      line %d: %s" % (lineno, " | ".join(cells)))
         print("          build %s disagrees on %s" % (name, bad))
