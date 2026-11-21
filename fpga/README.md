@@ -1889,6 +1889,16 @@ Plus the cheat file load (`F2,.CHT` — parsed by `cheat_engine`, applied as
 RAM read patches), soft reset and reset. The full status-bit map is
 documented at the top of `NDS.sv`.
 
+The cheat file is picked by hand, and that is the platform's shape rather
+than an unfinished part: a secondary file reaches a core on ioctl index 2
+only when the user chooses it from the OSD (`F2` opens the dialog filtered
+by the `CHT` extension), and `hps_io` has no command for a core to ask Main
+to read a path, so a `<rom>.cht` sitting next to the ROM is never sent on
+its own. Pairing it automatically is a Main change (send `<rom>.cht` after
+the ROM, as it already does for other per-game sidecars); the core side is
+ready for it, because the loader takes the text whenever it arrives and the
+engine applies it to whatever is running.
+
 ### Video output
 
 The **Video output** row chooses what the video path generates: the HDMI
