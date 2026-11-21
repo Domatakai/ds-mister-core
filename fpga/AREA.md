@@ -2484,3 +2484,23 @@ sign belongs to the tree rather than to the setting. Six LABs come back and
 the flow is 8:54 shorter; the shipped setting stays at 8.0.
 
 
+
+
+### Placement effort on the split-multiply tree (2026-11-20)
+
+The lever was last read on the tree with both captures, 4,890 ALMs larger
+than this one; read again at seed 2 with nothing else changed:
+
+| effort, seed 2, TDS off | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| 8.0 (shipped) | 4,029 | 34,353 | 31,675 | -4.375 | -12,115.231 | +0.250 | +0.316 | 3,650,576 | 40:56 |
+| 10.0 | 4,026 | 34,353 | 31,617 | -4.253 | -13,873.489 | +0.248 | +0.198 | 3,633,520 | 42:25 |
+
+The sign has not changed with the tree: `emu` gains 0.122 ns and the video
+path gives back 0.118, TNS 1,758, the hold rows 0.002 and 0.051 (to
++0.199, still passing); 3 LABs, 58 registers and 17,056 bytes come off
+and the flow runs 1:29 longer. What has changed is the size of the buy:
+1.082 ns on the old tree, 0.122 here. Effort is no longer a lever on the
+`emu` path at all -- the probe's worst four now start at
+`arm7_core|pc[1]` and sit within 0.052 ns of each other -- so the shipped
+setting stays at 8.0.
