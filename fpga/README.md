@@ -1029,7 +1029,7 @@ than letting a stale figure or an unwired bench through.
 
 `python fpga/tools/doc_report_check.py --dir <build>` is the same idea for
 figures that need Quartus: it reads one finished build's reports and
-compares them with the shipped seed-2 row of AREA.md's bank-write table,
+compares them with the shipped row of AREA.md's bank-write tables,
 which is why it is not in the gate -- a gate cannot assume a build
 directory. Point it at the fit and the row is checked end to end.
 
@@ -1090,8 +1090,8 @@ First full compile (analysis + fit + ASM + timing) is a Quartus job of
 about an hour: 01:02:48 of flow time in the 2026-11-09 rebuild AREA.md
 records, 01:14:57 in the release run through `build.bat`, on 5:39:59
 and 3:52:27 of CPU (`NUM_PARALLEL_PROCESSORS ALL` is set). A
-build with the ten macros above and `PLACEMENT_EFFORT_MULTIPLIER 8.0` on
-seed 2 -- the settings the committed `.qsf` holds -- fits: the last full
+build with the ten macros above and `PLACEMENT_EFFORT_MULTIPLIER 8.0` at
+seed 2, the seed `.qsf` held when that build was made, fits: the last full
 compile of this tree reports **4,157 of 4,191 LABs**, 39,119 ALMs, `emu`
 setup -8.751, hold +0.259 and a 3,738,524-byte `NDS.rbf`, with no fitter
 or assembler error. The 2026-11-09 release run of the same settings

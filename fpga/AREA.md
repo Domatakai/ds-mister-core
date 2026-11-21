@@ -20,13 +20,12 @@ fit on the same part, not from a datasheet.
 | I/O pins | 143 | 314 | 171 (46%) |
 
 These rows are the baseline this file was started from, when the design did
-not fit; they are not the current state. The area fits now -- the committed
-tree's last full compile, `SEED 2`, reports 39,119 ALMs and 4,157 of 4,191
-LABs (the slot-2 pak section at the end of this file has that build in
-full) -- so read the table above as where the cut ladder began and the
-rungs below as how far it has come. The 38,881 ALMs and 4,157 LABs quoted
-here earlier were the 2026-11-09 rebuild, three features back; they are
-the figure that section records for that date, not for this tree.
+not fit; they are not the current state. The area fits now -- the slot-2 pak
+build at the end of this file reports 39,119 ALMs and 4,157 of 4,191 LABs at
+`SEED 2`, stamp 261115 -- so read the table above as where the cut ladder
+began and the rungs below as how far it has come. The 38,881 ALMs and 4,157
+LABs quoted here earlier were the 2026-11-09 rebuild, three features back;
+they are the figure that section records for that date, not for this tree.
 
 41,910 ALMs each give two combinational nodes and two registers, so the LUT and
 register limits are the same 83,820. The node count is now *under* that limit —
@@ -1993,10 +1992,11 @@ tree seed 6 dominates seed 2 in both configurations -- fewer LABs than the
 shipped seed, a shallower `emu` path than either seed-2 build, and the only
 one of the three that closes the video path.
 
-The configuration has not changed: `NDS.qsf` still names seed 2 with the
-switch off. Moving to seed 6 would need a recorded bitstream and the board --
-the seed does not change the benches, and this fit changed nothing but the
-two settings.
+The configuration was left as it stood, and `NDS.qsf` named seed 2 with the
+switch off until the RTC row at the end of this file moved it to seed 4.
+Moving to seed 6 would have needed a recorded bitstream and the board -- the
+seed does not change the benches, and this fit changed nothing but the two
+settings.
 
 That a path at 99 % fill can be moved half a nanosecond by a synthesis
 switch, in either direction, is the honest reading: this one is not a
@@ -2629,7 +2629,7 @@ pen's pressure and tilt have nowhere to go.
 | seed 2, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
 |---|---|---|---|---|---|---|---|---|---|
 | both bank writes captured, pad stylus only | 4,029 | 34,353 | 31,675 | -4.375 | -12,115.231 | +0.250 | +0.316 | 3,650,576 | 40:56 |
-| both bank writes captured | 4,014 | 34,497 | 31,723 | -3.838 | -12,941.207 | +0.247 | +0.328 | 3,588,036 | 39:56 |
+| both bank writes captured, seed 2 | 4,014 | 34,497 | 31,723 | -3.838 | -12,941.207 | +0.247 | +0.328 | 3,588,036 | 39:56 |
 
 This is the first change this week that does not spend video margin:
 0.012 ns the right way, which is placement noise rather than a result,
@@ -2647,4 +2647,63 @@ The mode itself is benches: 47 step(s), 47 passed, with nine new checks
 in `tb_input_mapper` for the packets, the toggle, the button, the edge
 clamp and the two cases where the pointer must be ignored.
 
-This is the tree the core ships from now.
+This was the tree the core shipped from until the RTC row.
+
+### Seeding the clock from the HPS calendar (2026-11-21)
+
+hps_io hands a core the host's calendar as one 65-bit packet: BCD seconds,
+minutes, hours, day, month and year in the first six bytes, the weekday in
+the seventh as a binary `tm_wday` where 0 is Sunday, `0x40` in the eighth,
+and a toggle above it that says a new packet has arrived. This core's RTC
+counted from its own reset date until now -- right for a DS, wrong on a
+board whose menu already knows the date. **Firmware → RTC source** picks
+between the two: `Internal` leaves the counter alone and `Host` latches the
+packet's 56 bits and loads them into `nds_rtc` in one write.
+
+The load is not on the packet's edge. `NDS.sv` holds the payload and pulses
+`rtc_load` when a packet arrives while the row says Host, after a core
+reset -- with the last packet it saw, so a core that starts on Host still
+comes up on the calendar -- and on the switch from Internal to Host. A
+packet that arrives while the row says Internal is ignored rather than
+queued, and a host load wins over a seconds tick on the same cycle, so the
+load cannot be counted twice. The weekday needed no conversion: the
+packet's `tm_wday` is the same 0 = Sunday that the chip counts.
+
+The benches run against this tree: 47 step(s), 47 passed, with checks in
+`tb_rtc` for a host load of 2024-02-29 23:58:07, weekday 4, and the 113
+seconds that carry it to 2024-03-01 00:00:00, weekday 5.
+
+At seed 2 the row costs the release's path more margin than the tree has:
+`pll_hdmi` goes from +0.328 to -0.115 and the fit fails. A probe on that
+fit puts the worst paths in `ascal|o_hcpt[*]` into `ascal|o_radl2[*]` --
+the HDMI scaler, which this change does not touch -- so the 0.443 ns is
+where the fitter put the logic and not a path the row built. Seed 2 is then
+not a seed this tree can ship on, and both trees were fitted at seed 4 to
+read the row against a like-for-like baseline:
+
+| seed 4, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
+|---|---|---|---|---|---|---|---|---|
+| both bank writes captured, pointer mode, seed 4 | 4,035 | 34,428 | 31,782 | -4.215 | -11,371.210 | +0.194 | +0.384 | 3,674,156 |
+| both bank writes captured | 4,043 | 34,237 | 31,503 | -4.474 | -9,255.070 | +0.243 | +0.239 | 3,671,232 |
+
+At seed 4 the row costs 0.145 ns of the video path rather than 0.443, which
+is the same placement sensitivity the probe describes, and 8 LABs. It
+reports 191 fewer ALMs and 279 fewer registers than the tree without it --
+the fitter's packing and retiming rather than the row's own logic -- and the
+bitstream is 2,924 bytes smaller. `emu` gives back 0.259 ns, and the domain
+is 2,116.140 of TNS better and 0.049 of hold better.
+
+So the tree ships at seed 4, and `NDS.qsf` moves from `SEED 2` to `SEED 4`
+for the first time since `SEED 1` became `SEED 2`. What that costs on its own
+is the same pair read the other way: at seed 4 the pointer tree is 21 LABs
+more, 69 ALMs fewer, 0.377 ns better on `emu` setup, 1,569.997 better on
+TNS, 0.056 ns better on the video path, 0.053 ns worse on hold and 86,120
+bytes larger than its own seed-2 row. Both trees were built with
+`quartus_sh --flow compile`, which is the flow `build.bat` runs, so these
+are release builds and not ledger readings.
+
+The label `both bank writes captured` moves to this row and the pointer
+tree's row takes a qualifier, as it did when the pointer mode took it from
+the block index. Nothing here has run on a board: the bench checks cover
+the load, and the row itself is a menu item waiting for a game that shows
+its date.

@@ -133,8 +133,8 @@ def parse_map(path):
 
 # label, document pattern, {group: evidence key}, evidence source
 #
-# The claims below are the shipped seed-2 row of AREA.md's "Staging the bank
-# writes" table, the one row every column of which comes from a single build
+# The claims below are the shipped row of AREA.md's bank-write tables, the
+# one row every column of which comes from a single build
 # that still exists on disk. Point --dir at that build and the row is checked
 # end to end. The older tables cannot be rechecked this way: their reports
 # predate the pinned build stamp, so the figures do not rebuild, and several
