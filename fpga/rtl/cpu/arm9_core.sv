@@ -756,29 +756,19 @@ always @(*) begin
 	endcase
 end
 
-// Lowest set bit of the block-transfer list, in a register of its own.
-// Fed straight from blk_list it started the worst `emu` cluster on the
-// latch tree: bit 0 of the list (fanout 110 and 129 on its two cells)
-// walked the sixteen terms into blk_idx, blk_idx drives a read-port index,
-// and the register-file mux and the ALU sat behind the walk -- 18.396 ns of
-// data delay in ten levels.  Nothing reads the index in the cycle the list
-// is written: S_EXEC writes the list and S_BLK is the first state that
-// reads the index.  The beat that clears a bit is also the beat that has to
-// produce the next index, so the walk has an edge to move across either way.
-function [3:0] blk_first (input [15:0] l);
-	integer i;
-	begin
-		blk_first = 4'd0;
-		for (i = 15; i >= 0; i = i - 1)
-			if (l[i]) blk_first = i[3:0];
-	end
-endfunction
-
-// the list shapes the two Thumb stack encodings build
-wire [15:0] push_list = insn[7:0] | (insn[8] ? 16'h4000 : 16'h0000);
-wire [15:0] pop_list  = insn[7:0] | (insn[8] ? 16'h8000 : 16'h0000);
-
-reg [3:0] blk_idx;
+// lowest set bit of the block-transfer list
+reg  [3:0] blk_idx;
+reg        blk_found;
+integer    kk;
+always @(*) begin
+	blk_found = 1'b0;
+	blk_idx   = 4'd0;
+	for (kk = 0; kk < 16; kk = kk + 1)
+		if (!blk_found && blk_list[kk]) begin
+			blk_idx   = kk[3:0];
+			blk_found = 1'b1;
+		end
+end
 
 // SP adjustment for Thumb PUSH/POP: four bytes per listed register, and the
 // link bit adds r14 to the count as well
@@ -933,7 +923,6 @@ always @(posedge clk) begin
 		bus_wr   <= 1'b0;
 		blk_run  <= 1'b0;
 		blk_list <= 16'd0;
-		blk_idx  <= 4'd0;
 		blk_usr  <= 1'b0;
 		blk_restore <= 1'b0;
 		swap_en  <= 1'b0;
@@ -1360,8 +1349,7 @@ always @(posedge clk) begin
 
 				end else if (insn[15:12] == 4'b1011 && insn[11:9] == 3'b010) begin
 					// ---- 13a. PUSH ----
-					blk_list <= push_list;
-					blk_idx  <= blk_first(push_list);
+					blk_list <= insn[7:0] | (insn[8] ? 16'h4000 : 16'h0000);
 					blk_addr <= r13_b[cur_m] - thumb_sp_off;
 					blk_ld   <= 1'b0;
 					blk_pc_hit <= 1'b0;
@@ -1375,8 +1363,7 @@ always @(posedge clk) begin
 
 				end else if (insn[15:12] == 4'b1011 && insn[11:9] == 3'b110) begin
 					// ---- 13b. POP ----
-					blk_list <= pop_list;
-					blk_idx  <= blk_first(pop_list);
+					blk_list <= insn[7:0] | (insn[8] ? 16'h8000 : 16'h0000);
 					blk_addr <= r13_b[cur_m];
 					blk_ld   <= 1'b1;
 					blk_pc_hit <= 1'b0;
@@ -1397,7 +1384,6 @@ always @(posedge clk) begin
 				end else if (insn[15:12] == 4'b1100 && !insn[11]) begin
 					// ---- 14. STMIA ----
 					blk_list <= insn[7:0];
-					blk_idx  <= blk_first(insn[7:0]);
 					blk_addr <= rp_a;
 					blk_ld   <= 1'b0;
 					blk_pc_hit <= 1'b0;
@@ -1426,7 +1412,6 @@ always @(posedge clk) begin
 				end else if (insn[15:12] == 4'b1100 && insn[11]) begin
 					// ---- 15. LDMIA ----
 					blk_list <= insn[7:0];
-					blk_idx  <= blk_first(insn[7:0]);
 					blk_addr <= rp_a;
 					blk_ld   <= 1'b1;
 					blk_pc_hit <= 1'b0;
@@ -1806,7 +1791,6 @@ always @(posedge clk) begin
 					// bit 25 clear separates LDM/STM (100 P U S W L) from B/BL
 					// (101 L), which share bits 27:26
 					blk_list <= insn[15:0];
-					blk_idx  <= blk_first(insn[15:0]);
 					t32      = rp_a;
 					t32b     = (insn[15:0] == 16'd0) ? 32'd64
 					                                : {24'd0, popcnt16(insn[15:0]), 2'b00};
@@ -1973,7 +1957,6 @@ always @(posedge clk) begin
 						end
 					end
 					blk_list <= blk_list & ~(16'd1 << blk_idx);
-					blk_idx  <= blk_first(blk_list & ~(16'd1 << blk_idx));
 					blk_addr <= blk_addr + 32'd4;
 					state    <= S_BLK;
 				end else if (swap_en) begin
