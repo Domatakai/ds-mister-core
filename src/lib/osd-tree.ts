@@ -62,7 +62,7 @@ export const OSD_ROOT: OsdSubmenu = {
           id: "cart.ramexp",
           kind: "choice",
           label: "Slot-2 RAM expansion",
-          options: ["Off", "8 MB"],
+          options: ["Off", "8 MB", "16 MB", "32 MB"],
         },
         { id: "cart.erase", kind: "action", label: "Erase save data" },
         { id: "cart.bootmenu", kind: "action", label: "Boot menu" },
@@ -227,6 +227,12 @@ export const OSD_ROOT: OsdSubmenu = {
           label: "Region",
           options: ["Auto", "NTSC-U", "NTSC-J", "PAL"],
         },
+        {
+          id: "bios.rtc",
+          kind: "choice",
+          label: "RTC source",
+          options: ["Internal", "Host"],
+        },
       ],
     },
     {
@@ -238,7 +244,13 @@ export const OSD_ROOT: OsdSubmenu = {
           id: "input.stylus",
           kind: "choice",
           label: "Stylus cursor",
-          options: ["Off", "D-pad", "Left stick"],
+          options: ["Off", "D-pad", "Left stick", "Pointer"],
+        },
+        {
+          id: "input.touchpad",
+          kind: "choice",
+          label: "Touchpad stylus",
+          options: ["Off", "Absolute"],
         },
         {
           id: "input.tap",
@@ -266,6 +278,7 @@ export const OSD_ROOT: OsdSubmenu = {
         },
         { id: "input.mic", kind: "choice", label: "Microphone", options: ["Off", "Button", "Host device"] },
         { id: "input.rumble", kind: "toggle", label: "Rumble pak" },
+        { id: "input.motion", kind: "toggle", label: "Motion pak" },
         {
           id: "input.profile",
           kind: "choice",
@@ -290,6 +303,12 @@ export const OSD_ROOT: OsdSubmenu = {
           kind: "choice",
           label: "CPU overclock",
           options: ["Normal", "ARM7 ×2", "ARM7 ×4"],
+        },
+        {
+          id: "emu.autooc",
+          kind: "choice",
+          label: "Auto overclock",
+          options: ["On", "Off"],
         },
         { id: "emu.frameskip", kind: "choice", label: "Frameskip", options: ["Off", "1", "2", "3"] },
         { id: "emu.autoskip", kind: "toggle", label: "Auto frameskip" },
