@@ -143,8 +143,8 @@ def parse_map(path):
 CLAIMS = [
     ("bank writes captured",
      r"\| both bank writes captured \| ([\d,]+) \| ([\d,]+) \| ([\d,]+) \| "
-     r"(-?\d+\.\d{3}) \| (-?[\d,]+\.\d{3}) \| (\+?\d+\.\d{3}) \| "
-     r"(-?\d+\.\d{3}) \| ([\d,]+) \|",
+     r"([-+]?[\d,]+\.\d{3}) \| ([-+]?[\d,]+\.\d{3}) \| "
+     r"([-+]?[\d,]+\.\d{3}) \| ([-+]?[\d,]+\.\d{3}) \| ([\d,]+) \|",
      {1: "labs", 2: "alms", 3: "regs",
       4: "slack@setup:emu|u_pll", 5: "tns@setup:emu|u_pll",
       6: "slack@hold:emu|u_pll", 7: "slack@setup:pll_hdmi",
@@ -194,12 +194,24 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     outputs = os.path.join(args.dir, "output_files")
+    def pick(explicit, *defaults):
+        if explicit:
+            return explicit
+        for path in defaults:
+            if os.path.exists(path):
+                return path
+        return defaults[0]
+
+    # A --flow compile leaves NDS.sta.rpt and NDS.fit.summary, not the
+    # console logs, so those are what a finished build directory offers.
     sources = {
-        "sta-log": args.sta_log or os.path.join(args.dir, "sta.log"),
-        "fit-log": args.fit_log or os.path.join(args.dir, "fit.log"),
-        "map-rpt": args.map_rpt or os.path.join(outputs, "NDS.map.rpt"),
-        "fit-rpt": args.fit_rpt or os.path.join(outputs, "NDS.fit.rpt"),
-        "rbf": args.rbf or os.path.join(outputs, "NDS.rbf"),
+        "sta-log": pick(args.sta_log, os.path.join(args.dir, "sta.log"),
+                        os.path.join(outputs, "NDS.sta.rpt")),
+        "fit-log": pick(args.fit_log, os.path.join(args.dir, "fit.log"),
+                        os.path.join(outputs, "NDS.fit.summary")),
+        "map-rpt": pick(args.map_rpt, os.path.join(outputs, "NDS.map.rpt")),
+        "fit-rpt": pick(args.fit_rpt, os.path.join(outputs, "NDS.fit.rpt")),
+        "rbf": pick(args.rbf, os.path.join(outputs, "NDS.rbf")),
     }
     missing = [name for name, path in sources.items() if not os.path.exists(path)]
     if missing:
@@ -226,14 +238,16 @@ def main(argv=None):
         merged.update(block)
 
     text = open(args.doc, encoding="utf-8", newline="").read()
-    drifted, checked = [], 0
+    drifted, checked, absent = [], 0, []
     for label, pattern, groups, source in CLAIMS:
         if source == "map_t6" and not args.map_t6:
             print("SKIP %-16s needs --map-t6 (the report the docs cite for this figure)" % label)
             continue
         match = re.search(pattern, text)
         if not match:
-            print("SKIP %-16s pattern not found in %s" % (label, args.doc))
+            print("ABSENT %-14s no row matching this claim in %s"
+                  % (label, args.doc))
+            absent.append(label)
             continue
         for index, key in groups.items():
             quoted = match.group(index)
@@ -259,8 +273,9 @@ def main(argv=None):
             handle.write(text)
         print("\nwrote %s; rerun without --fix to confirm" % args.doc)
 
-    print("\n%d claims checked, %d drifted" % (checked, len(drifted)))
-    return 1 if drifted else 0
+    print("\n%d claims checked, %d drifted, %d row(s) absent"
+          % (checked, len(drifted), len(absent)))
+    return 1 if drifted or absent else 0
 
 
 if __name__ == "__main__":
