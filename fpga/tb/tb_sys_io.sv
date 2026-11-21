@@ -40,6 +40,7 @@ module tb_sys_io;
 		// the RTC's own crystal reference is not under test here (tb_sys_clk
 		// covers the timer/RTC split); its one-second divider just stays put
 		.tick33(1'b0),
+		.rtc_load(1'b0), .rtc_host(56'd0),
 		.cpu9(cpu9), .addr(addr), .acc(acc), .we(we),
 		.wdata(wdata), .wdata32(wdata32), .rdata(rdata),
 		.recv_hit(recv_hit), .recv_rdata(recv_rdata),

@@ -53,6 +53,10 @@ module sys_io (
 	// OSD "Language" row -> the firmware user settings on the SPI flash
 	input      [2:0]   lang,
 
+	// OSD "RTC source": the HPS calendar instead of the free-running divider
+	input              rtc_load,
+	input      [55:0]  rtc_host,   // {weekday, year, month, day, hour, min, sec}
+
 	// device IRQ pulses from the rest of the system (DMA, keypad, cart)
 	input      [31:0]  irq_src9,
 	input      [31:0]  irq_src7,
@@ -161,6 +165,7 @@ module sys_io (
 
 	nds_rtc u_rtc (
 		.clk(clk), .reset(reset), .sec_tick(rtc_sec),
+		.rtc_load(rtc_load), .rtc_host(rtc_host),
 		.wr(acc && we && hit_rtc && !cpu9 && !reset),
 		.wdata(wdata), .rdata(rtc_rd), .irq(rtc_irq)
 	);

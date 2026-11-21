@@ -184,7 +184,10 @@ Two things deliberately stay on absolute time. The RTC is a Seiko S-35180
 that counts its own crystal, so its one-second divider is fed from a
 free-running reference (`clk_sys`/2 = 33.5137 MHz, independent of the OSD
 overclock row) and does not move when the CPU domain does — a clock chip that
-lost time with the ARM7 would be a bug, not emulation. And the 48 kHz audio
+lost time with the ARM7 would be a bug, not emulation. Where it starts
+counting is the one thing the user chooses: **Firmware → RTC source** seeds
+the counters from the HPS's calendar at core start, or leaves them at the
+core's own reset date. And the 48 kHz audio
 path keeps its rate: the SPU's sample counters are what set pitch, and they
 run on their own dividers — the channel state at `clk_sys`/4 = 16.756991 MHz
 (the DS's own 33.513982/2) and a 48 kHz mix tick accumulated against
@@ -1324,6 +1327,7 @@ On first boot you should see:
 | OSD menu | every row listed under **OSD menu** below opens and changes video/audio live |
 | Lid close | hold L2+R2 with **Touch & Pad → Lid close → L2+R2**: both screens go black while it is held and the picture returns on release (with a real BIOS the firmware sees the hinge shut on `EXTKEYIN` bit 7 and can sleep) |
 | Language | set **Firmware → Language** and reload the game: a title that reads the firmware settings comes up in that language — the row rewrites the settings block the SPI flash serves |
+| RTC source | with **Firmware → RTC source → Host**, a game that shows the date (or the firmware's own clock) matches the MiSTer to the minute, and it keeps counting after the core starts; with **Internal** it comes up on the core's fixed start date |
 | `.nds` load (F1) | a game in `/media/fat/games/NDS` lists whatever the case of its extension; progress bar completes for any ROM size; cart LED activity; no freezes (ioctl_wait backpressure holds under DDR3 contention) |
 | Boot menu | load two or three games in a row, press Select: each row shows the title, the four-letter game code and the size each ROM header declares, the footer reads `64M SLOT`; `A` reboots into that game; the list is still there after the reboot |
 | `.cht` load (F2) | accepted without wedging; codes parsed (they take effect at M1 bus level — RAM patches are simulated, not yet exercised by a running game) |
@@ -1847,7 +1851,7 @@ this core added:
 | **Screens** | screen layout **Vertical / Horizontal / Top only / Bottom only** (the DS's own arrangement is the default), rotation 0-270, swap screens, aspect, **Backlight Dim / Low / Medium / High / Brightest** (the panel gain the DS's backlight steps map to), scanlines, refresh rate Native 59.82 / 59.95 / 60.00, video output HDMI 256x384 / CRT 240p side by side / CRT 240p single / CRT 31 kHz, video filter Off / Soft / Smooth / Sharp, **LCD colour** Original / DS LCD / Vivid / Warm / Cool / Grayscale |
 | **Sound** | master volume, **Sound output Stereo / Mono / Headphones** (the DS Settings wording), SPU sync, I²S latency 1 / 2 / 4 frames, audio filter Off / Warm / Bright / Bass, stereo width Off / Soft / Strong |
 | **Touch & Pad** | stylus cursor Off / D-pad / Left stick / Pointer (USB or Bluetooth mouse, trackpad, pen tablet), stylus tap L2 / R2 / L3 / R3, **Lid close Ignore / L2+R2 / L3+R3**, **Microphone Off / Button / Host device** (Host device samples the board ADC at 48 kHz; the mic has to be wired to the ADC pins), rumble pak, **motion pak Off / On** (slot-2 Motion Pack on the sticks), face + shoulder swaps, pad profile |
-| **Firmware** | **ARM7 BIOS HLE / bios7.bin**, **ARM9 BIOS HLE / bios9.bin**, **Firmware HLE / firmware.bin**, **Language English / Japanese / French / German / Italian / Spanish**, **Auto-start Manual / Auto**, region |
+| **Firmware** | **ARM7 BIOS HLE / bios7.bin**, **ARM9 BIOS HLE / bios9.bin**, **Firmware HLE / firmware.bin**, **Language English / Japanese / French / German / Italian / Spanish**, **Auto-start Manual / Auto**, **RTC source Internal / Host**, region |
 | **System** | core speed 100 / 150 / 200 / Max %, CPU overclock Normal / ARM7 ×2 / ARM7 ×4, **auto overclock On / Off** (per game — see below), frameskip, auto frameskip, rewind buffer. A `Diagnostics` header row follows with FPS, frame graph, bus LEDs, log level and **Disable all cheats** |
 | **MIDI** | MT-32-pi link, MIDI volume 0–100% for the return path, internal demo stream, Pi LCD on screen, LCD size 1x / 2x, corner Top left / Top right / Bottom left / Bottom right, synth MT-32 / SoundFont, SoundFont bank 0-7 |
 
@@ -1918,6 +1922,15 @@ language its text comes up in. `fw_default` is the synthesised user-settings
 block served over SPI, so the row substitutes the language halfword at
 `0x64` and the CRC16-CCITT at `0x72` that protects it (both settings copies),
 and a game that reads the settings sees the OSD's choice.
+- **RTC source** — where the S-35180's counters start. `Host` loads the
+calendar the HPS sends once at core start, again after a core reset, and
+when the row is switched to it from `Internal`: network time when NTP is
+reachable, the RTC board's time when one is fitted. The HPS merges those two
+before the core sees them, so they cannot be offered as separate choices.
+`Internal` keeps the core's own start date, which is identical on every run
+and therefore what TAS material replays against. Either way the counters run
+on the core's free-running crystal afterwards, exactly as the chip does, and
+a date a game writes through the port survives until the next load.
 - **Backlight** and **Sound output** — the DS's own panel-brightness and
 sound-output settings, driving the same video gain and mix the rows always
 did.

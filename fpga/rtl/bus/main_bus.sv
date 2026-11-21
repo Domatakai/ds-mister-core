@@ -68,6 +68,8 @@ module main_bus (
 	// input state from input_mapper
 	input     [11:0] ds_keys,
 	input      [2:0] lang,           // OSD language -> firmware user settings
+	input     [55:0] rtc_host,       // HPS calendar (MSM6242B BCD fields)
+	input            rtc_load,       // load it: OSD "RTC source" is Host
 	input      [8:0] touch_x,
 	input      [7:0] touch_y,
 	input            touch_down,
@@ -555,6 +557,7 @@ sys_io u_sys_io (
 	.recv_hit(is_ipc_pg && (io_addr == 16'h0000)),
 	.recv_rdata(sio_recv),		.touch_x(touch_x), .touch_y(touch_y), .touch_down(touch_down),
 		.mic_in(mic_in), .lang(lang),
+		.rtc_load(rtc_load), .rtc_host(rtc_host),
 		.irq_src9(irq_src9), .irq_src7(irq_src7),
 	.ie9(sio_ie9), .if9(sio_if9), .ime9(sio_ime9), .irq9(sio_irq9),
 	.ie7(sio_ie7), .if7(sio_if7), .ime7(sio_ime7), .irq7(sio_irq7),

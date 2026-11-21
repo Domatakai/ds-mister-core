@@ -78,6 +78,7 @@
 //                            Spanish: the language the synthesised firmware
 //                            user settings report — rtl/bus/spi.sv)
 //   [90]    firmware         (HLE / firmware.bin. Reserved)
+//   [91]    RTC source       (Internal / Host)
 //   [93]    auto overclock   (On/Off. Written On-first (0), so a fresh core
 //                            takes the per-game reference from the loaded
 //                            cart's game code instead of Normal)
@@ -121,7 +122,7 @@ assign BUTTONS   = 0;
 // menu names games from their own headers. Further extensions would be
 // packed three characters each ("NDSBIN"), with no separator.
 //------------------------------------------------------------------
-localparam [20095:0] CONF_STR = {   // 2512 string bytes, the 6-char `BUILD_DATE
+localparam [20359:0] CONF_STR = {   // 2545 string bytes, the 6-char `BUILD_DATE
                                     // (sys/build_id.tcl: %y%m%d) included
                                     // (tools/confstr_len.py checks the width)
 "NDS MiSTer Test;;",
@@ -174,6 +175,7 @@ localparam [20095:0] CONF_STR = {   // 2512 string bytes, the 6-char `BUILD_DATE
 "P5O[87:85],Language,English,Japanese,French,German,Italian,Spanish;",
 "P5O[30],Auto-start,Manual,Auto;",
 "P5O[32:31],Region,Auto,NTSC-U,NTSC-J,PAL;",
+"P5O[91],RTC source,Internal,Host;",
 "-;",
 "P6,System;",
 "P6O[41:40],Core speed,100%,150%,200%,Max;",
@@ -222,6 +224,7 @@ wire   [1:0] buttons;
 wire         forced_scandoubler;
 wire  [10:0] ps2_key;
 wire  [24:0] ps2_mouse;    // hps_io pointing device: stylus "Pointer" mode
+wire  [64:0] rtc_hps;      // the HPS calendar, sent once per core start
 wire  [31:0] joystick_0, joystick_1;
 wire         ioctl_download;
 wire  [26:0] ioctl_addr;
@@ -272,6 +275,7 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1), .VDNUM(1)) hps_io
 	.status_menumask({14'd0, any_slot, game_loaded}), // h0 = game loaded, h1 = a slot exists
 	.ps2_key(ps2_key),
 	.ps2_mouse(ps2_mouse),
+	.RTC(rtc_hps),
 	.joystick_0(joystick_0),
 	.joystick_1(joystick_1),
 	.joystick_l_analog_0(stick0),
@@ -350,6 +354,7 @@ wire        auto_start    = status[30];   // the DS's own Auto-start row
 wire  [2:0] lang_sel      = status[87:85];
 wire  [1:0] lid_sel       = status[84:83];
 wire        fw_dump       = status[90];   // firmware.bin, reserved
+wire        rtc_src_host  = status[91];   // OSD "RTC source": 1 = Host
 wire  [1:0] region        = status[32:31];
 wire  [1:0] stylus_mode   = status[34:33];
 wire  [1:0] mic_source    = status[36:35];
@@ -1155,6 +1160,36 @@ wire        ce9, ce7;
 // motors through hps_io while the OSD row has a pak fitted.
 wire        rumble_lvl;
 
+//------------------------------------------------------------------
+// The clock's two sources
+//
+// The HPS knows the time — NTP when the network is up, the optional RTC
+// board when one is fitted — but it does not say which, and it hands the
+// calendar over once, at core start, in the RTC chip's own BCD fields
+// (weekday as a plain 0 = Sunday, which is also the DS's convention). The
+// OSD row chooses between that and the crystal the core counts itself,
+// which drifts but is the same on every run, so TAS material replays.
+//------------------------------------------------------------------
+reg         rtc_tog   = 1'b0;
+reg         rtc_have  = 1'b0;
+reg [55:0]  rtc_cal   = 56'd0;
+reg         rtc_src_d = 1'b0;
+wire        rtc_new   = rtc_tog ^ rtc_hps[64];
+
+always @(posedge clk_sys) begin
+	rtc_tog <= rtc_hps[64];
+	if (rtc_new) begin
+		rtc_cal  <= rtc_hps[55:0];
+		rtc_have <= 1'b1;
+	end
+	// a core reset takes the host's time again, and so does switching the
+	// row to Host later; on Internal the last value is kept for that switch
+	rtc_src_d <= rtc_src_host & ~reset_core;
+end
+
+wire rtc_load = rtc_have & rtc_src_host & ~reset_core &
+                (rtc_new | ~rtc_src_d);
+
 main_bus main_bus (
 	.clk(clk_sys),
 	.reset(reset),
@@ -1167,6 +1202,8 @@ main_bus main_bus (
 	.stick_r(stick1),
 	.ds_keys(ds_keys),
 	.lang(lang_sel),
+	.rtc_host(rtc_cal),
+	.rtc_load(rtc_load),
 	.hinge_closed(hinge_j),
 	.touch_x(touch_x),
 	.touch_y(touch_y),

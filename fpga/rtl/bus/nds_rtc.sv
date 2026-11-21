@@ -38,6 +38,11 @@ module nds_rtc (
 
 	input             sec_tick,   // one-cycle enable, once per second
 
+	// the host calendar, in this part's own BCD fields, loaded whole when
+	// the OSD "RTC source" row selects the HPS's clock
+	input             rtc_load,
+	input      [55:0] rtc_host,   // {weekday, year, month, day, hour, min, sec}
+
 	// 4000138h, ARM7 only
 	input             wr,
 	input      [15:0] wdata,
@@ -298,6 +303,23 @@ module nds_rtc (
 				data_in <= snap[pos];
 				if (pos < 6'd63)
 					pos <= pos + 6'd1;
+			end
+
+			// ---- host calendar load ----
+			// The HPS sends the time once per core start, already in the BCD
+			// fields this part keeps, so nothing is converted here; the
+			// counters just start from it and run on the crystal. The weekday
+			// arrives as a plain 0..6 binary (tm_wday), which is the DS's own
+			// convention, 0 = Sunday. Last before the tick, so a load and a
+			// tick in the same cycle resolve the same way every time.
+			if (rtc_load) begin
+				sec <= rtc_host[7:0];
+				min <= rtc_host[15:8];
+				hr  <= rtc_host[23:16];
+				day <= rtc_host[31:24];
+				mon <= rtc_host[39:32];
+				yr  <= rtc_host[47:40];
+				dow <= rtc_host[50:48];
 			end
 
 			// ---- one-second tick: the BCD counters ----

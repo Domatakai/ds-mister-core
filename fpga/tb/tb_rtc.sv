@@ -16,6 +16,8 @@ module tb_rtc;
 	reg        sec_tick = 0;
 	reg        wr = 0;
 	reg [15:0] wdata = 0;
+	reg        rtc_load = 0;
+	reg [55:0] rtc_host = 0;
 	wire [15:0] rdata;
 	wire        irq;
 
@@ -23,7 +25,8 @@ module tb_rtc;
 
 	nds_rtc dut (
 		.clk(clk), .reset(reset), .sec_tick(sec_tick),
-		.wr(wr), .wdata(wdata), .rdata(rdata), .irq(irq)
+		.wr(wr), .wdata(wdata), .rdata(rdata), .irq(irq),
+		.rtc_load(rtc_load), .rtc_host(rtc_host)
 	);
 
 	integer errors = 0;
@@ -249,6 +252,25 @@ module tb_rtc;
 		cs_down;
 		check("a read keeps the snapshot across a rollover",
 		      b5 === 8'h00 && b6 === 8'h00);
+
+		// ---- 6. the host calendar ----
+		// {weekday, year, month, day, hour, minute, second}, the layout the
+		// HPS sends in: 2024-02-29 23:58:07, a Thursday. One pulse is all it
+		// gets — the counters run from there, which is the whole contract.
+		rtc_host = {8'h04, 8'h24, 8'h02, 8'h29, 8'h23, 8'h58, 8'h07};
+		@(posedge clk); #1; rtc_load = 1;
+		@(posedge clk); #1; rtc_load = 0;
+		read_params(3'd2);
+		check("the host calendar loads whole",
+		      b0 === 8'h24 && b1 === 8'h02 && b2 === 8'h29 && b3 === 3'd4 &&
+		      b4 === 8'h23 && b5 === 8'h58 && b6 === 8'h07);
+
+		tick(113);   // 23:58:07 -> midnight
+		read_params(3'd2);
+		check("the loaded leap day rolls into March",
+		      b0 === 8'h24 && b1 === 8'h03 && b2 === 8'h01 && b3 === 3'd5);
+		check("and the loaded time is counted up to midnight",
+		      b4 === 8'h00 && b5 === 8'h00 && b6 === 8'h00);
 
 		check("nothing drives /INT", irq === 1'b0);
 

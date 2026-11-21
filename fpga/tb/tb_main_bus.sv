@@ -139,6 +139,7 @@ main_bus dut (
 	.rumble_pak(rumble_pak), .rumble_lvl(rumble_lvl),
 	.motion_pak(motion_pak), .stick_l(stick_l), .stick_r(stick_r),
 	.ds_keys(ds_keys), .lang(lang), .hinge_closed(hinge),
+	.rtc_host(56'd0), .rtc_load(1'b0),
 	.touch_x(9'd0), .touch_y(8'd0), .touch_down(1'b0), .mic_in(12'h400),
 	.m9_addr(m9_addr), .m9_wdata(m9_wdata), .m9_be(m9_be),
 	.m9_rd(m9_rd), .m9_wr(m9_wr), .m9_ready(m9_ready), .m9_rdata(m9_rdata),
