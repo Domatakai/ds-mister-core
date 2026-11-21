@@ -211,12 +211,18 @@ reg  [2:0] pw_mode;
 // multiplier, a DSP carry chain and a 64-bit adder into the write port,
 // and on into the read-through mux of the register it had just written.
 // The operands are captured where the instruction decodes, S_ML1 latches
-// the product and S_ML2 adds the accumulator and writes both halves.
+// the product and S_ML2 adds the accumulator and writes the result.  MUL,
+// MLA and the Thumb ALU's MUL take the same two states with a 32-bit result
+// and one destination, because their product sat on the same path: from the
+// read ports through the multiplier into the register write.  The halfword
+// media multiplies still compute in place.
 reg        ml_half;            // 16x16 signed halves (SMLALxy)
 reg        ml_acc;             // add {ml_ah, ml_al}
 reg        ml_flags;           // set N and Z from the 64-bit result
 reg [31:0] ml_a, ml_b, ml_al, ml_ah;
 reg [63:0] ml_p;
+reg        ml_single;          // a 32-bit result: MUL, MLA, Thumb MUL
+reg  [4:0] ml_rd;              // its destination, or the long form's RdLo
 
 // swap
 reg        swap_en, swap_phase;
@@ -933,6 +939,8 @@ always @(posedge clk) begin
 		dw_phase <= 1'b0;
 		f_valid  <= 1'b0;
 		bl_pending <= 1'b0;
+		ml_single  <= 1'b0;
+		ml_rd      <= 5'd0;
 		hle_go   <= 1'b0;
 	end else if (ce) begin
 		// commit the deferred write: the value this edge, the bank it was
@@ -1224,14 +1232,24 @@ always @(posedge clk) begin
 						v <= (t32[31] == t32b[31]) & (t32c[31] != t32[31]);
 					end
 					4'hC: begin t32c = t32 | t32b; n <= t32c[31]; z <= (t32c == 0); end
-					4'hD: begin t32c = t32 * t32b; n <= t32c[31]; z <= (t32c == 0); end
+					4'hD: begin   // MUL: two states, like the ARM encodings
+						ml_single <= 1'b1;
+						ml_acc    <= 1'b0;
+						ml_flags  <= 1'b1;
+						ml_a      <= t32;          // Rdn
+						ml_b      <= t32b;         // Rs
+						ml_rd     <= tidx;
+						state     <= S_ML1;
+					end
 					4'hE: begin t32c = t32 & ~t32b; n <= t32c[31]; z <= (t32c == 0); end
 					default: begin t32c = ~t32b; n <= t32c[31]; z <= (t32c == 0); end
 					endcase
-					if (!(insn[9:6] == 4'h8 || insn[9:6] == 4'hA ||
-					      insn[9:6] == 4'hB))
-						`WREG_P(tidx, t32c)
-					state <= S_FETCH;
+					if (insn[9:6] != 4'hD) begin
+						if (!(insn[9:6] == 4'h8 || insn[9:6] == 4'hA ||
+						      insn[9:6] == 4'hB))
+							`WREG_P(tidx, t32c)
+						state <= S_FETCH;
+					end
 
 				end else if (insn[15:10] == 6'b010001) begin
 					// ---- 5. hi-register ops / BX ----
@@ -1523,17 +1541,21 @@ always @(posedge clk) begin
 								ml_b     <= rp_c;          // Rs
 								ml_al    <= rp_d;          // RdLo's old value
 								ml_ah    <= rp_a;          // RdHi's old value
+								ml_rd    <= insn[15:12];   // RdLo
+								ml_single <= 1'b0;
 								state    <= S_ML1;
 							end else begin
-								// ---- MUL / MLA ----
-								t64 = rp_b * rp_c;
-								if (insn[21]) t64 = t64 + {32'd0, rp_d};
-								if (insn[20]) begin
-									n <= t64[31];
-									z <= (t64[31:0] == 32'd0);
-								end
-								`WREG_P(insn[19:16], t64[31:0])
-								state <= S_FETCH;
+								// ---- MUL / MLA: the same two states as the long
+								// forms.  Only MLA accumulates (bit 21) and only
+								// the S bit (20) touches flags, from the low word.
+								ml_single <= 1'b1;
+								ml_acc    <= insn[21];
+								ml_flags  <= insn[20];
+								ml_a      <= rp_b;          // Rm
+								ml_b      <= rp_c;          // Rs
+								ml_al     <= rp_d;          // Rn
+								ml_rd     <= insn[19:16];   // Rd
+								state     <= S_ML1;
 							end
 						end
 						3'b101, 3'b110, 3'b111: begin
@@ -1702,7 +1724,9 @@ always @(posedge clk) begin
 							ml_a     <= t32;           // Rm's selected half
 							ml_b     <= t32b;          // Rs's selected half
 							ml_al    <= rp_d;
-							ml_ah    <= rp_a;
+							ml_ah    <= rp_a;          // RdHi's old value
+							ml_rd    <= insn[15:12];   // RdLo
+							ml_single <= 1'b0;
 							state    <= S_ML1;
 						end
 						4'h6: begin
@@ -2015,6 +2039,8 @@ always @(posedge clk) begin
 		S_ML1: begin
 			if (ml_half)
 				t64 = $signed(ml_a[15:0]) * $signed(ml_b[15:0]);
+			else if (ml_single)
+				t64 = ml_a * ml_b;         // low 32 bits are the same signed
 			else if (insn[22])
 				t64 = $signed(ml_a) * $signed(ml_b);
 			else
@@ -2028,13 +2054,14 @@ always @(posedge clk) begin
 		//--------------------------------------------------------
 		S_ML2: begin
 			t64 = ml_p;
-			if (ml_acc) t64 = t64 + {ml_ah, ml_al};
+			if (ml_acc)
+				t64 = ml_single ? t64 + {32'd0, ml_al} : t64 + {ml_ah, ml_al};
 			if (ml_flags) begin
-				n <= t64[63];
-				z <= (t64 == 64'd0);
+				n <= ml_single ? t64[31]               : t64[63];
+				z <= ml_single ? (t64[31:0] == 32'd0)  : (t64 == 64'd0);
 			end
-			`WREG(insn[15:12], t64[31:0])
-			`WREG(insn[19:16], t64[63:32])
+			`WREG(ml_rd, t64[31:0])
+			if (!ml_single) `WREG(insn[19:16], t64[63:32])
 			state <= S_FETCH;
 		end
 
