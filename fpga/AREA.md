@@ -2326,7 +2326,7 @@ placement effort 8.0:
 | seed 2, TDS off | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
 |---|---|---|---|---|---|---|---|---|---|
 | ARM7 port from flops, one-cycle multiply | 4,105 | 37,529 | 31,713 | -5.207 | -18,145.820 | +0.255 | +0.109 | 3,726,228 | 49:07 |
-| both bank writes captured | 4,029 | 34,353 | 31,675 | -4.375 | -12,115.231 | +0.250 | +0.316 | 3,650,576 | 40:56 |
+| both bank writes captured, pad stylus only | 4,029 | 34,353 | 31,675 | -4.375 | -12,115.231 | +0.250 | +0.316 | 3,650,576 | 40:56 |
 
 Everything moves the right way, and the area is the surprise: 76 LABs
 and 3,176 ALMs come back, 38 registers with them, the bitstream shrinks
@@ -2346,12 +2346,13 @@ the two sides of its mux sit far apart.
 
 The label `both bank writes captured` is the one `area_audit.py
 --check-shipped` looks for, so it stays on the shipped row; the name is
-history, not this change.
+history, not this change. When the shipped tree moves again, the row it
+leaves behind takes a qualifier and the new tree's row takes the name.
 
 The bench suite was run against this tree before the fit: 47 step(s),
 47 passed, 0 failed.
 
-This is the tree the core ships from now.
+This was the tree the core shipped from until the pointer mode.
 
 ### Seeds on the split-multiply tree (2026-11-20)
 
@@ -2401,7 +2402,7 @@ the low word. The bench suite ran first: 47 step(s), 47 passed.
 
 | seed 2, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
 |---|---|---|---|---|---|---|---|---|---|
-| both bank writes captured | 4,029 | 34,353 | 31,675 | -4.375 | -12,115.231 | +0.250 | +0.316 | 3,650,576 | 40:56 |
+| both bank writes captured, pad stylus only | 4,029 | 34,353 | 31,675 | -4.375 | -12,115.231 | +0.250 | +0.316 | 3,650,576 | 40:56 |
 | 32-bit multiplies split | 4,036 | 34,171 | 31,454 | -4.656 | -17,557.912 | +0.249 | +0.079 | 3,664,300 | 49:02 |
 
 `emu` gains 0.281 ns, and the ARM9 stops limiting the domain at all:
@@ -2427,7 +2428,7 @@ outright. It is also the change that does not pay:
 
 | seed 2, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
 |---|---|---|---|---|---|---|---|---|---|
-| both bank writes captured | 4,029 | 34,353 | 31,675 | -4.375 | -12,115.231 | +0.250 | +0.316 | 3,650,576 | 40:56 |
+| both bank writes captured, pad stylus only | 4,029 | 34,353 | 31,675 | -4.375 | -12,115.231 | +0.250 | +0.316 | 3,650,576 | 40:56 |
 | condition latched at fetch | 4,036 | 34,425 | 31,982 | -4.323 | -13,890.762 | +0.247 | +0.276 | 3,655,488 | 52:32 |
 
 0.052 ns of `emu` setup, for 1,775.531 of TNS, 0.040 ns of video margin,
@@ -2514,7 +2515,7 @@ seed-4 row, which the seed sweep already holds:
 
 | seed 4, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
 |---|---|---|---|---|---|---|---|---|
-| both bank writes captured | 4,049 | 34,329 | 31,684 | -4.140 | -14,485.416 | +0.240 | +0.331 | 3,631,904 |
+| both bank writes captured, seed 4 | 4,049 | 34,329 | 31,684 | -4.140 | -14,485.416 | +0.240 | +0.331 | 3,631,904 |
 | 32-bit multiplies split | 4,021 | 34,172 | 31,540 | -4.079 | -14,479.457 | +0.253 | +0.276 | 3,694,880 |
 
 Two of the three numbers that made it a loss at seed 2 do not survive
@@ -2546,7 +2547,7 @@ expression:
 
 | seed 2, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
 |---|---|---|---|---|---|---|---|---|---|
-| both bank writes captured | 4,029 | 34,353 | 31,675 | -4.375 | -12,115.231 | +0.250 | +0.316 | 3,650,576 | 40:56 |
+| both bank writes captured, pad stylus only | 4,029 | 34,353 | 31,675 | -4.375 | -12,115.231 | +0.250 | +0.316 | 3,650,576 | 40:56 |
 | block index in a register | 4,024 | 34,007 | 31,772 | -4.024 | -17,931.123 | +0.254 | +0.167 | 3,615,508 | 39:07 |
 
 The cluster is gone from the domain. The probe's worst six on the new
@@ -2576,7 +2577,7 @@ and its execution, so the fetch can latch it and every R15 read
 
 | seed 2, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
 |---|---|---|---|---|---|---|---|---|---|
-| both bank writes captured | 4,029 | 34,353 | 31,675 | -4.375 | -12,115.231 | +0.250 | +0.316 | 3,650,576 | 40:56 |
+| both bank writes captured, pad stylus only | 4,029 | 34,353 | 31,675 | -4.375 | -12,115.231 | +0.250 | +0.316 | 3,650,576 | 40:56 |
 | R15 read from a flop | 4,016 | 33,996 | 32,110 | -3.893 | -8,423.520 | +0.249 | -0.333 | 3,558,740 | 40:26 |
 
 This is the best `emu` result of the three changes read this week: 0.482
@@ -2611,3 +2612,39 @@ What the fits leave as targets, in the order the probes name them:
   multiplies, the block index, the R15 flop -- all spend video margin.
   Once something buys video margin instead, they are worth re-reading
   together on one tree.
+
+### A pointer mode for USB and Bluetooth devices (2026-11-21)
+
+hps_io's `ps2_mouse` is the only pointing device a core is ever given:
+one packet per toggle of bit 24, X and Y as a sign plus a magnitude, and
+three buttons. This core had its two PS/2 mouse pins tied high and
+ignored it. "Stylus cursor: Pointer" now moves the same absolute stylus
+the d-pad and the stick move, with the left button as the pen tip, so a
+USB or Bluetooth mouse, a laptop touchpad or a pen tablet in mouse mode
+hovers and taps. The motion is relative because that is what the HPS
+sends: there is no absolute position in the protocol and no pressure
+channel at all, so the cursor starts at the centre of the screen and a
+pen's pressure and tilt have nowhere to go.
+
+| seed 2, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| both bank writes captured, pad stylus only | 4,029 | 34,353 | 31,675 | -4.375 | -12,115.231 | +0.250 | +0.316 | 3,650,576 | 40:56 |
+| both bank writes captured | 4,014 | 34,497 | 31,723 | -3.838 | -12,941.207 | +0.247 | +0.328 | 3,588,036 | 39:56 |
+
+This is the first change this week that does not spend video margin:
+0.012 ns the right way, which is placement noise rather than a result,
+and 0.537 ns of `emu` setup, which is the best this domain has read.
+TNS gives back 825.976 and hold 0.003, 15 LABs come off the fit while
+144 ALMs and 48 registers go on, and the bitstream loses 62,540 bytes.
+
+The gain is larger than 60 lines of pointer logic can buy, and the probe
+says where it came from: the worst six paths are still `s_bpp8` into
+`wbank` inside `engine_a|renderer_2d`, at -3.838 against the
+block-index fit's -4.024 -- the same cluster, 0.186 ns shallower. So the
+row is a placement the extra input logic moved rather than a shortened
+path, and the number should not be quoted as a property of the mode.
+The mode itself is benches: 47 step(s), 47 passed, with nine new checks
+in `tb_input_mapper` for the packets, the toggle, the button, the edge
+clamp and the two cases where the pointer must be ignored.
+
+This is the tree the core ships from now.
