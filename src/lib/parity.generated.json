@@ -1,0 +1,38 @@
+{
+  "M1": {
+    "id": "M1",
+    "scope": "Skeleton, boot, HLE BIOS, main RAM, input + DDR3 cart paths",
+    "state": "complete",
+    "left": ""
+  },
+  "M2": {
+    "id": "M2",
+    "scope": "2D engines A/B, VRAM banking, DMA",
+    "state": "complete",
+    "left": ""
+  },
+  "M3": {
+    "id": "M3",
+    "scope": "GXFIFO → serialised multiplier → triangle setup → flat rasteriser → VRAM write-back → 3D layer composited by engine A; both 2D engines' fetches in bursts and the OAM scan pipelined so a line fits its period",
+    "state": "working",
+    "left": "W-buffer depth, fog, edge marking, toon shading, alpha test, QUADS/QUAD_STRIP, span fill"
+  },
+  "M4": {
+    "id": "M4",
+    "scope": "Sixteen SPU channels (PCM8/PCM16/ADPCM, loops, pan, master volume, 48 kHz mix); AUXSPI save probe over an emulated EEPROM/FRAM/FLASH chip; MT-32-pi MIDI and its return mix; timers, IPC, maths, per-CPU IRQ banks, HALT, RTC and the three-device SPI bus",
+    "state": "working",
+    "left": "SPU capture units, `.sav` persistence and erase, cart unlock sequence, FLASH above its 64 KB backed window"
+  },
+  "M5": {
+    "id": "M5",
+    "scope": "Microphone Off / R3 button / board ADC (LTC2308 at 48 kHz through the touchscreen's AUX channel) and the SPI touchscreen; slot-2 rumble pak (open-bus pattern, pad motors); the lid chord on `EXTKEYIN`",
+    "state": "working",
+    "left": "DS-to-DS wireless"
+  },
+  "M6": {
+    "id": "M6",
+    "scope": "Cheat engine (Action Replay, 8 entries per clock) and the DS-native menu, profiles and the video/audio filter rows",
+    "state": "partial",
+    "left": "Save states, rewind, replay"
+  }
+}

@@ -10,6 +10,7 @@ import {
 import { motion, useReducedMotion } from "framer-motion";
 import { Fragment, type ReactNode } from "react";
 import { Link } from "react-router";
+import { PARITY, ROADMAP } from "@/lib/parity";
 
 /* ------------------------------------------------------------------ data */
 
@@ -28,54 +29,6 @@ const SPECS = [
   ["Region lock", "None — U, J, PAL"],
   ["CPUs", "ARM9 + ARM7, cycle-timed"],
   ["Output", "HDMI · integer scaling"],
-];
-
-type Mark = "●" | "◐" | "○" | "—";
-const PARITY: { group: string; rows: [string, Mark, Mark, string][] }[] = [
-  {
-    group: "CPU & bus",
-    rows: [
-      ["ARM946E-S + ARM7TDMI interpretation", "●", "●", "Complete"],
-      ["Cycle-approximate bus, DMA & waitstates", "●", "◐", "In progress"],
-      ["Main memory slots & VRAM bank mapping", "●", "●", "Complete"],
-    ],
-  },
-  {
-    group: "Graphics",
-    rows: [
-      ["2D engines A/B — text, affine, extended", "●", "●", "In progress"],
-      ["3D geometry + rasterizer, toon & fog", "●", "◐", "In progress"],
-      ["Capture unit, blending, mosaic", "●", "●", "In progress"],
-      ["Locked frame pacing, no dropped frames", "◐", "◐", "Complete"],
-      ["Rotation, screen swap, per-game aspect", "●", "●", "Complete"],
-    ],
-  },
-  {
-    group: "Audio & input",
-    rows: [
-      ["SPU — ADPCM & PCM, 16 channels", "●", "●", "In progress"],
-      ["Touch, lid, keypad, rumble pak", "●", "●", "Complete"],
-      ["Microphone capture", "●", "◐", "In progress"],
-    ],
-  },
-  {
-    group: "Media & saves",
-    rows: [
-      ["Region-free boot — NTSC-U, NTSC-J, PAL carts", "●", "●", "Complete"],
-      ["Save types — EEPROM, FLASH, FRAM, NAND", "●", "●", "In progress"],
-      ["Slot-2 — GBA carts, DLDI, RTC", "●", "◐", "Planned"],
-      ["HLE BIOS and user-supplied BIOS boot", "●", "●", "In progress"],
-      ["Save states to SD card", "●", "●", "Planned"],
-    ],
-  },
-  {
-    group: "Network & tools",
-    rows: [
-      ["Local DS-to-DS wireless play", "◐", "○", "Planned"],
-      ["Cheat engine with per-game lists", "●", "●", "Complete"],
-      ["Soft reset & sleep handling", "●", "●", "Complete"],
-    ],
-  },
 ];
 
 const OSD_GROUPS: [string, string][] = [
@@ -103,15 +56,6 @@ const ARCHITECTURE: [string, string, string][] = [
   ["06", "Audio SPU", "16 channels of ADPCM and PCM mixed in fabric, framed out over I²S to the codec."],
   ["07", "Video out", "Scan-doubled 256×192 layers composed per layout, rotation-aware, into the scaler."],
   ["08", "HPS bridge", "Linux side: file browser, saves, cheats, profiles, settings — the OSD itself."],
-];
-
-const ROADMAP: [string, string, string, "Complete" | "In progress" | "Next" | "Planned"][] = [
-  ["M1", "Skeleton & boot", "ARM7/ARM9, IPC, HLE BIOS, main RAM, region-free boot from SD.", "Complete"],
-  ["M2", "2D pipeline", "Engines A/B, VRAM banking, DMA, HDMI output with rotation.", "Complete"],
-  ["M3", "3D pipeline", "GXFIFO, serialised multiplier, flat rasterizer, VRAM write-back, 3D layer over engine A.", "In progress"],
-  ["M4", "Sound, saves & cartridge", "Sixteen SPU channels, AUXSPI save probe, MT-32-pi MIDI, timers, IPC, RTC, SPI.", "In progress"],
-  ["M5", "Sensors", "Microphone Off / R3 / board ADC at 48 kHz, SPI touchscreen, slot-2 rumble pak and the lid chord; wireless still out.", "In progress"],
-  ["M6", "Front end", "Cheat engine and the DS-native menu, profiles and filter rows; save states, rewind, replay still out.", "In progress"],
 ];
 
 const HERO_PREVIEW: OsdRow[] = [
@@ -363,25 +307,25 @@ export default function Landing() {
                           {group.group}
                         </td>
                       </tr>
-                      {group.rows.map(([name, a, b, status]) => (
+                      {group.rows.map((row) => (
                         <tr
-                          key={name}
+                          key={row.name}
                           className="border-b border-border/60 transition-colors hover:bg-muted/40"
                         >
-                          <td className="py-3.5 pr-4 text-[14px] leading-6">{name}</td>
+                          <td className="py-3.5 pr-4 text-[14px] leading-6">{row.name}</td>
                           <td className="py-3.5 pr-4 text-[13px] text-muted-foreground">
-                            {a}
+                            {row.melonDS}
                           </td>
                           <td className="py-3.5 pr-4 text-[13px] text-muted-foreground">
-                            {b}
+                            {row.DeSmuME}
                           </td>
                           <td className="py-3.5">
                             <span
                               className={`inline-block border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.14em] ${statusStyle(
-                                status,
+                                row.status,
                               )}`}
                             >
-                              {status}
+                              {row.status}
                             </span>
                           </td>
                         </tr>
