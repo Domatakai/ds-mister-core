@@ -2684,7 +2684,7 @@ read the row against a like-for-like baseline:
 | seed 4, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
 |---|---|---|---|---|---|---|---|---|
 | both bank writes captured, pointer mode, seed 4 | 4,035 | 34,428 | 31,782 | -4.215 | -11,371.210 | +0.194 | +0.384 | 3,674,156 |
-| both bank writes captured | 4,043 | 34,237 | 31,503 | -4.474 | -9,255.070 | +0.243 | +0.239 | 3,671,232 |
+| both bank writes captured, seed 4 | 4,043 | 34,237 | 31,503 | -4.474 | -9,255.070 | +0.243 | +0.239 | 3,671,232 |
 
 At seed 4 the row costs 0.145 ns of the video path rather than 0.443, which
 is the same placement sensitivity the probe describes, and 8 LABs. It
@@ -2702,8 +2702,63 @@ bytes larger than its own seed-2 row. Both trees were built with
 `quartus_sh --flow compile`, which is the flow `build.bat` runs, so these
 are release builds and not ledger readings.
 
-The label `both bank writes captured` moves to this row and the pointer
-tree's row takes a qualifier, as it did when the pointer mode took it from
-the block index. Nothing here has run on a board: the bench checks cover
-the load, and the row itself is a menu item waiting for a game that shows
-its date.
+The label `both bank writes captured` moved to this row and the pointer
+tree's row took a qualifier, as it did when the pointer mode took it from
+the block index; the touchpad row below takes it next. Nothing here has run
+on a board: the bench checks cover the load, and the row itself is a menu
+item waiting for a game that shows its date.
+
+### A controller's touchpad as an absolute stylus (2026-11-21)
+
+The DS's touch screen is an absolute device: a game asks where the pen is,
+not how far it moved. Every stylus mode this core had was relative -- the
+d-pad and the left stick walk a cursor, and hps_io's `ps2_mouse` is delta
+packets -- so a controller with a touchpad could only nudge the pen across
+the screen. MiSTer does send one absolute pointing device to a core: Light
+Gun mode. Hold a finger on a DualShock 4's or a DualSense's touchpad, press
+that pad's OSD button once, and Main normalises the touchpad to -127..+127
+edge to edge and writes it to `joystick_l_analog_0` -- the port the left
+stick uses, which this core gives to no game input. **Touchpad stylus:
+Absolute** reads it as the pen's position.
+
+Two mappings matter and both are arithmetic the bench can own. The extremes
+arrive as 254 counts, not 255 and 191, so x gains its own top bit and y is
+scaled by 191/254 in shifts: the pen reaches column 255 and row 191 instead
+of stopping a pixel short of the corner. And the value is signed, so a
+stick can also send -128, one count below Main's window, which is clamped
+rather than wrapped onto the far edge. The pen is the tap button and not
+the touchpad's click, because Light Gun mode drops the touchpad's own mouse
+buttons and Main never tells a core whether a finger is down; the d-pad
+keeps its game meaning in this mode, which takes the pen outright. With the
+row Off nothing changes, and the same touchpad still drives Pointer as a
+mouse, because MiSTer presents it as one whenever Light Gun mode is off.
+
+At seed 4 against the previous tree at the same seed -- one row of logic
+between the two -- the row costs `emu` setup, TNS and ALMs, and gives back
+LABs, video margin and bitstream:
+
+| seed 4, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
+|---|---|---|---|---|---|---|---|---|
+| both bank writes captured, seed 4 | 4,043 | 34,237 | 31,503 | -4.474 | -9,255.070 | +0.243 | +0.239 | 3,671,232 |
+| both bank writes captured | 4,021 | 34,638 | 31,783 | -4.662 | -13,964.027 | +0.250 | +0.261 | 3,611,128 |
+
+0.188 ns of `emu` setup and 4,708.957 of TNS are the row's, and the domain
+fails either way. The 401 ALMs are more than the handful of adders it adds,
+and the 280 registers cannot be the row's at all because it holds no new
+state: the count has moved that far between two fits of one design at this
+seed before, 31,503 here against 31,782 on the fit before it, so the figure
+is the fitter's packing rather than the change. What is not ambiguous is
+the other side: 22 LABs come off the fit, 60,104 bytes off the bitstream,
+hold gains 0.007 and the video path 0.022 ns. The release is timed on
+`pll_hdmi`, the row is worth having, and it closes.
+
+The benches run against this tree: 47 step(s), 47 passed, with nine checks
+in `tb_input_mapper` for the mode -- both corners, the centre, the -128
+clamp, the row winning over the stick cursor row, the tap pressing and
+lifting, the d-pad still reaching KEYINPUT, and the pen holding still with
+the row off. Nothing here has run on a board: whether a DualSense's
+normalised touchpad lands corner to corner on a DS screen is the one thing
+only hardware can answer, and the mapping is what the bench pins down.
+
+The label `both bank writes captured` moves to this row, as it did twice
+before it.
