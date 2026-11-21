@@ -79,6 +79,10 @@
 //                            user settings report — rtl/bus/spi.sv)
 //   [90]    firmware         (HLE / firmware.bin. Reserved)
 //   [91]    RTC source       (Internal / Host)
+//   [92]    touchpad stylus  (Off / Absolute: MiSTer's Light Gun mode sends
+//                            the touchpad's position on joystick_l_analog_0,
+//                            which absolute mode reads as the pen position
+//                            — rtl/input/input_mapper.sv)
 //   [93]    auto overclock   (On/Off. Written On-first (0), so a fresh core
 //                            takes the per-game reference from the loaded
 //                            cart's game code instead of Normal)
@@ -122,7 +126,7 @@ assign BUTTONS   = 0;
 // menu names games from their own headers. Further extensions would be
 // packed three characters each ("NDSBIN"), with no separator.
 //------------------------------------------------------------------
-localparam [20359:0] CONF_STR = {   // 2545 string bytes, the 6-char `BUILD_DATE
+localparam [20655:0] CONF_STR = {   // 2582 string bytes, the 6-char `BUILD_DATE
                                     // (sys/build_id.tcl: %y%m%d) included
                                     // (tools/confstr_len.py checks the width)
 "NDS MiSTer Test;;",
@@ -158,6 +162,7 @@ localparam [20359:0] CONF_STR = {   // 2545 string bytes, the 6-char `BUILD_DATE
 "-;",
 "P4,Touch & Pad;",
 "P4O[34:33],Stylus cursor,Off,D-pad,Left stick,Pointer;",
+"P4O[92],Touchpad stylus,Off,Absolute;",
 "P4O[55:54],Stylus tap,L2,R2,L3,R3;",
 "P4O[84:83],Lid close,Ignore,L2+R2,L3+R3;",
 "P4O[36:35],Microphone,Off,Button,Host device;",
@@ -357,6 +362,7 @@ wire        fw_dump       = status[90];   // firmware.bin, reserved
 wire        rtc_src_host  = status[91];   // OSD "RTC source": 1 = Host
 wire  [1:0] region        = status[32:31];
 wire  [1:0] stylus_mode   = status[34:33];
+wire        stylus_abs    = status[92];   // OSD "Touchpad stylus": 1 = Absolute
 wire  [1:0] mic_source    = status[36:35];
 wire        rumble        = status[37];
 wire        motion_pak    = status[96];
@@ -1095,6 +1101,7 @@ input_mapper input_mapper (
 	.mouse(ps2_mouse),
 	.menu_active(menu_active),   // the picker swallows the pad
 	.stylus_cursor(stylus_mode),
+	.stylus_abs(stylus_abs),
 	.tap_sel(tap_sel),
 	.face_swap(face_swap),
 	.shoulder_swap(shoulder_swap),

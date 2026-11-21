@@ -20,6 +20,7 @@ reg [31:0] joy0 = 0, joy1 = 0;
 reg [15:0] stick0 = 0;
 reg menu_active = 0;
 reg [1:0] stylus_cursor = 0;
+reg stylus_abs = 0;
 reg [1:0] tap_sel = 0;
 reg face_swap = 0, shoulder_swap = 0;
 reg [1:0] mic_source = 0;
@@ -37,7 +38,8 @@ input_mapper dut (
 	.clk(clk), .reset(reset),
 	.joy0(joy0), .joy1(joy1), .stick0(stick0), .mouse(mouse),
 	.menu_active(menu_active),
-	.stylus_cursor(stylus_cursor), .tap_sel(tap_sel),
+	.stylus_cursor(stylus_cursor), .stylus_abs(stylus_abs),
+	.tap_sel(tap_sel),
 	.face_swap(face_swap), .shoulder_swap(shoulder_swap),
 	.mic_source(mic_source), .mic_adc(mic_adc), .lid_sel(lid_sel),
 	.keys(keys), .touch_x(touch_x), .touch_y(touch_y),
@@ -247,6 +249,58 @@ initial begin
 	lid_sel = 2'd0;
 	joy0 = 0;
 	repeat (3) @(posedge clk);
+
+	// --- touchpad absolute: MiSTer's Light Gun mode on joystick_l_analog_0
+	stylus_abs = 1;
+	stylus_cursor = 2'd0;
+	stick0 = 16'h0000;                       // stick at rest = centre of the pad
+	repeat (3) @(posedge clk);
+	check("touchpad: rest is the middle",
+	      touch_x === 9'd127 && touch_y === 8'd94);
+
+	stick0 = 16'h7F7F;                       // X and Y at +127: bottom-right
+	repeat (3) @(posedge clk);
+	check("touchpad: far corner 255,191",
+	      touch_x === 9'd255 && touch_y === 8'd191);
+
+	stick0 = 16'h8181;                       // X and Y at -127: top-left
+	repeat (3) @(posedge clk);
+	check("touchpad: near corner 0,0",
+	      touch_x === 9'd0 && touch_y === 8'd0);
+
+	stick0 = 16'h7F80;                       // X at -128, past Main's window
+	repeat (3) @(posedge clk);
+	check("touchpad: -128 clamps", touch_x === 9'd0);
+
+	// the stick cursor row must not fight it
+	stylus_cursor = 2'd2;
+	stick0 = 16'h7F7F;
+	repeat (3) @(posedge clk);
+	check("touchpad: wins over the stick cursor row",
+	      touch_x === 9'd255 && touch_y === 8'd191);
+	stylus_cursor = 2'd0;
+
+	// the tap button is the pen tip, whatever the cursor row says
+	joy0 = 32'h0000_1000;                    // L2
+	repeat (3) @(posedge clk);
+	check("touchpad: tap presses the pen", touch_down === 1'b1);
+	joy0 = 0;
+	repeat (3) @(posedge clk);
+	check("touchpad: releasing the tap lifts it", touch_down === 1'b0);
+
+	// and the d-pad keeps its game meaning while the touchpad has the pen
+	joy0 = 32'h0000_0004;                    // Down
+	repeat (3) @(posedge clk);
+	check("touchpad: d-pad still reaches KEYINPUT", keys[6] === 1'b0);
+	joy0 = 0;
+
+	// steering stops when the row goes back to Off
+	stylus_abs = 0;
+	stick0 = 16'h8181;
+	repeat (300_000) @(posedge clk);          // long enough for a cursor step
+	check("touchpad off: it holds still",
+	      touch_x === 9'd255 && touch_y === 8'd191);
+	stick0 = 0;
 
 	if (errors == 0) $display("tb_input_mapper: PASS");
 	else             $display("tb_input_mapper: FAIL (%0d errors)", errors);

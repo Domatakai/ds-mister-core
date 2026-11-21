@@ -1327,6 +1327,7 @@ On first boot you should see:
 | OSD menu | every row listed under **OSD menu** below opens and changes video/audio live |
 | Lid close | hold L2+R2 with **Touch & Pad → Lid close → L2+R2**: both screens go black while it is held and the picture returns on release (with a real BIOS the firmware sees the hinge shut on `EXTKEYIN` bit 7 and can sleep) |
 | Language | set **Firmware → Language** and reload the game: a title that reads the firmware settings comes up in that language — the row rewrites the settings block the SPI flash serves |
+| Touchpad stylus | with **Touch & Pad → Touchpad stylus → Absolute** and a finger on a DualShock 4 / DualSense touchpad after switching Light Gun mode on, the pen sits where the finger is on the bottom screen and follows a drag; **Stylus tap** (L2) presses it |
 | RTC source | with **Firmware → RTC source → Host**, a game that shows the date (or the firmware's own clock) matches the MiSTer to the minute, and it keeps counting after the core starts; with **Internal** it comes up on the core's fixed start date |
 | `.nds` load (F1) | a game in `/media/fat/games/NDS` lists whatever the case of its extension; progress bar completes for any ROM size; cart LED activity; no freezes (ioctl_wait backpressure holds under DDR3 contention) |
 | Boot menu | load two or three games in a row, press Select: each row shows the title, the four-letter game code and the size each ROM header declares, the footer reads `64M SLOT`; `A` reboots into that game; the list is still there after the reboot |
@@ -1822,6 +1823,7 @@ MiSTer virtual gamepad ("Define joystick buttons" order):
 | L2/R2/L3/R3 | Stylus tap / microphone / lid close (configurable) |
 | Left stick | Stylus cursor (alternative mode) |
 | USB/BT mouse, trackpad, pen | Stylus cursor (Pointer mode, left button = pen tip) |
+| DualShock 4 / DualSense touchpad | Stylus, absolute (Touchpad stylus, in MiSTer's Light Gun mode) |
 
 KEYINPUT follows GBATEK exactly (bit0=A … bit11=Y, 0=Pressed), verified in
 `tb_input_mapper`. Holding the **Lid close** chord (L2+R2 by default) shuts the
@@ -1833,10 +1835,22 @@ Stylus cursors accelerate while held (250 px/s base, 1000 px/s after ~1 s).
 **Pointer** mode moves the same stylus from the pointing device MiSTer presents
 to cores: a USB or Bluetooth mouse, a laptop touchpad, or a pen tablet in
 mouse mode. Its left button is the pen tip, so a hovering pen moves the cursor
-without touching the screen and a tap presses it. MiSTer hands a core only
-relative PS/2 mouse motion. There is no absolute-position or pressure channel,
-so the cursor starts at the centre of the screen and a pen's pressure and tilt
-cannot reach the DS (which has no pressure register on its touch port anyway).
+without touching the screen and a tap presses it. That path is relative — the
+HPS sends delta packets — so the cursor starts at the centre and is walked
+from there, and a pen's pressure and tilt cannot reach the DS (which has no
+pressure register on its touch port anyway).
+
+**Touchpad stylus** is the absolute one. A DualShock 4 and a DualSense both
+carry a touchpad, and MiSTer's Light Gun mode turns it into an absolute
+pointer: hold a finger on the pad and press the pad's OSD button once (the
+screen says *Light Gun mode is ON*), and Main normalises the finger to
+-127..+127 edge to edge and sends it on `joystick_l_analog_0` — the port the
+left stick uses, which this core gives to no game input. The row puts the pen
+where the finger is, so the pad's corner is the screen's corner and a drag is
+a drag, with no cursor to walk across first; the tap button (below) is the pen
+tip, because Light Gun mode drops the touchpad's own click. Any other MiSTer
+light gun arrives the same way. With the row Off, the same touchpad is still a
+relative mouse and drives Pointer, which needs no option at all.
 
 ## OSD menu
 
@@ -1850,7 +1864,7 @@ this core added:
 | **Slot-1 Card** | load `.nds` into the next free slot (F1), **Slot-2 RAM expansion Off / 8 / 16 / 32 MB** (main-bus RAM at 0x09000000 for the games that ask for the pak: the official pak is 8 MB, the unofficial ones 16 and 32 MB, the last from DDR3), save type, erase, **Boot menu** (also on the pad's Select), **Clear game slots** |
 | **Screens** | screen layout **Vertical / Horizontal / Top only / Bottom only** (the DS's own arrangement is the default), rotation 0-270, swap screens, aspect, **Backlight Dim / Low / Medium / High / Brightest** (the panel gain the DS's backlight steps map to), scanlines, refresh rate Native 59.82 / 59.95 / 60.00, video output HDMI 256x384 / CRT 240p side by side / CRT 240p single / CRT 31 kHz, video filter Off / Soft / Smooth / Sharp, **LCD colour** Original / DS LCD / Vivid / Warm / Cool / Grayscale |
 | **Sound** | master volume, **Sound output Stereo / Mono / Headphones** (the DS Settings wording), SPU sync, I²S latency 1 / 2 / 4 frames, audio filter Off / Warm / Bright / Bass, stereo width Off / Soft / Strong |
-| **Touch & Pad** | stylus cursor Off / D-pad / Left stick / Pointer (USB or Bluetooth mouse, trackpad, pen tablet), stylus tap L2 / R2 / L3 / R3, **Lid close Ignore / L2+R2 / L3+R3**, **Microphone Off / Button / Host device** (Host device samples the board ADC at 48 kHz; the mic has to be wired to the ADC pins), rumble pak, **motion pak Off / On** (slot-2 Motion Pack on the sticks), face + shoulder swaps, pad profile |
+| **Touch & Pad** | stylus cursor Off / D-pad / Left stick / Pointer (USB or Bluetooth mouse, trackpad, pen tablet), **Touchpad stylus Off / Absolute** (a DualShock 4 or DualSense touchpad, or any light gun, in MiSTer's Light Gun mode), stylus tap L2 / R2 / L3 / R3, **Lid close Ignore / L2+R2 / L3+R3**, **Microphone Off / Button / Host device** (Host device samples the board ADC at 48 kHz; the mic has to be wired to the ADC pins), rumble pak, **motion pak Off / On** (slot-2 Motion Pack on the sticks), face + shoulder swaps, pad profile |
 | **Firmware** | **ARM7 BIOS HLE / bios7.bin**, **ARM9 BIOS HLE / bios9.bin**, **Firmware HLE / firmware.bin**, **Language English / Japanese / French / German / Italian / Spanish**, **Auto-start Manual / Auto**, **RTC source Internal / Host**, region |
 | **System** | core speed 100 / 150 / 200 / Max %, CPU overclock Normal / ARM7 ×2 / ARM7 ×4, **auto overclock On / Off** (per game — see below), frameskip, auto frameskip, rewind buffer. A `Diagnostics` header row follows with FPS, frame graph, bus LEDs, log level and **Disable all cheats** |
 | **MIDI** | MT-32-pi link, MIDI volume 0–100% for the return path, internal demo stream, Pi LCD on screen, LCD size 1x / 2x, corner Top left / Top right / Bottom left / Bottom right, synth MT-32 / SoundFont, SoundFont bank 0-7 |
@@ -1917,6 +1931,12 @@ Three of the DS-specific rows are not just labels:
   hinge edge, so a game that waits on it sees the shell shut; `tb_main_bus`
   proves it fires on close, fires on open, and stays quiet while the lid is
   held still.
+- **Touchpad stylus** — the pen follows a controller's touchpad absolutely.
+  MiSTer's Light Gun mode (a finger on the pad, then the pad's OSD button)
+  normalises the touchpad to -127..+127 edge to edge on
+  `joystick_l_analog_0`, and `input_mapper` reads that as column 0..255 and
+  row 0..191, extremes at the screen's own corners. The tap button is the pen
+  tip. It needs no pressure or tilt channel, because the DS has neither.
 - **Language** — the language the DS firmware reports to a game, i.e. the
 language its text comes up in. `fw_default` is the synthesised user-settings
 block served over SPI, so the row substitutes the language halfword at

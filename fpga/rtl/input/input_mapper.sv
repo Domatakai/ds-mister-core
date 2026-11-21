@@ -21,6 +21,14 @@
 //     Bluetooth mouse, a trackpad, or a pen tablet in mouse mode -- and
 //     its left button is the pen tip.  A hovering pen moves the cursor
 //     without touching the screen, which is what the pen does on the DS.
+//     OSD "Touchpad stylus": Off / Absolute.  MiSTer's Light Gun mode --
+//     press the pad's OSD button with a finger on a DualShock 4 or a
+//     DualSense touchpad -- sends that touchpad's position edge to edge on
+//     joystick_l_analog_0, the wire the left stick already uses and this
+//     core feeds to no game input.  Absolute puts the pen where the finger
+//     is instead of walking a cursor there, and the tap button is the tip.
+//     Without Light Gun mode the same touchpad arrives as a mouse and
+//     drives the pointer mode above; that needs no option.
 //     OSD "Microphone": Off / Button (hold R3) / Host device
 //     "Host device" is the board ADC (mic_adc): an analog microphone wired to
 //     the DE10-Nano's converter, sampled at 48 kHz. The DS reads it through
@@ -48,7 +56,8 @@ module input_mapper (
 
 	// OSD configuration
 	input            menu_active,   // boot menu owns the screen: keys released
-	input      [1:0] stylus_cursor, // 0 off, 1 d-pad, 2 left stick
+	input      [1:0] stylus_cursor, // 0 off, 1 d-pad, 2 left stick, 3 pointer
+	input            stylus_abs,    // OSD "Touchpad stylus": 1 = absolute
 	input      [1:0] tap_sel,       // 0 L2, 1 R2, 2 L3, 3 R3
 	input            face_swap,     // A<->B, X<->Y
 	input            shoulder_swap, // L<->R
@@ -83,7 +92,10 @@ wire btn_r = shoulder_swap ? joy0[JLS] : joy0[JRS];
 wire joy_up = joy0[JU], joy_down = joy0[JD];
 wire joy_left = joy0[JL], joy_right = joy0[JR];
 
-wire dpad_live = (stylus_cursor != 2'd1); // d-pad mode gives dpad to the stylus
+// an absolute touchpad owns the pen outright, so the d-pad keeps its game
+// meaning whatever the cursor row says
+wire abs_mode = stylus_abs;
+wire dpad_live = abs_mode ? 1'b1 : (stylus_cursor != 2'd1);
 
 wire tap =
 	(tap_sel == 2'd0) ? joy0[JL2] :
@@ -128,7 +140,7 @@ wire stick_left  = $signed(stick0[7:0])   < -$signed(8'd40);
 wire stick_down  = $signed(stick0[15:8])  >  $signed(8'd40);
 wire stick_up    = $signed(stick0[15:8])  < -$signed(8'd40);
 
-wire use_stick = (stylus_cursor == 2'd2);
+wire use_stick = (stylus_cursor == 2'd2) && !abs_mode;
 wire cur_r = use_stick ? stick_right : (stylus_cursor == 2'd1) ? joy_right : 1'b0;
 wire cur_l = use_stick ? stick_left  : (stylus_cursor == 2'd1) ? joy_left  : 1'b0;
 wire cur_d = use_stick ? stick_down  : (stylus_cursor == 2'd1) ? joy_down  : 1'b0;
@@ -157,6 +169,27 @@ always @(*) begin
 	py = $signed({4'd0, touch_y}) - $signed({{3{m_dy[8]}}, m_dy});
 end
 
+//------------------------------------------------------------------
+// Touchpad: the stick wire, read as an absolute position
+//------------------------------------------------------------------
+// MiSTer's Light Gun mode normalises the touchpad to -127..+127 edge to
+// edge and sends X in stick0[7:0] and Y in stick0[15:8], signed, the same
+// port the left stick uses.  The extremes land one count short of the
+// screen's own range (254, not 255 or 191), so x gains its own top bit and
+// y is scaled by 191/254 in shifts: the pen reaches column 255 and row 191
+// instead of stopping a pixel short of the corner.  A stick can also send
+// -128, which would wrap if it were added as unsigned, so the sum is signed
+// and clamped at zero.
+wire signed [8:0]  abx   = {stick0[7],  stick0[7:0]};   // signed, -128..127
+wire signed [8:0]  aby   = {stick0[15], stick0[15:8]};
+wire signed [9:0]  abx_n = abx + 10'sd127;             // -1..254
+wire signed [9:0]  aby_n = aby + 10'sd127;
+wire [8:0] abx_c = (abx_n < 0) ? 9'd0 : abx_n[8:0];
+wire [8:0] aby_c = (aby_n < 0) ? 9'd0 : aby_n[8:0];
+wire [8:0] abs_x = abx_c + {8'd0, abx_c[7]};           // 0..255
+wire [7:0] abs_y = (aby_c[7:0] >> 1) + (aby_c[7:0] >> 2) +
+                   (aby_c[7:0] >> 7);                  // 0..191
+
 reg [23:0] hold_cnt = 0;
 reg [23:0] step_cnt = 0;
 wire [23:0] step_period = (hold_cnt > ACCEL_AFTER) ? STEP_FAST : STEP_BASE;
@@ -168,6 +201,11 @@ always @(posedge clk) begin
 		step_cnt <= 0;
 		touch_x  <= 9'd128;
 		touch_y  <= 8'd96;
+	end else if (abs_mode) begin
+		hold_cnt <= 0;
+		step_cnt <= 0;
+		touch_x  <= abs_x;
+		touch_y  <= abs_y;
 	end else if (m_new) begin
 		hold_cnt <= 0;
 		step_cnt <= 0;
@@ -207,9 +245,11 @@ always @(posedge clk) begin
 		// background must not see Select/A presses aimed at it
 		keys <= menu_active ? 12'hFFF : ~pressed;
 		// the pointer's left button is the pen tip; the pad modes keep the
-		// OSD-selected tap button
+		// OSD-selected tap button, and an absolute touchpad has no button of
+		// its own (Light Gun mode drops the touchpad's click), so it taps too
 		touch_down <= !menu_active &&
-		              (pointer ? mouse[0]
+		              (abs_mode ? tap :
+		               pointer ? mouse[0]
 		                       : (stylus_cursor != 2'd0 && tap));
 		// mid-scale is the DS's silent reading; R3 drives it high, the board
 		// ADC passes through, and Off holds the floor whatever arrives
