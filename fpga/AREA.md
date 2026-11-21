@@ -2504,3 +2504,110 @@ and the flow runs 1:29 longer. What has changed is the size of the buy:
 `emu` path at all -- the probe's worst four now start at
 `arm7_core|pc[1]` and sit within 0.052 ns of each other -- so the shipped
 setting stays at 8.0.
+
+### The split multiplies at seed 4 (2026-11-21)
+
+The split was read at seed 2, where it lost 0.237 ns of the video margin.
+A seed-2 loss can be the seed rather than the change, so the same tree
+was fitted again at seed 4 and read against the shipped tree's own
+seed-4 row, which the seed sweep already holds:
+
+| seed 4, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
+|---|---|---|---|---|---|---|---|---|
+| both bank writes captured | 4,049 | 34,329 | 31,684 | -4.140 | -14,485.416 | +0.240 | +0.331 | 3,631,904 |
+| 32-bit multiplies split | 4,021 | 34,172 | 31,540 | -4.079 | -14,479.457 | +0.253 | +0.276 | 3,694,880 |
+
+Two of the three numbers that made it a loss at seed 2 do not survive
+the second seed. `emu` gains 0.061 ns here against 0.281 there, and the
+video path gives back 0.055 against 0.237, so most of that video cost
+was where the fitter put the logic and not what the change built. The
+sign does not move: the split still spends margin on `pll_hdmi`, the
+path the release is timed on, to move a domain that fails either way.
+TNS is 5.959 better and hold 0.013 better, 28 LABs, 157 ALMs and 144
+registers come off the fit, and the bitstream gains 62,976 bytes for the
+two states. 40:13 of wall against 40:56 on the shipped tree at seed 2 is
+machine load and not the setting.
+
+The rule that retired seed 1 and the condition latch is the rule here.
+The split stays out until something frees the video path; after that all
+three changes want reading together at one seed.
+
+### Moving the block-transfer index into a register (2026-11-21)
+
+After the condition latch went out, the probe's worst four `emu` paths
+were within 0.16 ns of each other and all started at `blk_list`: bit 0
+and bit 4 of the list walking sixteen terms into `blk_idx`, then through
+a register read-port index into `dp_a` and a register at the core's
+edge. The list is written in S_EXEC and first read in S_BLK, and the
+beat that clears a bit is the beat that has to produce the next index,
+so the walk can end in a flop. `blk_first` does that, and the two Thumb
+stack forms now name their lists so the list and the index come from one
+expression:
+
+| seed 2, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| both bank writes captured | 4,029 | 34,353 | 31,675 | -4.375 | -12,115.231 | +0.250 | +0.316 | 3,650,576 | 40:56 |
+| block index in a register | 4,024 | 34,007 | 31,772 | -4.024 | -17,931.123 | +0.254 | +0.167 | 3,615,508 | 39:07 |
+
+The cluster is gone from the domain. The probe's worst six on the new
+fit are all inside `engine_a|renderer_2d` -- `s_bpp8` and `shw[0]` into
+`wbank` -- and sit within 0.019 ns of each other, with no path naming
+`blk_list`. So 0.351 ns of `emu` setup is that walk's whole share of the
+domain, and what is left under it is the read-port mux in front of
+`dp_a`, which the probe does not name in its first six.
+
+It is still the same trade. The video path gives back 0.149 ns -- less
+than the split's 0.237 and more than the latch's 0.040, but the same
+direction -- TNS is 5,816 the wrong way, and `emu` fails either way. 5
+LABs, 346 ALMs and 35,068 bytes come off the fit and 97 registers go on.
+It was reverted. What it proves is worth keeping: the new `emu` limit is
+the renderer's write bank, not a CPU path, so the next ARM9 change of
+this kind buys less than this one did.
+
+### Reading R15 from a flop (2026-11-21)
+
+The worst `emu` path at placement effort 10 did not end at pc, it left
+from it: `pc[1]` into `Add45` (pc+4), into the shifter amount, through
+the barrel shifter's `ShiftLeft1` and `rotr`, `Mux52` and the ALU's
+`Add7` into `pc[31]` -- 18.706 ns of data delay in 11 levels at -4.253.
+The value an instruction reads from R15 cannot change between its fetch
+and its execution, so the fetch can latch it and every R15 read
+(`dp_a`, `rm_val`, `rs_amt`) starts at a flop instead:
+
+| seed 2, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| both bank writes captured | 4,029 | 34,353 | 31,675 | -4.375 | -12,115.231 | +0.250 | +0.316 | 3,650,576 | 40:56 |
+| R15 read from a flop | 4,016 | 33,996 | 32,110 | -3.893 | -8,423.520 | +0.249 | -0.333 | 3,558,740 | 40:26 |
+
+This is the best `emu` result of the three changes read this week: 0.482
+ns of setup and 3,691.711 of TNS, and the probe's worst six have moved
+off pc -- they start at `sh_amt[4]`, `Equal81` and `insn[2]` and end in
+`arm7_core|rread`. The video path goes from +0.316 to -0.333, though:
+0.649 ns, and it fails. That is not a trade to weigh, it is the release's
+timing path lost, so it was reverted. 13 LABs, 357 ALMs and 91,836 bytes
+come off and 435 registers go on for the 32-bit latch.
+
+### Where the three probes leave the tree (2026-11-21)
+
+The week's three changes each removed a real path and each cost margin
+on `pll_hdmi`: the split multiplies 0.237 at seed 2 and 0.055 at seed 4,
+the condition latch 0.040, the block index 0.149, the R15 flop 0.649.
+Only the first shrank with the seed, so most of its cost was placement;
+the R15 flop's fail is the setting's and not the seed's until a second
+seed says otherwise.
+
+What the fits leave as targets, in the order the probes name them:
+
+- `emu` is now limited inside `engine_a|renderer_2d` -- `s_bpp8` and
+  `shw[0]` into `wbank`, six paths within 0.019 ns. That is the renderer
+  and not a CPU path; it wants its own probe before any more core work.
+- The ARM7's shift-amount mux into `rread` is the next CPU cluster, and
+  it is what the R15 flop left behind.
+- The shipped tree's own seed-4 fit is better than its seed-2 fit on
+  both numbers at once (`emu` -4.140 against -4.375, video +0.331
+  against +0.316). A shipped-seed change still has to go through the
+  release path rather than be read off the ledger.
+- The four retired changes -- seed 1, the condition latch, the split
+  multiplies, the block index, the R15 flop -- all spend video margin.
+  Once something buys video margin instead, they are worth re-reading
+  together on one tree.

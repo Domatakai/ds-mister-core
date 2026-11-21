@@ -271,14 +271,7 @@ reg  [7:0]  sh_amt;
 // keeps the operand and the shifter amount live.
 wire [4:0]  rm_f = insn[3:0];
 wire [4:0]  rs_f = insn[11:8];
-// R15 is read through this flop rather than from an adder in front of every
-// consumer. As a wire it was the worst `emu` path at placement effort 10:
-// pc[1] -> pc+4 -> the shifter amount -> the barrel shifter -> the ALU ->
-// pc[31], 18.706 ns of data delay in 11 levels for -4.253. The value an
-// instruction sees is A+8 in ARM and A+4 in Thumb, and pc does not move
-// again until that instruction writes it, so the fetch can latch it and
-// every R15 read starts at a flop.
-reg  [31:0] pc_ahead;
+wire [31:0] pc_ahead = pc + (insn_thumb ? 32'd2 : 32'd4);
 wire [31:0] rm_val = (rm_f == 5'd15) ? pc_ahead : regs[rm_f];
 wire [7:0]  rs_amt = (rs_f == 5'd15) ? pc_ahead[7:0] : regs[rs_f][7:0];
 
@@ -566,7 +559,6 @@ always @(posedge clk) begin
 	if (lr_v) r14_b[lr_m] <= lr_val;
 	if (reset) begin
 		pc       <= boot_pc;
-		pc_ahead <= boot_pc + 32'd8;
 		n <= 1'b0; z <= 1'b0; c <= 1'b0; v <= 1'b0;
 		i <= 1'b1; f <= 1'b1; t <= 1'b0;
 		mode     <= 5'h13;               // SVC
@@ -628,7 +620,6 @@ always @(posedge clk) begin
 				insn_thumb <= 1'b1;
 				insn       <= pc[1] ? f_word[31:16] : f_word[15:0];
 				pc         <= pc + 32'd2;
-				pc_ahead   <= pc + 32'd4;
 				state      <= S_EXEC;
 			end else begin
 				insn_thumb <= t;
@@ -651,7 +642,6 @@ always @(posedge clk) begin
 				else
 					insn <= bus_rdata;
 				pc    <= pc + (insn_thumb ? 32'd2 : 32'd4);
-				pc_ahead <= pc + (insn_thumb ? 32'd4 : 32'd8);
 				state <= S_EXEC;
 			end
 		end
