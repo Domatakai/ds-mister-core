@@ -2716,22 +2716,25 @@ d-pad and the left stick walk a cursor, and hps_io's `ps2_mouse` is delta
 packets -- so a controller with a touchpad could only nudge the pen across
 the screen. MiSTer does send one absolute pointing device to a core: Light
 Gun mode. Hold a finger on a DualShock 4's or a DualSense's touchpad, press
-that pad's OSD button once, and Main normalises the touchpad to -127..+127
-edge to edge and writes it to `joystick_l_analog_0` -- the port the left
+that pad's OSD button once, and Main maps a fixed window of the pad --
+200..1720 across and 300..850 down, of the 1920x943 surface -- onto
+-127..+127 and writes it to `joystick_l_analog_0` -- the port the left
 stick uses, which this core gives to no game input. **Touchpad stylus:
-Absolute** reads it as the pen's position.
+Absolute** reads it as the pen's position, with the window's ends on the
+screen's edges, so the outer margin of the physical pad does nothing.
 
-Two mappings matter and both are arithmetic the bench can own. The extremes
-arrive as 254 counts, not 255 and 191, so x gains its own top bit and y is
-scaled by 191/254 in shifts: the pen reaches column 255 and row 191 instead
-of stopping a pixel short of the corner. And the value is signed, so a
-stick can also send -128, one count below Main's window, which is clamped
-rather than wrapped onto the far edge. The pen is the tap button and not
-the touchpad's click, because Light Gun mode drops the touchpad's own mouse
-buttons and Main never tells a core whether a finger is down; the d-pad
-keeps its game meaning in this mode, which takes the pen outright. With the
-row Off nothing changes, and the same touchpad still drives Pointer as a
-mouse, because MiSTer presents it as one whenever Light Gun mode is off.
+Two mappings matter and both are arithmetic the bench can own. Adding 127
+to the signed extremes gives 0..254, not 255 and 191, so x gains its top
+bit and y is scaled by 191/254 in shifts: the pen reaches column 255 and
+row 191 instead of stopping a pixel short of the corner. And the value is
+signed, so a stick can also send -128, one count below Main's window, which
+is clamped rather than wrapped onto the far edge. The pen is the tap button
+and not the touchpad's click, because Light Gun mode drops the touchpad's
+own mouse buttons and Main never tells a core whether a finger is down; the
+d-pad keeps its game meaning in this mode, which takes the pen outright.
+With the row Off nothing changes, and the same touchpad still drives
+Pointer as a mouse, because MiSTer presents it as one whenever Light Gun
+mode is off.
 
 At seed 4 against the previous tree at the same seed -- one row of logic
 between the two -- the row costs `emu` setup, TNS and ALMs, and gives back

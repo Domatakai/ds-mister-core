@@ -1843,14 +1843,16 @@ pressure register on its touch port anyway).
 **Touchpad stylus** is the absolute one. A DualShock 4 and a DualSense both
 carry a touchpad, and MiSTer's Light Gun mode turns it into an absolute
 pointer: hold a finger on the pad and press the pad's OSD button once (the
-screen says *Light Gun mode is ON*), and Main normalises the finger to
--127..+127 edge to edge and sends it on `joystick_l_analog_0` — the port the
-left stick uses, which this core gives to no game input. The row puts the pen
-where the finger is, so the pad's corner is the screen's corner and a drag is
-a drag, with no cursor to walk across first; the tap button (below) is the pen
-tip, because Light Gun mode drops the touchpad's own click. Any other MiSTer
-light gun arrives the same way. With the row Off, the same touchpad is still a
-relative mouse and drives Pointer, which needs no option at all.
+screen says *Light Gun mode is ON*), and Main maps a fixed window of the pad
+onto -127..+127 and sends it on `joystick_l_analog_0` — the port the left
+stick uses, which this core gives to no game input. That window is inset from
+the pad's edges (200..1720 of its 1920 pixels across, 300..850 of its 943
+down), so a finger in the outer margin does nothing; inside it the pen tracks
+the finger one-to-one, with the window's ends at the screen's edges and no
+cursor to walk across first. The tap button (below) is the pen tip, because
+Light Gun mode drops the touchpad's own click. Any other MiSTer light gun
+arrives the same way. With the row Off, the same touchpad is still a relative
+mouse and drives Pointer, which needs no option at all.
 
 ## OSD menu
 
