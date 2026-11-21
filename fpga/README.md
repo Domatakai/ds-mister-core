@@ -1434,6 +1434,15 @@ vvp /tmp/tb_arm9
 # TB ARM9 PASS (109 checks)
 # iverilog -Ptb_arm9.FETCH_BUF=0 ... prints the same program without the
 # buffer (372 bus reads)
+# 3c-2. ARM9 TCM — the 32 KB instruction and 16 KB data TCM as storage behind
+#       the CPU's bus port: a data-TCM write and read with no fabric traffic,
+#       the byte lanes, the instruction TCM and the 32 MB area that mirrors its
+#       32 KB at 0x01000000 (where libnds and blocksds run from), the control
+#       bit and region size sending the same address to the fabric instead, and
+#       a miss passing through with its strobes intact
+iverilog -g2012 -o /tmp/tb_tcm tb/tb_tcm.sv rtl/cpu/arm9_tcm.sv
+vvp /tmp/tb_tcm
+# TB TCM PASS
 
 # 3d. CPU clock ratio — both cores through cpu_ce and cpu_ce_bridge onto the
 #     REAL bus (main_bus, mem_arbiter, an SDRAM device model), running the same

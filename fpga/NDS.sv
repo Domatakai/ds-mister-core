@@ -1630,6 +1630,7 @@ arm9_core arm9 (
 	.halted(m9_halted),
 	.thumb_state(m9_thumb),
 	.pc_out(m9_pc),
+	.cp15_ctrl(a9_c1), .cp15_c9d(a9_c9d), .cp15_c9i(a9_c9i),
 	.hle_go(hle9_go), .hle_num(hle9_num),
 	.hle_r0(hle9_r0), .hle_r1(hle9_r1), .hle_r2(hle9_r2), .hle_r3(hle9_r3),
 	.hle_done(hle9_done), .hle_handled(hle9_handled),
@@ -1640,11 +1641,28 @@ arm9_core arm9 (
 	.hle_b_ack(hle9_b_ack), .hle_b_rdata(hle9_b_rdata)
 );
 
+// The ARM9's TCM storage sits on its own bus port, ahead of the clock-enable
+// bridge: a TCM access is answered here and never reaches the fabric, and a
+// miss passes through with the core's handshake intact.
+wire [31:0] a9_c1, a9_c9d, a9_c9i;
+wire [31:0] t9_addr, t9_wdata, t9_rdata;
+wire  [3:0] t9_be;
+wire        t9_rd, t9_wr, t9_ready;
+
+arm9_tcm tcm9 (
+	.clk(clk_sys),
+	.c1_ctrl(a9_c1), .c9_dtcm(a9_c9d), .c9_itcm(a9_c9i),
+	.c_addr(c9_addr), .c_wdata(c9_wdata), .c_be(c9_be),
+	.c_rd(c9_rd), .c_wr(c9_wr), .c_rdata(c9_rdata), .c_ready(c9_ready),
+	.f_addr(t9_addr), .f_wdata(t9_wdata), .f_be(t9_be),
+	.f_rd(t9_rd), .f_wr(t9_wr), .f_rdata(t9_rdata), .f_ready(t9_ready)
+);
+
 cpu_ce_bridge bus9 (
 	.clk(clk_sys), .ce(ce9),
-	.core_addr(c9_addr), .core_wdata(c9_wdata), .core_be(c9_be),
-	.core_rd(c9_rd), .core_wr(c9_wr),
-	.core_rdata(c9_rdata), .core_ready(c9_ready),
+	.core_addr(t9_addr), .core_wdata(t9_wdata), .core_be(t9_be),
+	.core_rd(t9_rd), .core_wr(t9_wr),
+	.core_rdata(t9_rdata), .core_ready(t9_ready),
 	.bus_addr(m9_addr), .bus_wdata(m9_wdata), .bus_be(m9_be),
 	.bus_rd(m9_rd), .bus_wr(m9_wr),
 	.bus_rdata(m9_rdata), .bus_ready(m9_ready)

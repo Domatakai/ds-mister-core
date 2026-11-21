@@ -89,6 +89,11 @@ module arm9_core #(
 	output            thumb_state,
 	output     [31:0] pc_out,
 
+	// ---- CP15 state the TCM stage decodes ----
+	output     [31:0] cp15_ctrl,
+	output     [31:0] cp15_c9d,
+	output     [31:0] cp15_c9i,
+
 	// ---- BIOS SWI bank (one shared engine, arbitrated: `swi_share`) ----
 	// A call is CPU state, so it leaves the core: `hle_go` rises with the
 	// number and r0..r3, the arbiter hands the one shared engine over, and the
@@ -170,6 +175,11 @@ reg [31:0] spsr_fiq, spsr_irq, spsr_svc, spsr_abt, spsr_und;
 //------------------------------------------------------------------
 reg [31:0] cp15_r [0:15];
 reg [31:0] cp15_aux;
+// c9 has two halves selected by opcode_2: 0 is the data TCM region, 1 the
+// instruction TCM region. The array slot holds the data half (it is what an
+// MRC with opcode_2 0 reads); the instruction half needs its own register,
+// or a write to either would overwrite the other.
+reg [31:0] cp9_itcm;
 // reset values, and the two read-only identification values (ARM946E-S: the
 // ID decodes as architecture 5TE, part 0x946, revision 1; the cache type
 // decodes as 4 KB four-way data and 8 KB four-way instruction caches, which is
@@ -272,6 +282,9 @@ wire        f_hit = FETCH_BUF && f_valid && (f_addr == {pc[31:2], 2'b00});
 assign halted      = (state == S_HALT);
 assign thumb_state = t;
 assign pc_out      = pc;
+assign cp15_ctrl   = cp15_r[1];
+assign cp15_c9d    = cp15_r[9];
+assign cp15_c9i    = cp9_itcm;
 
 //------------------------------------------------------------------
 // Helpers
@@ -889,6 +902,7 @@ always @(*) begin
 	4'h7:    cprd = 32'd0;
 	// c1 opcode_2 1 is the auxiliary control register
 	4'h1:    cprd = (cp15_op2 == 3'd1) ? cp15_aux : cp15_r[1];
+	4'h9:    cprd = (cp15_op2 == 3'd1) ? cp9_itcm : cp15_r[9];
 	default: cprd = cp15_r[cp15_crn];
 	endcase
 end
@@ -1837,6 +1851,8 @@ always @(posedge clk) begin
 							// re-read from memory.
 							if (cp15_crn == 4'h1 && cp15_op2 == 3'd1)
 								cp15_aux <= rp_d;
+							else if (cp15_crn == 4'h9 && cp15_op2 == 3'd1)
+								cp9_itcm <= rp_d;
 							else if (cp15_crn != 4'h0)
 								cp15_r[cp15_crn] <= rp_d;
 							if (cp15_crn == 4'h7) f_valid <= 1'b0;
