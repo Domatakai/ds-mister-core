@@ -11,7 +11,7 @@ below — the two are intentionally kept in step.
 
 ## Status
 
-Honest state: **M1 and M2 complete, M3 and M4 working, M5 and M6 partial** —
+Honest state: **M1 and M2 complete, M3, M4 and M5 working, M6 partial** —
 and "working" here means the list below, with nothing implied. Every block
 named is implemented and has a testbench that exercises it; what is not there
 is written down rather than left to be discovered:

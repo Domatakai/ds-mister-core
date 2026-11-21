@@ -43,7 +43,7 @@ const PARITY: { group: string; rows: [string, Mark, Mark, string][] }[] = [
   {
     group: "Graphics",
     rows: [
-      ["2D engines A/B — text, affine, extended", "●", "●", "Complete"],
+      ["2D engines A/B — text, affine, extended", "●", "●", "In progress"],
       ["3D geometry + rasterizer, toon & fog", "●", "◐", "In progress"],
       ["Capture unit, blending, mosaic", "●", "●", "In progress"],
       ["Locked frame pacing, no dropped frames", "◐", "◐", "Complete"],
@@ -55,16 +55,16 @@ const PARITY: { group: string; rows: [string, Mark, Mark, string][] }[] = [
     rows: [
       ["SPU — ADPCM & PCM, 16 channels", "●", "●", "In progress"],
       ["Touch, lid, keypad, rumble pak", "●", "●", "Complete"],
-      ["Microphone capture", "●", "◐", "Planned"],
+      ["Microphone capture", "●", "◐", "In progress"],
     ],
   },
   {
     group: "Media & saves",
     rows: [
       ["Region-free boot — NTSC-U, NTSC-J, PAL carts", "●", "●", "Complete"],
-      ["Save types — EEPROM, FLASH, FRAM, NAND", "●", "●", "Planned"],
+      ["Save types — EEPROM, FLASH, FRAM, NAND", "●", "●", "In progress"],
       ["Slot-2 — GBA carts, DLDI, RTC", "●", "◐", "Planned"],
-      ["HLE BIOS and user-supplied BIOS boot", "●", "●", "Complete"],
+      ["HLE BIOS and user-supplied BIOS boot", "●", "●", "In progress"],
       ["Save states to SD card", "●", "●", "Planned"],
     ],
   },
