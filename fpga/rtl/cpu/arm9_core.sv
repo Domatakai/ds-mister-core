@@ -211,18 +211,12 @@ reg  [2:0] pw_mode;
 // multiplier, a DSP carry chain and a 64-bit adder into the write port,
 // and on into the read-through mux of the register it had just written.
 // The operands are captured where the instruction decodes, S_ML1 latches
-// the product and S_ML2 adds the accumulator and writes the result.  MUL,
-// MLA and the Thumb ALU's MUL take the same two states with a 32-bit result
-// and one destination, because their product sat on the same path: from the
-// read ports through the multiplier into the register write.  The halfword
-// media multiplies still compute in place.
+// the product and S_ML2 adds the accumulator and writes both halves.
 reg        ml_half;            // 16x16 signed halves (SMLALxy)
 reg        ml_acc;             // add {ml_ah, ml_al}
 reg        ml_flags;           // set N and Z from the 64-bit result
 reg [31:0] ml_a, ml_b, ml_al, ml_ah;
 reg [63:0] ml_p;
-reg        ml_single;          // a 32-bit result: MUL, MLA, Thumb MUL
-reg  [4:0] ml_rd;              // its destination, or the long form's RdLo
 
 // swap
 reg        swap_en, swap_phase;
@@ -762,19 +756,29 @@ always @(*) begin
 	endcase
 end
 
-// lowest set bit of the block-transfer list
-reg  [3:0] blk_idx;
-reg        blk_found;
-integer    kk;
-always @(*) begin
-	blk_found = 1'b0;
-	blk_idx   = 4'd0;
-	for (kk = 0; kk < 16; kk = kk + 1)
-		if (!blk_found && blk_list[kk]) begin
-			blk_idx   = kk[3:0];
-			blk_found = 1'b1;
-		end
-end
+// Lowest set bit of the block-transfer list, in a register of its own.
+// Fed straight from blk_list it started the worst `emu` cluster on the
+// latch tree: bit 0 of the list (fanout 110 and 129 on its two cells)
+// walked the sixteen terms into blk_idx, blk_idx drives a read-port index,
+// and the register-file mux and the ALU sat behind the walk -- 18.396 ns of
+// data delay in ten levels.  Nothing reads the index in the cycle the list
+// is written: S_EXEC writes the list and S_BLK is the first state that
+// reads the index.  The beat that clears a bit is also the beat that has to
+// produce the next index, so the walk has an edge to move across either way.
+function [3:0] blk_first (input [15:0] l);
+	integer i;
+	begin
+		blk_first = 4'd0;
+		for (i = 15; i >= 0; i = i - 1)
+			if (l[i]) blk_first = i[3:0];
+	end
+endfunction
+
+// the list shapes the two Thumb stack encodings build
+wire [15:0] push_list = insn[7:0] | (insn[8] ? 16'h4000 : 16'h0000);
+wire [15:0] pop_list  = insn[7:0] | (insn[8] ? 16'h8000 : 16'h0000);
+
+reg [3:0] blk_idx;
 
 // SP adjustment for Thumb PUSH/POP: four bytes per listed register, and the
 // link bit adds r14 to the count as well
@@ -929,6 +933,7 @@ always @(posedge clk) begin
 		bus_wr   <= 1'b0;
 		blk_run  <= 1'b0;
 		blk_list <= 16'd0;
+		blk_idx  <= 4'd0;
 		blk_usr  <= 1'b0;
 		blk_restore <= 1'b0;
 		swap_en  <= 1'b0;
@@ -939,8 +944,6 @@ always @(posedge clk) begin
 		dw_phase <= 1'b0;
 		f_valid  <= 1'b0;
 		bl_pending <= 1'b0;
-		ml_single  <= 1'b0;
-		ml_rd      <= 5'd0;
 		hle_go   <= 1'b0;
 	end else if (ce) begin
 		// commit the deferred write: the value this edge, the bank it was
@@ -1232,24 +1235,14 @@ always @(posedge clk) begin
 						v <= (t32[31] == t32b[31]) & (t32c[31] != t32[31]);
 					end
 					4'hC: begin t32c = t32 | t32b; n <= t32c[31]; z <= (t32c == 0); end
-					4'hD: begin   // MUL: two states, like the ARM encodings
-						ml_single <= 1'b1;
-						ml_acc    <= 1'b0;
-						ml_flags  <= 1'b1;
-						ml_a      <= t32;          // Rdn
-						ml_b      <= t32b;         // Rs
-						ml_rd     <= tidx;
-						state     <= S_ML1;
-					end
+					4'hD: begin t32c = t32 * t32b; n <= t32c[31]; z <= (t32c == 0); end
 					4'hE: begin t32c = t32 & ~t32b; n <= t32c[31]; z <= (t32c == 0); end
 					default: begin t32c = ~t32b; n <= t32c[31]; z <= (t32c == 0); end
 					endcase
-					if (insn[9:6] != 4'hD) begin
-						if (!(insn[9:6] == 4'h8 || insn[9:6] == 4'hA ||
-						      insn[9:6] == 4'hB))
-							`WREG_P(tidx, t32c)
-						state <= S_FETCH;
-					end
+					if (!(insn[9:6] == 4'h8 || insn[9:6] == 4'hA ||
+					      insn[9:6] == 4'hB))
+						`WREG_P(tidx, t32c)
+					state <= S_FETCH;
 
 				end else if (insn[15:10] == 6'b010001) begin
 					// ---- 5. hi-register ops / BX ----
@@ -1367,7 +1360,8 @@ always @(posedge clk) begin
 
 				end else if (insn[15:12] == 4'b1011 && insn[11:9] == 3'b010) begin
 					// ---- 13a. PUSH ----
-					blk_list <= insn[7:0] | (insn[8] ? 16'h4000 : 16'h0000);
+					blk_list <= push_list;
+					blk_idx  <= blk_first(push_list);
 					blk_addr <= r13_b[cur_m] - thumb_sp_off;
 					blk_ld   <= 1'b0;
 					blk_pc_hit <= 1'b0;
@@ -1381,7 +1375,8 @@ always @(posedge clk) begin
 
 				end else if (insn[15:12] == 4'b1011 && insn[11:9] == 3'b110) begin
 					// ---- 13b. POP ----
-					blk_list <= insn[7:0] | (insn[8] ? 16'h8000 : 16'h0000);
+					blk_list <= pop_list;
+					blk_idx  <= blk_first(pop_list);
 					blk_addr <= r13_b[cur_m];
 					blk_ld   <= 1'b1;
 					blk_pc_hit <= 1'b0;
@@ -1402,6 +1397,7 @@ always @(posedge clk) begin
 				end else if (insn[15:12] == 4'b1100 && !insn[11]) begin
 					// ---- 14. STMIA ----
 					blk_list <= insn[7:0];
+					blk_idx  <= blk_first(insn[7:0]);
 					blk_addr <= rp_a;
 					blk_ld   <= 1'b0;
 					blk_pc_hit <= 1'b0;
@@ -1430,6 +1426,7 @@ always @(posedge clk) begin
 				end else if (insn[15:12] == 4'b1100 && insn[11]) begin
 					// ---- 15. LDMIA ----
 					blk_list <= insn[7:0];
+					blk_idx  <= blk_first(insn[7:0]);
 					blk_addr <= rp_a;
 					blk_ld   <= 1'b1;
 					blk_pc_hit <= 1'b0;
@@ -1541,21 +1538,17 @@ always @(posedge clk) begin
 								ml_b     <= rp_c;          // Rs
 								ml_al    <= rp_d;          // RdLo's old value
 								ml_ah    <= rp_a;          // RdHi's old value
-								ml_rd    <= insn[15:12];   // RdLo
-								ml_single <= 1'b0;
 								state    <= S_ML1;
 							end else begin
-								// ---- MUL / MLA: the same two states as the long
-								// forms.  Only MLA accumulates (bit 21) and only
-								// the S bit (20) touches flags, from the low word.
-								ml_single <= 1'b1;
-								ml_acc    <= insn[21];
-								ml_flags  <= insn[20];
-								ml_a      <= rp_b;          // Rm
-								ml_b      <= rp_c;          // Rs
-								ml_al     <= rp_d;          // Rn
-								ml_rd     <= insn[19:16];   // Rd
-								state     <= S_ML1;
+								// ---- MUL / MLA ----
+								t64 = rp_b * rp_c;
+								if (insn[21]) t64 = t64 + {32'd0, rp_d};
+								if (insn[20]) begin
+									n <= t64[31];
+									z <= (t64[31:0] == 32'd0);
+								end
+								`WREG_P(insn[19:16], t64[31:0])
+								state <= S_FETCH;
 							end
 						end
 						3'b101, 3'b110, 3'b111: begin
@@ -1724,9 +1717,7 @@ always @(posedge clk) begin
 							ml_a     <= t32;           // Rm's selected half
 							ml_b     <= t32b;          // Rs's selected half
 							ml_al    <= rp_d;
-							ml_ah    <= rp_a;          // RdHi's old value
-							ml_rd    <= insn[15:12];   // RdLo
-							ml_single <= 1'b0;
+							ml_ah    <= rp_a;
 							state    <= S_ML1;
 						end
 						4'h6: begin
@@ -1815,6 +1806,7 @@ always @(posedge clk) begin
 					// bit 25 clear separates LDM/STM (100 P U S W L) from B/BL
 					// (101 L), which share bits 27:26
 					blk_list <= insn[15:0];
+					blk_idx  <= blk_first(insn[15:0]);
 					t32      = rp_a;
 					t32b     = (insn[15:0] == 16'd0) ? 32'd64
 					                                : {24'd0, popcnt16(insn[15:0]), 2'b00};
@@ -1981,6 +1973,7 @@ always @(posedge clk) begin
 						end
 					end
 					blk_list <= blk_list & ~(16'd1 << blk_idx);
+					blk_idx  <= blk_first(blk_list & ~(16'd1 << blk_idx));
 					blk_addr <= blk_addr + 32'd4;
 					state    <= S_BLK;
 				end else if (swap_en) begin
@@ -2039,8 +2032,6 @@ always @(posedge clk) begin
 		S_ML1: begin
 			if (ml_half)
 				t64 = $signed(ml_a[15:0]) * $signed(ml_b[15:0]);
-			else if (ml_single)
-				t64 = ml_a * ml_b;         // low 32 bits are the same signed
 			else if (insn[22])
 				t64 = $signed(ml_a) * $signed(ml_b);
 			else
@@ -2054,14 +2045,13 @@ always @(posedge clk) begin
 		//--------------------------------------------------------
 		S_ML2: begin
 			t64 = ml_p;
-			if (ml_acc)
-				t64 = ml_single ? t64 + {32'd0, ml_al} : t64 + {ml_ah, ml_al};
+			if (ml_acc) t64 = t64 + {ml_ah, ml_al};
 			if (ml_flags) begin
-				n <= ml_single ? t64[31]               : t64[63];
-				z <= ml_single ? (t64[31:0] == 32'd0)  : (t64 == 64'd0);
+				n <= t64[63];
+				z <= (t64 == 64'd0);
 			end
-			`WREG(ml_rd, t64[31:0])
-			if (!ml_single) `WREG(insn[19:16], t64[63:32])
+			`WREG(insn[15:12], t64[31:0])
+			`WREG(insn[19:16], t64[63:32])
 			state <= S_FETCH;
 		end
 
