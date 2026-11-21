@@ -121,7 +121,7 @@ assign BUTTONS   = 0;
 // menu names games from their own headers. Further extensions would be
 // packed three characters each ("NDSBIN"), with no separator.
 //------------------------------------------------------------------
-localparam [20031:0] CONF_STR = {   // 2504 string bytes, the 6-char `BUILD_DATE
+localparam [20095:0] CONF_STR = {   // 2512 string bytes, the 6-char `BUILD_DATE
                                     // (sys/build_id.tcl: %y%m%d) included
                                     // (tools/confstr_len.py checks the width)
 "NDS MiSTer Test;;",
@@ -156,7 +156,7 @@ localparam [20031:0] CONF_STR = {   // 2504 string bytes, the 6-char `BUILD_DATE
 "P3O[69:68],Stereo width,Off,Soft,Strong;",
 "-;",
 "P4,Touch & Pad;",
-"P4O[34:33],Stylus cursor,Off,D-pad,Left stick;",
+"P4O[34:33],Stylus cursor,Off,D-pad,Left stick,Pointer;",
 "P4O[55:54],Stylus tap,L2,R2,L3,R3;",
 "P4O[84:83],Lid close,Ignore,L2+R2,L3+R3;",
 "P4O[36:35],Microphone,Off,Button,Host device;",
@@ -221,6 +221,7 @@ wire        any_slot;      // at least one staged game exists
 wire   [1:0] buttons;
 wire         forced_scandoubler;
 wire  [10:0] ps2_key;
+wire  [24:0] ps2_mouse;    // hps_io pointing device: stylus "Pointer" mode
 wire  [31:0] joystick_0, joystick_1;
 wire         ioctl_download;
 wire  [26:0] ioctl_addr;
@@ -270,6 +271,7 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1), .VDNUM(1)) hps_io
 	.status(status),
 	.status_menumask({14'd0, any_slot, game_loaded}), // h0 = game loaded, h1 = a slot exists
 	.ps2_key(ps2_key),
+	.ps2_mouse(ps2_mouse),
 	.joystick_0(joystick_0),
 	.joystick_1(joystick_1),
 	.joystick_l_analog_0(stick0),
@@ -1085,6 +1087,7 @@ input_mapper input_mapper (
 	.joy0(joystick_0),
 	.joy1(joystick_1),
 	.stick0(stick0),
+	.mouse(ps2_mouse),
 	.menu_active(menu_active),   // the picker swallows the pad
 	.stylus_cursor(stylus_mode),
 	.tap_sel(tap_sel),

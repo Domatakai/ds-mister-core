@@ -14,9 +14,13 @@
 //     6 Down 7 Up  8 R  9 L  10 X  11 Y
 //
 //   Stylus (bottom screen, 256x192):
-//     OSD "Stylus cursor": Off / D-pad / Left stick
+//     OSD "Stylus cursor": Off / D-pad / Left stick / Pointer
 //     OSD "Stylus tap":    L2 / R2 / L3 / R3  (any extra button)
 //     Cursor accelerates while held; tap presses the "screen".
+//     Pointer moves the same cursor from hps_io's ps2_mouse -- a USB or
+//     Bluetooth mouse, a trackpad, or a pen tablet in mouse mode -- and
+//     its left button is the pen tip.  A hovering pen moves the cursor
+//     without touching the screen, which is what the pen does on the DS.
 //     OSD "Microphone": Off / Button (hold R3) / Host device
 //     "Host device" is the board ADC (mic_adc): an analog microphone wired to
 //     the DE10-Nano's converter, sampled at 48 kHz. The DS reads it through
@@ -40,6 +44,7 @@ module input_mapper (
 	input     [31:0] joy0,
 	input     [31:0] joy1,
 	input     [15:0] stick0,   // hps_io joystick_l_analog_0: {Y[15:8], X[7:0]} signed
+	input     [24:0] mouse,    // hps_io ps2_mouse: {toggle, Y, X, buttons}
 
 	// OSD configuration
 	input            menu_active,   // boot menu owns the screen: keys released
@@ -131,16 +136,45 @@ wire cur_u = use_stick ? stick_up    : (stylus_cursor == 2'd1) ? joy_up    : 1'b
 
 wire any_dir = cur_r | cur_l | cur_d | cur_u;
 
+//------------------------------------------------------------------
+// Pointer: the only pointing device a core is ever given
+//------------------------------------------------------------------
+// hps_io's ps2_mouse is one packet per toggle of bit 24: X in 15:8 and Y
+// in 23:16 as a sign bit (4 and 5) plus a magnitude, the three buttons in
+// 2:0. PS/2's Y grows upward and the screen's grows down, so Y is
+// subtracted. Nothing here is absolute -- the HPS sends relative motion
+// even for a tablet -- so the cursor starts at the centre and is moved,
+// and a pen in mouse mode hovers (no button) and taps (left button).
+wire pointer    = (stylus_cursor == 2'd3);
+wire [8:0] m_dx = {mouse[4], mouse[15:8]};
+wire [8:0] m_dy = {mouse[5], mouse[23:16]};
+reg        m_tog = 1'b0;
+wire       m_new = (m_tog ^ mouse[24]) && pointer && !menu_active;
+
+reg signed [11:0] px, py;   // the move, before the clamp
+always @(*) begin
+	px = $signed({3'd0, touch_x}) + $signed({{3{m_dx[8]}}, m_dx});
+	py = $signed({4'd0, touch_y}) - $signed({{3{m_dy[8]}}, m_dy});
+end
+
 reg [23:0] hold_cnt = 0;
 reg [23:0] step_cnt = 0;
 wire [23:0] step_period = (hold_cnt > ACCEL_AFTER) ? STEP_FAST : STEP_BASE;
 
 always @(posedge clk) begin
+	m_tog <= mouse[24];
 	if (reset) begin
 		hold_cnt <= 0;
 		step_cnt <= 0;
 		touch_x  <= 9'd128;
 		touch_y  <= 8'd96;
+	end else if (m_new) begin
+		hold_cnt <= 0;
+		step_cnt <= 0;
+		touch_x  <= (px < 12'sd0)   ? 9'd0   :
+		            (px > 12'sd255) ? 9'd255 : px[8:0];
+		touch_y  <= (py < 12'sd0)   ? 8'd0   :
+		            (py > 12'sd191) ? 8'd191 : py[7:0];
 	end else if (any_dir) begin
 		hold_cnt <= (hold_cnt == 24'hFFFFFF) ? hold_cnt : hold_cnt + 1'd1;
 		if (step_cnt >= step_period - 1'd1) begin
@@ -172,7 +206,11 @@ always @(posedge clk) begin
 		// same pad drives the picker, and a game left running in the
 		// background must not see Select/A presses aimed at it
 		keys <= menu_active ? 12'hFFF : ~pressed;
-		touch_down <= !menu_active && stylus_cursor != 2'd0 && tap;
+		// the pointer's left button is the pen tip; the pad modes keep the
+		// OSD-selected tap button
+		touch_down <= !menu_active &&
+		              (pointer ? mouse[0]
+		                       : (stylus_cursor != 2'd0 && tap));
 		// mid-scale is the DS's silent reading; R3 drives it high, the board
 		// ADC passes through, and Off holds the floor whatever arrives
 		mic_lvl <= (mic_source == 2'd1) ? (joy0[JR3] ? 12'hC00 : 12'h400) :

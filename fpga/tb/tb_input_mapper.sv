@@ -25,6 +25,7 @@ reg face_swap = 0, shoulder_swap = 0;
 reg [1:0] mic_source = 0;
 reg [11:0] mic_adc = 12'h400;
 reg [1:0] lid_sel = 0;
+reg [24:0] mouse = 0;
 
 wire [11:0] keys;
 wire [8:0] touch_x;
@@ -34,7 +35,7 @@ wire [11:0] mic_lvl;
 
 input_mapper dut (
 	.clk(clk), .reset(reset),
-	.joy0(joy0), .joy1(joy1), .stick0(stick0),
+	.joy0(joy0), .joy1(joy1), .stick0(stick0), .mouse(mouse),
 	.menu_active(menu_active),
 	.stylus_cursor(stylus_cursor), .tap_sel(tap_sel),
 	.face_swap(face_swap), .shoulder_swap(shoulder_swap),
@@ -45,6 +46,7 @@ input_mapper dut (
 );
 
 integer errors = 0;
+integer i;
 task check; // `expect` is an SVA keyword under -g2012, so avoid it
 	input [8*40:1] name;
 	input cond;
@@ -131,6 +133,64 @@ initial begin
 		check("stylus stick: cursor moves down", touch_y > y0);
 		stick0 = 0;
 	end
+
+	// --- Pointer: relative mouse packets move the stylus, tip = button 0
+	stylus_cursor = 2'd3;
+	joy0 = 0;
+	repeat (3) @(posedge clk);
+	begin : pointer_step
+		reg [8:0] x0;
+		reg [7:0] y0, y_before;
+		x0 = touch_x;
+		y0 = touch_y;
+		mouse = {1'b1, 8'd3, 8'd5, 8'd0};  // toggle, Y +3 (up), X +5
+		repeat (3) @(posedge clk);
+		check("pointer: X moves right", touch_x === x0 + 9'd5);
+		check("pointer: Y moves up", touch_y === y0 - 8'd3);
+		// a repeated packet without a toggle change is not a new move
+		repeat (3) @(posedge clk);
+		check("pointer: same toggle is not a packet", touch_x === x0 + 9'd5);
+		// the left button is the pen tip
+		mouse = {1'b0, 8'd0, 8'd0, 8'd1};
+		repeat (3) @(posedge clk);
+		check("pointer: left button presses", touch_down === 1'b1);
+		mouse = {1'b1, 8'd0, 8'd0, 8'd0};
+		repeat (3) @(posedge clk);
+		check("pointer: release lifts the pen", touch_down === 1'b0);
+		// the screen edge clamps instead of wrapping
+		for (i = 0; i < 8; i = i + 1) begin
+			mouse[24] = ~mouse[24];
+			mouse[15:8] = 8'd127;
+			repeat (2) @(posedge clk);
+		end
+		check("pointer: clamps at x=255", touch_x === 9'd255);
+		// the boot menu owns the screen, so it owns the pointer
+		y_before = touch_y;
+		menu_active = 1;
+		mouse[24] = ~mouse[24];
+		mouse[15:8] = 8'd0;
+		mouse[23:16] = 8'd127;   // straight down
+		mouse[5] = 1'b1;
+		repeat (3) @(posedge clk);
+		check("pointer: the picker swallows the move", touch_y === y_before);
+		menu_active = 0;
+	end
+
+	// --- and the pad modes ignore the pointing device
+	stylus_cursor = 2'd1;
+	begin : pointer_off_step
+		reg [8:0] x0;
+		x0 = touch_x;
+		mouse[24] = ~mouse[24];
+		mouse[15:8] = 8'd40;     // left, magnitude 40
+		mouse[4] = 1'b1;
+		repeat (3) @(posedge clk);
+		check("d-pad mode: the mouse is ignored", touch_x === x0);
+		check("d-pad mode: the mouse does not tap", touch_down === 1'b0);
+	end
+	stylus_cursor = 2'd0;
+	mouse = 0;
+	repeat (3) @(posedge clk);
 
 	// --- microphone: Off / R3 button / board ADC
 	mic_source = 2'd1;

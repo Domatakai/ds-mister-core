@@ -1817,6 +1817,7 @@ MiSTer virtual gamepad ("Define joystick buttons" order):
 | Select/Start | Select/Start |
 | L2/R2/L3/R3 | Stylus tap / microphone / lid close (configurable) |
 | Left stick | Stylus cursor (alternative mode) |
+| USB/BT mouse, trackpad, pen | Stylus cursor (Pointer mode, left button = pen tip) |
 
 KEYINPUT follows GBATEK exactly (bit0=A … bit11=Y, 0=Pressed), verified in
 `tb_input_mapper`. Holding the **Lid close** chord (L2+R2 by default) shuts the
@@ -1825,6 +1826,13 @@ the way a real DS behaves with its lid down. The chord deliberately avoids
 Select/Start, which the boot menu already uses. Keyboard users map the keyboard
 as a joystick in the MiSTer menu core and it arrives through the same path.
 Stylus cursors accelerate while held (250 px/s base, 1000 px/s after ~1 s).
+**Pointer** mode moves the same stylus from the pointing device MiSTer presents
+to cores: a USB or Bluetooth mouse, a laptop touchpad, or a pen tablet in
+mouse mode. Its left button is the pen tip, so a hovering pen moves the cursor
+without touching the screen and a tap presses it. MiSTer hands a core only
+relative PS/2 mouse motion. There is no absolute-position or pressure channel,
+so the cursor starts at the centre of the screen and a pen's pressure and tilt
+cannot reach the DS (which has no pressure register on its touch port anyway).
 
 ## OSD menu
 
@@ -1838,7 +1846,7 @@ this core added:
 | **Slot-1 Card** | load `.nds` into the next free slot (F1), **Slot-2 RAM expansion Off / 8 / 16 / 32 MB** (main-bus RAM at 0x09000000 for the games that ask for the pak: the official pak is 8 MB, the unofficial ones 16 and 32 MB, the last from DDR3), save type, erase, **Boot menu** (also on the pad's Select), **Clear game slots** |
 | **Screens** | screen layout **Vertical / Horizontal / Top only / Bottom only** (the DS's own arrangement is the default), rotation 0-270, swap screens, aspect, **Backlight Dim / Low / Medium / High / Brightest** (the panel gain the DS's backlight steps map to), scanlines, refresh rate Native 59.82 / 59.95 / 60.00, video output HDMI 256x384 / CRT 240p side by side / CRT 240p single / CRT 31 kHz, video filter Off / Soft / Smooth / Sharp, **LCD colour** Original / DS LCD / Vivid / Warm / Cool / Grayscale |
 | **Sound** | master volume, **Sound output Stereo / Mono / Headphones** (the DS Settings wording), SPU sync, I²S latency 1 / 2 / 4 frames, audio filter Off / Warm / Bright / Bass, stereo width Off / Soft / Strong |
-| **Touch & Pad** | stylus cursor Off / D-pad / Left stick, stylus tap L2 / R2 / L3 / R3, **Lid close Ignore / L2+R2 / L3+R3**, **Microphone Off / Button / Host device** (Host device samples the board ADC at 48 kHz; the mic has to be wired to the ADC pins), rumble pak, **motion pak Off / On** (slot-2 Motion Pack on the sticks), face + shoulder swaps, pad profile |
+| **Touch & Pad** | stylus cursor Off / D-pad / Left stick / Pointer (USB or Bluetooth mouse, trackpad, pen tablet), stylus tap L2 / R2 / L3 / R3, **Lid close Ignore / L2+R2 / L3+R3**, **Microphone Off / Button / Host device** (Host device samples the board ADC at 48 kHz; the mic has to be wired to the ADC pins), rumble pak, **motion pak Off / On** (slot-2 Motion Pack on the sticks), face + shoulder swaps, pad profile |
 | **Firmware** | **ARM7 BIOS HLE / bios7.bin**, **ARM9 BIOS HLE / bios9.bin**, **Firmware HLE / firmware.bin**, **Language English / Japanese / French / German / Italian / Spanish**, **Auto-start Manual / Auto**, region |
 | **System** | core speed 100 / 150 / 200 / Max %, CPU overclock Normal / ARM7 ×2 / ARM7 ×4, **auto overclock On / Off** (per game — see below), frameskip, auto frameskip, rewind buffer. A `Diagnostics` header row follows with FPS, frame graph, bus LEDs, log level and **Disable all cheats** |
 | **MIDI** | MT-32-pi link, MIDI volume 0–100% for the return path, internal demo stream, Pi LCD on screen, LCD size 1x / 2x, corner Top left / Top right / Bottom left / Bottom right, synth MT-32 / SoundFont, SoundFont bank 0-7 |
