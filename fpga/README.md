@@ -260,10 +260,10 @@ the ten commands that decode, the two that must not, and the wake.
 The caches themselves are not in yet. When they are, c1 bit 12 enables
 the instruction side and bit 2 the data side, c2's maps decide what is
 cacheable, and the c7 strobe is where their maintenance attaches. The
-state alone is 585 registers and 65 ALMs, and that is already enough to
-tip the release path: seed 4 ends at -0.257 ns on `pll_hdmi`, so the
-shipped fit is seed 2 at +0.010 (4,046 LABs, 34,809 ALMs, 32,510
-registers).
+state alone is 585 new flops and 65 ALMs -- 680 to 715 more device
+registers depending on the seed -- enough to tip the release path: seed 4
+ends at -0.257 ns on `pll_hdmi`, so the shipped fit is seed 2 at +0.010
+(4,046 LABs, 34,809 ALMs, 32,510 registers).
 
 The caches' bench will have the shape of `tb_arm9_tcm`: a
 keystone-assembled program that enables them, runs a loop that must not

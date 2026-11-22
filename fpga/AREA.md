@@ -2861,8 +2861,9 @@ test-and-clean reads report the cache already clean, and a WFI (c7,c0,4,
 plus the c8,2 alias GBATEK lists) stops the core until an interrupt, the
 same stop HALTCNT uses.
 
-The interesting part is the fit, because the change is only 585 registers
-and 65 ALMs on a device already at 96% LABs. At seed 4 the release path
+The interesting part is the fit, because the change is 585 new flops and
+65 ALMs -- 680 to 715 more device registers depending on the seed -- on a
+device already at 96% LABs. At seed 4 the release path
 `pll_hdmi` goes negative for the first time in this run of work, so that
 fit cannot ship. At seed 2 it closes with 10 ps to spare:
 
