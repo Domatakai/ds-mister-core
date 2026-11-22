@@ -165,8 +165,9 @@ nonsequential main-RAM data access is 10 units either way, 10 ARM7 cycles
 or 20 ARM9 cycles for the same 298 ns — and melonDS scales ARM9 time, not
 ARM7 time, in its scheduler. So the shared memory path is *not* slowed for
 the ARM7, exactly as on the real board; the ARM7's disadvantage is its own
-execution rate, while the ARM9's is the caches and TCM this core still
-lacks (with every fetch coming off the bus, both cores are memory-bound).
+execution rate, while the ARM9's is the caches it still lacks and the TCM
+it now has (with every fetch coming off the bus, both cores are
+memory-bound).
 
 The peripherals the ARM7 owns are ticked by that same enable rather than by
 a timebase of their own, because on the DS they are dividers of it: GBATEK
@@ -202,6 +203,67 @@ user port, with its 48 kHz I2S return mixed back in by
 `rtl/audio/audio_mix.sv` under its own OSD volume. Both directions and
 the mix are simulated, and the DS side of that mix — the sixteen-channel
 SPU — is now the real thing rather than a framing stub.
+
+### The caches: what the step has to do
+
+The TCM is in place; the caches are the rest of the ARM9's fast path, and
+GBATEK says why they matter: the DS's 66 MHz is usable only out of cache
+and TCM, and everything else pays the 33 MHz bus clock. Every fetch this
+core has made so far has been a bus access, so a loop the board's 8 KB
+instruction cache holds is paid for twice per instruction here.
+
+The hardware to match, from GBATEK and the ARM946E-S technical reference:
+a 4 KB data cache and an 8 KB instruction cache, four-way set associative,
+32-byte lines (eight words), allocate on read miss, round-robin or
+pseudo-random replacement selected by c1 bit 14, write-through or
+write-back on the data side by c1 bit 3, and a write buffer between the
+cache and the bus. The cache type register at c0, c0, 1 reads 0x0F0D2112,
+which is how software sizes its maintenance loops, so that value has to be
+right before anything else is.
+
+In this design the step has four parts, in the order they have to go:
+
+1. The CP15 state software can see: c2 (cache configuration), c3 (write
+   buffer), c5 and c6 (the protection unit's eight regions, base and
+   size), and c9 lockdown. Each has to read back what was written, and
+   c7's maintenance ops have to be decoded one at a time -- invalidate,
+   clean and flush, the whole cache or one entry by address or by index,
+   plus test-and-clean and prefetch -- because games issue them and some
+   spin until the line they cleaned is gone.
+2. The instruction cache, which is where the time is. A hit has to answer
+   the fetch on the cycle the core asks for it, as the TCM does, or the
+   stage buys nothing; a miss reloads eight words in one burst, which is
+   the shape the 2D fetch already uses against main RAM.
+3. The data cache in both write modes, with the line reload on a read miss
+   and the write buffer behind it, since write-back changes what the bus
+   is allowed to see and when.
+4. Coherence, which is what breaks games when it is missing: DMA writes to
+   main RAM, cart reads and the video engines' reads all have to invalidate
+   or update the lines they touch, and a cleaned line has to reach the bus
+   before the DMA that depends on it starts.
+
+The cost is not measured yet and should not be guessed from the TCM's: that
+was 48 KB of storage in 48 M10K blocks, so the caches' 12 KB of data and
+tags is around a dozen M10K plus tag and dirty-bit logic, and a line reload
+path in the core's bus stage. The next fit reports it.
+
+The bench that would own the step has the shape of `tb_arm9_tcm`: a
+keystone-assembled program that enables the caches, runs a loop that must
+not touch the fabric twice for one line, and issues each c7 operation so
+the decode is checked opcode by opcode rather than by watching a game.
+
+What follows the caches, in the order the remaining work costs most:
+
+* the caches themselves, then their coherence hook, because every DMA
+  change lands on top of it
+* the DMA channels' edge cases against cached memory -- source and
+  destination in the same line, a channel started while a line is dirty
+* the 3D path behind the current single-engine pipeline, including the
+  DS's own divider and square root unit, which the geometry side leans on
+* the protection unit's effect on the ITCM mirror: GBATEK notes the PU is
+  what keeps software from running anywhere in the low 32 MB
+* hardware: nothing in this tree has run on a board, so the stylus
+  mapping, the TCM and every timing figure above are simulation only
 
 ### The console's housekeeping I/O
 
@@ -1443,6 +1505,21 @@ vvp /tmp/tb_arm9
 iverilog -g2012 -o /tmp/tb_tcm tb/tb_tcm.sv rtl/cpu/arm9_tcm.sv
 vvp /tmp/tb_tcm
 # TB TCM PASS
+# 3c-3. the TCM through the core — the stage where NDS.sv puts it, with the
+#       core itself programming it. A program assembled by keystone and read
+#       back by capstone (tools/gen_tcm_program.py) writes the data TCM's
+#       region register (c9 opcode_2 0) and c1 bit 16, stores and byte-patches
+#       a word there, writes the instruction TCM's region register (opcode_2
+#       1) and c1 bit 18, reads both c9 registers back through MRC, then
+#       copies two instructions into the ITCM at 0x01000000 and runs them.
+#       Checks the values it leaves, that neither TCM window ever reached the
+#       fabric model, that a TCM access is answered on the cycle the core
+#       samples it while a fabric access takes its wait state, and that the
+#       fabric did serve the program and its results block
+iverilog -g2012 -o /tmp/tb_arm9_tcm tb/tb_arm9_tcm.sv          rtl/cpu/arm9_core.sv rtl/cpu/arm9_tcm.sv
+vvp /tmp/tb_arm9_tcm
+# 20 checks
+# TB ARM9 TCM PASS
 
 # 3d. CPU clock ratio — both cores through cpu_ce and cpu_ce_bridge onto the
 #     REAL bus (main_bus, mem_arbiter, an SDRAM device model), running the same
