@@ -225,13 +225,17 @@ instruction cache.
 
 In this design the step has four parts, in the order they have to go:
 
-1. The CP15 state software can see: c2 (cache configuration), c3 (write
-   buffer), c5 and c6 (the protection unit's eight regions, base and
-   size), and c9 lockdown. Each has to read back what was written, and
-   c7's maintenance ops have to be decoded one at a time -- invalidate,
-   clean and flush, the whole cache or one entry by address or by index,
-   plus test-and-clean and prefetch -- because games issue them and some
-   spin until the line they cleaned is gone.
+1. The CP15 state software can see: c2's two cachability maps (data and
+   instruction), c3's write-bufferability map, c5 and c6 (the protection
+   unit's eight regions: permissions, then base/size/enable), and c9's
+   lockdown registers, which share an opcode with the TCM regions and are
+   told apart by CRm. Each has to read back what was written, with the
+   reserved bits zero, and c7's commands have to be decoded one at a time
+   -- the ARM946E-S's set, which is whole-cache invalidate, single-line
+   invalidate by address, single-line clean and clean-and-invalidate by
+   address or index, test-and-clean and prefetch. This part has no
+   clean-all and no invalidate-by-index; software loops over the lines.
+   Games issue them, and some spin until the line they cleaned is gone.
 2. The instruction cache, which is where the time is. A hit has to answer
    the fetch on the cycle the core asks for it, as the TCM does, or the
    stage buys nothing; a miss reloads eight words in one burst, which is
@@ -244,15 +248,27 @@ In this design the step has four parts, in the order they have to go:
    or update the lines they touch, and a cleaned line has to reach the bus
    before the DMA that depends on it starts.
 
-The cost is not measured yet and should not be guessed from the TCM's: that
-was 48 KB of storage in 48 M10K blocks, so the caches' 12 KB of data and
-tags is around a dozen M10K plus tag and dirty-bit logic, and a line reload
-path in the core's bus stage. The next fit reports it.
+The first part is in. `arm9_core` keeps c2/c3/c5/c6 and both c9 pairs,
+masks the reserved bits the way the part does, and decodes c7 into a
+one-cycle strobe (`cp15_c7`, with CRm in bits 6:3 and opcode_2 in 2:0;
+`cp15_c7_arg` is Rd). An instruction-side invalidate drops the fetch
+buffer, and a WFI -- c7,c0,4 and the c8,2 alias GBATEK lists -- stops the
+core until an interrupt, the same stop HALTCNT uses. `tb_arm9_cp15` runs
+the whole set through the core: 43 checks over the register read-backs,
+the ten commands that decode, the two that must not, and the wake.
 
-The bench that would own the step has the shape of `tb_arm9_tcm`: a
-keystone-assembled program that enables the caches, runs a loop that must
-not touch the fabric twice for one line, and issues each c7 operation so
-the decode is checked opcode by opcode rather than by watching a game.
+The caches themselves are not in yet. When they are, c1 bit 12 enables
+the instruction side and bit 2 the data side, c2's maps decide what is
+cacheable, and the c7 strobe is where their maintenance attaches. The
+state alone is 585 registers and 65 ALMs, and that is already enough to
+tip the release path: seed 4 ends at -0.257 ns on `pll_hdmi`, so the
+shipped fit is seed 2 at +0.010 (4,046 LABs, 34,809 ALMs, 32,510
+registers).
+
+The caches' bench will have the shape of `tb_arm9_tcm`: a
+keystone-assembled program that enables them, runs a loop that must not
+touch the fabric twice for one line, and issues each c7 operation so the
+decode is checked opcode by opcode rather than by watching a game.
 
 What follows the caches, in the order the remaining work costs most:
 
@@ -266,6 +282,29 @@ What follows the caches, in the order the remaining work costs most:
   what keeps software from running anywhere in the low 32 MB
 * hardware: nothing in this tree has run on a board, so the stylus
   mapping, the TCM and every timing figure above are simulation only
+
+### The shape of the box: the lid and the cheat folder
+
+Two things outside the core shape what "done" can mean for the paths
+around it, and neither is RTL.
+
+**There is no lid.** The DS sleeps when the hinge closes. The core models
+that as a held chord -- L2+R2 by default, **Touch & Pad → Lid close** --
+so `EXTKEYIN` bit 7 reads closed and the screens go black while it is
+held, and releasing it is the only "open" the firmware can see. With a
+real BIOS the firmware watches that bit and can put the machine to sleep;
+under the HLE boot there is no firmware loop to notice it, so the chord
+gives the register and the black screens, not the sleep. A sleep state
+machine of the core's own (or a BIOS path that runs the firmware's idle
+loop) is the follow-up; a physical lid is not available on a MiSTer.
+
+**The cheats live at `/media/fat/cheats/`** (the user's folder). The core
+cannot read that folder: it only sees a secondary file when the OSD hands
+it one on ioctl index 2, and `hps_io` has no command for a core to ask
+Main to open a path. Automatic pairing therefore stays a Main change:
+Main can send the matching file from `/media/fat/cheats/` after the ROM,
+and the core already takes the text whenever it arrives. Until then
+`F2,.CHT` is the way in, as the OSD section says.
 
 ### The console's housekeeping I/O
 
@@ -1522,6 +1561,20 @@ iverilog -g2012 -o /tmp/tb_arm9_tcm tb/tb_arm9_tcm.sv          rtl/cpu/arm9_core
 vvp /tmp/tb_arm9_tcm
 # 20 checks
 # TB ARM9 TCM PASS
+
+# 3c-4. the CP15 cache state and the c7 decode — a program assembled by
+#       keystone and read back by capstone (tools/gen_cp15_program.py) runs
+#       through the core: c2's two cachability maps, c3's write-buffer map,
+#       c5's four permission halves, c6's eight regions (and the DS's
+#       opcode_2 1 mirror), c9's lockdown registers against the TCM region
+#       registers, the c7 reads, each of the nine c7 commands the ARM946E-S
+#       has (the two it does not raise nothing), and a WFI that stops the
+#       core until an interrupt and resumes at the next instruction
+iverilog -g2012 -o /tmp/tb_arm9_cp15 tb/tb_arm9_cp15.sv \
+         rtl/cpu/arm9_core.sv
+vvp /tmp/tb_arm9_cp15
+# 43 checks
+# TB ARM9 CP15 PASS
 
 # 3d. CPU clock ratio — both cores through cpu_ce and cpu_ce_bridge onto the
 #     REAL bus (main_bus, mem_arbiter, an SDRAM device model), running the same

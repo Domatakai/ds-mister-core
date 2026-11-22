@@ -444,8 +444,8 @@ C.ins("mrc p15, 0, r6, c0, c0, 1")   # cache type
 C.ins("str r6, [r5, #0x04]")
 C.ins("mrc p15, 0, r6, c1, c0, 0")   # control: the post-BIOS value
 C.ins("str r6, [r5, #0x08]")
-const(C, "r6", 0x1234)
-C.ins("mcr p15, 0, r6, c2, c0, 0")   # translation table base
+const(C, "r6", 0xA5A5)                # 16 bits in, 8 kept
+C.ins("mcr p15, 0, r6, c2, c0, 0")   # data cachability map
 C.ins("mrc p15, 0, r7, c2, c0, 0")
 C.ins("str r7, [r5, #0x0C]")
 const(C, "r6", 0x5678)

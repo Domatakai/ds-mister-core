@@ -2803,7 +2803,7 @@ At seed 4 against the tree before it:
 
 | seed 4, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
 |---|---|---|---|---|---|---|---|---|
-| both bank writes captured | 4,016 | 34,663 | 31,830 | -4.205 | -14,778.535 | +0.250 | +0.136 | 3,775,172 |
+| both bank writes captured, no cache state | 4,016 | 34,663 | 31,830 | -4.205 | -14,778.535 | +0.250 | +0.136 | 3,775,172 |
 | both bank writes captured, no TCM | 4,021 | 34,638 | 31,783 | -4.662 | -13,964.027 | +0.250 | +0.261 | 3,611,128 |
 
 Five LABs and 0.457 ns of `emu` setup come off, and 25 ALMs, 47 registers,
@@ -2825,5 +2825,71 @@ has run on a board: that a game which relocates itself into the ITCM runs
 from it is the thing only hardware can show, and both TCMs start empty, so
 a tree that never programs them behaves as it did.
 
-The label `both bank writes captured` moves to this row; the touchpad's row
-takes a qualifier.
+The label `both bank writes captured` moved to this row when it landed; the
+section below moves it on. The touchpad's row takes a qualifier.
+
+### The ARM9's cache state, before the caches (2026-11-22)
+
+The cache step starts with the state software programs before it turns a
+cache on, because nothing downstream can be enabled or maintained until it
+is there. `arm9_core` now keeps c2's two cachability maps (opcode_2 0 for
+data, 1 for instruction), c3's write-bufferability map, c5's four
+permission halves, c6's eight region words and c9's lockdown registers.
+The reserved bits are masked the way the part does: c2 and c3 keep eight,
+the normal c5 halves sixteen, c6 keeps base [31:12], size [5:1] and
+enable [0], and a lockdown word keeps its L bit and two-bit way index.
+
+Two splits were wrong before. c9 was keyed by opcode_2 alone, so an
+`MCR p15,0,Rd,c9,c0,0` -- data cache lockdown -- landed in the data TCM
+region, which lives at CRm 1. The TCM bench never saw it because crt0
+writes c9,c1,x. Lockdown and TCM are now four registers, and
+`tb_arm9_cp15` writes both pairs and reads all four back. And c2 had been
+called a translation table base, which this part does not have: it is the
+per-region cachability map, eight bits wide. The ARM9 program in
+`tb_arm9` had been checking a 0x1234 round trip through it, so it now
+writes 0xA5A5 and expects 0xA5.
+
+c7 decodes into a one-cycle strobe (`cp15_c7`: bit 7, CRm in 6:3 and
+opcode_2 in 2:0, with Rd in `cp15_c7_arg`) instead of being dropped. The
+ARM946E-S's set is nine commands: whole-cache invalidate for each cache,
+single-line invalidate by address, single-line clean and
+clean-and-invalidate by address or index, and prefetch. There is no
+clean-all and no invalidate-by-index on this part, so those encodings
+raise no strobe; the bench checks that, and all nine in order with their
+Rd. An instruction-side invalidate drops the fetch buffer. The two
+test-and-clean reads report the cache already clean, and a WFI (c7,c0,4,
+plus the c8,2 alias GBATEK lists) stops the core until an interrupt, the
+same stop HALTCNT uses.
+
+The interesting part is the fit, because the change is only 585 registers
+and 65 ALMs on a device already at 96% LABs. At seed 4 the release path
+`pll_hdmi` goes negative for the first time in this run of work, so that
+fit cannot ship. At seed 2 it closes with 10 ps to spare:
+
+| seed 2, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
+|---|---|---|---|---|---|---|---|---|
+| both bank writes captured | 4,046 | 34,809 | 32,510 | -4.758 | -16,699.057 | +0.250 | +0.010 | 3,760,180 |
+| ..., no cache state, seed 4 | 4,016 | 34,663 | 31,830 | -4.205 | -14,778.535 | +0.250 | +0.136 | 3,775,172 |
+| ..., cache state, seed 4, does not ship | 4,035 | 34,728 | 32,545 | -4.880 | -14,215.390 | +0.244 | -0.257 | 3,780,436 |
+
+Read the seed-2 row against the other seed-4 row, not the first one: seed 2
+and seed 4 of this same tree differ by 11 LABs, 81 ALMs, 35 registers and
+0.388 ns of `emu` setup with no RTL difference at all. That is the size of
+the placement noise, and it is larger than the effect being measured. What
+is clear is the register count -- 585 new flops plus retiming -- and a few
+more LABs; the 0.257 ns the release lost at seed 4 is where those flops
+pushed the fitter, not a path through the new state, which lives in the
+`emu` domain. Seed 2 buys the margin back at +0.010, the thinnest this
+tree has shipped on, so `NDS.qsf` now says SEED 2 and the next RTL change
+should be fitted before anything else is built on it.
+
+The benches: 50 steps, 50 passed. `tb_arm9_cp15` contributes 43 checks --
+the two c2 maps and their masking, c3, four c5 halves, eight c6 regions
+with the DS's opcode_2 1 mirror, both c9 pairs, the c7 reads, the ten
+strobe values including the WFI, the two encodings that must not strobe,
+and the interrupt wake. `tb_arm9` and `tb_arm9_tcm` still pass. Nothing
+here has run on a board.
+
+What is left of the cache step is the caches: c1 bit 12 and bit 2, the
+4 KB data and 8 KB instruction arrays, the line reload and the coherence
+hook. The strobe and the state are the pieces they hang off.

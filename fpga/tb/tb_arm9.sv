@@ -499,7 +499,7 @@ initial begin
 	check_scratch(16'h00, 32'h4105_9461, "CP15 c0 main ID (ARM946E-S)");
 	check_scratch(16'h04, 32'h0F0D_2112, "CP15 c0 cache type");
 	check_scratch(16'h08, 32'h0001_2078, "CP15 c1 control, post-BIOS");
-	check_scratch(16'h0C, 32'h0000_1234, "CP15 c2 translation table base");
+	check_scratch(16'h0C, 32'h0000_00A5, "CP15 c2 data cachability map");
 	check_scratch(16'h10, 32'h0000_5678, "CP15 c9 c1 data TCM");
 	check_scratch(16'h14, 32'h0000_9ABC, "CP15 c5 access permission");
 	check_scratch(16'h18, 32'h0000_0DEF, "CP15 c1 op2=1 auxiliary control");

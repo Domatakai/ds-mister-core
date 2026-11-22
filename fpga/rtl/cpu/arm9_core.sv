@@ -29,11 +29,13 @@
 //   vectors  undefined 0x04, SWI 0x08, prefetch abort 0x0C, IRQ 0x18, FIQ
 //            0x1C, taken at 0x00000000 or (V=1) 0xFFFF0000
 //
-// Not modelled, deliberately: caches, the MMU/MPU, and TCM *storage*. The
-// control register's bits are kept and read back, so software that turns the
-// caches on sees what it wrote, but every access still goes to the bus. TCM
-// storage would shadow memory the bus already decodes (the vector page, the
-// BIOS mirrors and main RAM), so it belongs with the MMU work. Timing is
+// Not modelled yet: the caches themselves and the protection unit's
+// permission checks. Their CP15 state is real -- c2's cachability bits, c3's
+// write-bufferability bits, c5/c6's eight regions, c9's lockdown and TCM
+// registers, and every c7 maintenance command the ARM946E-S defines -- so
+// software that programs them reads back what it wrote, and the c7 decode
+// already drops the fetch buffer where an instruction-side invalidate says to.
+// Every access still goes to the bus until the caches land. Timing is
 // functional rather than cycle-accurate, exactly as in the ARM7 core: one bus
 // access per fetch and one per load/store beat.
 //
@@ -93,6 +95,15 @@ module arm9_core #(
 	output     [31:0] cp15_ctrl,
 	output     [31:0] cp15_c9d,
 	output     [31:0] cp15_c9i,
+
+	// ---- decoded cache maintenance (CP15 c7), for the caches to come ----
+	// [7] is a one-cycle strobe, [6:3] the CRm operand -- which cache and
+	// which operation -- and [2:0] opcode_2, in the encodings the ARM946E-S
+	// defines; `cp15_c7_arg` is Rd (the address or index). The fetch buffer
+	// is dropped here on an instruction-side invalidate, so the decode has
+	// an effect today and the caches can take the same strobe later.
+	output reg  [7:0] cp15_c7,
+	output reg [31:0] cp15_c7_arg,
 
 	// ---- BIOS SWI bank (one shared engine, arbitrated: `swi_share`) ----
 	// A call is CPU state, so it leaves the core: `hle_go` rises with the
@@ -180,6 +191,21 @@ reg [31:0] cp15_aux;
 // MRC with opcode_2 0 reads); the instruction half needs its own register,
 // or a write to either would overwrite the other.
 reg [31:0] cp9_itcm;
+// c2 and c3 are maps over the eight protection regions, not single values:
+// c2's bits 0..7 are the cachability of region 0..7 (opcode_2 0 for data,
+// 1 for instruction) and c3's are the data regions' write-bufferability.
+// c5 holds the access permissions in four opcode_2 halves and c6 the eight
+// region base/size/enable words, selected by CRm. c9 is two registers that
+// share an opcode: CRm 0 is cache lockdown, CRm 1 is the TCM region (which
+// is why keying c9 by opcode_2 alone let a lockdown write clobber a TCM).
+reg [31:0] cp15_c2d, cp15_c2i;
+reg [31:0] cp15_c3;
+reg [31:0] cp15_c5 [0:3];
+reg [31:0] cp15_c6 [0:7];
+reg [31:0] c9_lock_d, c9_lock_i;
+// CP15 c7, CRm 0 opcode_2 4 (and c8,2, which GBATEK lists as the same thing):
+// wait for an interrupt. The core already has this stop for HALTCNT.
+reg        cp15_wait;
 // reset values, and the two read-only identification values (ARM946E-S: the
 // ID decodes as architecture 5TE, part 0x946, revision 1; the cache type
 // decodes as 4 KB four-way data and 8 KB four-way instruction caches, which is
@@ -890,7 +916,27 @@ wire [31:0] thumb_sp_off = {23'd0, insn[8], insn[7:0]} << 2;
 wire        cp15_sel = (insn[11:8] == 4'hF);
 wire        cp15_rd  =  insn[20];
 wire  [3:0] cp15_crn = insn[19:16];
+wire  [3:0] cp15_crm = insn[3:0];
 wire  [2:0] cp15_op2 = insn[7:5];
+
+// The c7 commands the ARM946E-S actually has (GBATEK's table and the TRM's
+// Table 3.4 agree). There is no whole-cache clean, no invalidate by index and
+// no unified cache on this part: the index forms are the clean ones, and the
+// rest of the opcode space -- the ARM920T's by-index invalidates, the branch
+// target cache and the unified-cache commands -- is not decoded here.
+function c7_valid (input [3:0] crm, input [2:0] op2);
+	begin
+		case ({crm, op2})
+		7'd4, 7'd66,                      // wait for interrupt (c0,4 / c8,2)
+		7'd40, 7'd41,                     // invalidate I, all / by address
+		7'd48, 7'd49,                     // invalidate D, all / by address
+		7'd105,                           // prefetch I line
+		7'd81, 7'd82,                     // clean D by address / by index
+		7'd113, 7'd114: c7_valid = 1'b1;  // clean+invalidate D, address / index
+		default:        c7_valid = 1'b0;
+		endcase
+	end
+endfunction
 
 reg [31:0] cprd;
 always @(*) begin
@@ -898,11 +944,27 @@ always @(*) begin
 	// c0 is read-only: opcode_2 0 is the main ID, 1 the cache type
 	4'h0:    cprd = (cp15_op2 == 3'd0) ? CP15_ID :
 	                (cp15_op2 == 3'd1) ? CP15_CACHETYPE : 32'd0;
-	// c7 maintenance is write-only
-	4'h7:    cprd = 32'd0;
+	// c2 is the cachability map, opcode_2 0 for the data regions and 1
+	// for the instruction ones; c3 is the data regions' write buffer map.
+	4'h2:    cprd = (cp15_op2 == 3'd1) ? cp15_c2i : cp15_c2d;
+	4'h3:    cprd = cp15_c3;
+	// c5's four opcode_2 halves: normal and extended permissions, each
+	// for data and instruction regions; c6's eight regions, selected by
+	// CRm (the DS mirrors opcode_2 1 onto the same register)
+	4'h5:    cprd = (cp15_op2 <= 3'd3) ? cp15_c5[cp15_op2] : 32'd0;
+	4'h6:    cprd = cp15_c6[cp15_crm];
+	// c7 is write-only, except the two test-and-clean reads: with no
+	// dirty line they report the cache already clean (bit 0) at once
+	4'h7:    cprd = ((cp15_crm == 4'd10 || cp15_crm == 4'd14) &&
+	                cp15_op2 == 3'd3) ? 32'd1 : 32'd0;
 	// c1 opcode_2 1 is the auxiliary control register
 	4'h1:    cprd = (cp15_op2 == 3'd1) ? cp15_aux : cp15_r[1];
-	4'h9:    cprd = (cp15_op2 == 3'd1) ? cp9_itcm : cp15_r[9];
+	// c9: CRm 0 is cache lockdown, CRm 1 the TCM region; opcode_2 1 is
+	// the instruction half of either
+	4'h9:    cprd = (cp15_crm == 4'd1) ?
+	                ((cp15_op2 == 3'd1) ? cp9_itcm : cp15_r[9]) :
+	                (cp15_crm == 4'd0) ?
+	                ((cp15_op2 == 3'd1) ? c9_lock_i : c9_lock_d) : 32'd0;
 	default: cprd = cp15_r[cp15_crn];
 	endcase
 end
@@ -932,6 +994,16 @@ always @(posedge clk) begin
 		for (rk = 0; rk < 16; rk = rk + 1) cp15_r[rk] <= 32'd0;
 		cp15_r[1] <= CP15_RESET_CTRL;
 		cp15_aux <= 32'd0;
+		cp15_c2d <= 32'd0;
+		cp15_c2i <= 32'd0;
+		cp15_c3  <= 32'd0;
+		for (rk = 0; rk < 4; rk = rk + 1) cp15_c5[rk] <= 32'd0;
+		for (rk = 0; rk < 8; rk = rk + 1) cp15_c6[rk] <= 32'd0;
+		c9_lock_d <= 32'd0;
+		c9_lock_i <= 32'd0;
+		cp15_wait <= 1'b0;
+		cp15_c7     <= 8'd0;
+		cp15_c7_arg <= 32'd0;
 		state    <= S_FETCH;
 		bus_rd   <= 1'b0;
 		bus_wr   <= 1'b0;
@@ -949,6 +1021,9 @@ always @(posedge clk) begin
 		bl_pending <= 1'b0;
 		hle_go   <= 1'b0;
 	end else if (ce) begin
+		// the c7 strobe lasts the one cycle after the instruction that
+		// decoded it; a new command below overrides this clear
+		cp15_c7 <= 8'd0;
 		// commit the deferred write: the value this edge, the bank it was
 		// captured in, and the readers that take a pending value
 		if (pw_en) begin
@@ -990,7 +1065,7 @@ always @(posedge clk) begin
 				mode      <= 5'h12;
 				i <= 1'b1; t <= 1'b0;
 				pc <= vbase + 32'h0000_0018;
-			end else if (halt) begin
+			end else if (halt || cp15_wait) begin
 				state <= S_HALT;
 			end else if (t && f_hit) begin
 				// the word is already here: take the other halfword without a
@@ -1025,7 +1100,10 @@ always @(posedge clk) begin
 		end
 
 		S_HALT: begin
-			if (irq || fiq) state <= S_FETCH;
+			if (irq || fiq) begin
+				cp15_wait <= 1'b0;
+				state <= S_FETCH;
+			end
 		end
 
 		//--------------------------------------------------------
@@ -1849,13 +1927,57 @@ always @(posedge clk) begin
 							// write to c7 invalidates the fetch buffer so
 							// code that was just patched or flushed is
 							// re-read from memory.
-							if (cp15_crn == 4'h1 && cp15_op2 == 3'd1)
-								cp15_aux <= rp_d;
-							else if (cp15_crn == 4'h9 && cp15_op2 == 3'd1)
-								cp9_itcm <= rp_d;
-							else if (cp15_crn != 4'h0)
-								cp15_r[cp15_crn] <= rp_d;
-							if (cp15_crn == 4'h7) f_valid <= 1'b0;
+							case (cp15_crn)
+							4'h2: begin
+								if (cp15_op2 == 3'd0)
+									cp15_c2d <= rp_d & 32'h0000_00FF;
+								else if (cp15_op2 == 3'd1)
+									cp15_c2i <= rp_d & 32'h0000_00FF;
+							end
+							4'h3: begin
+								if (cp15_op2 == 3'd0)
+									cp15_c3 <= rp_d & 32'h0000_00FF;
+							end
+							4'h5: begin
+								if (cp15_op2 <= 3'd3)
+									cp15_c5[cp15_op2] <= (cp15_op2 <= 3'd1)
+										? (rp_d & 32'h0000_FFFF) : rp_d;
+							end
+							// the region word is base [31:12], size [5:1] and
+							// enable [0]; bits 11:6 are reserved and read zero
+							4'h6: cp15_c6[cp15_crm] <= rp_d & 32'hFFFF_F03F;
+							4'h9: begin
+								if (cp15_crm == 4'd0) begin
+									// lockdown: L in bit 31, the way index in
+									// [1:0] (a 4-way cache is two bits wide)
+									if (cp15_op2 == 3'd0)
+										c9_lock_d <= rp_d & 32'h8000_0003;
+									else if (cp15_op2 == 3'd1)
+										c9_lock_i <= rp_d & 32'h8000_0003;
+								end else if (cp15_crm == 4'd1) begin
+									if (cp15_op2 == 3'd0)      cp15_r[9] <= rp_d;
+									else if (cp15_op2 == 3'd1) cp9_itcm  <= rp_d;
+								end
+							end
+							4'h7: begin
+								if (c7_valid(cp15_crm, cp15_op2)) begin
+									cp15_c7     <= {1'b1, cp15_crm, cp15_op2};
+									cp15_c7_arg <= rp_d;
+									// an instruction-side invalidate makes the
+									// fetch buffer's copy untrustworthy
+									if (cp15_crm == 4'd5) f_valid <= 1'b0;
+									if ((cp15_crm == 4'd0 && cp15_op2 == 3'd4) ||
+									    (cp15_crm == 4'd8 && cp15_op2 == 3'd2))
+										cp15_wait <= 1'b1;
+								end
+							end
+							default: begin
+								if (cp15_crn == 4'h1 && cp15_op2 == 3'd1)
+									cp15_aux <= rp_d;
+								else if (cp15_crn != 4'h0)
+									cp15_r[cp15_crn] <= rp_d;
+							end
+							endcase
 						end
 						state <= S_FETCH;
 					end else `UND
