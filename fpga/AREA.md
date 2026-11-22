@@ -2743,7 +2743,7 @@ LABs, video margin and bitstream:
 | seed 4, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
 |---|---|---|---|---|---|---|---|---|
 | both bank writes captured, seed 4 | 4,043 | 34,237 | 31,503 | -4.474 | -9,255.070 | +0.243 | +0.239 | 3,671,232 |
-| both bank writes captured | 4,021 | 34,638 | 31,783 | -4.662 | -13,964.027 | +0.250 | +0.261 | 3,611,128 |
+| both bank writes captured, no TCM | 4,021 | 34,638 | 31,783 | -4.662 | -13,964.027 | +0.250 | +0.261 | 3,611,128 |
 
 0.188 ns of `emu` setup and 4,708.957 of TNS are the row's, and the domain
 fails either way. The 401 ALMs are more than the handful of adders it adds,
@@ -2765,3 +2765,65 @@ only hardware can answer, and the mapping is what the bench pins down.
 
 The label `both bank writes captured` moves to this row, as it did twice
 before it.
+
+### The ARM9's tightly-coupled memory (2026-11-22)
+
+The ARM946E-S has 32 KB of instruction TCM and 16 KB of data TCM, and the
+DS's own libraries run from them: the crt0 of a libnds or blocksds build
+points the ITCM's region register at 0x01000000 and runs from there before
+it touches main RAM. The core had neither, so those addresses went to the
+bus, nothing decoded them, and code that expected to be on chip went to the
+fabric instead. `arm9_tcm` sits between `arm9_core` and `cpu_ce_bridge` on
+the core's own handshake: a hit answers in one clock, a miss passes the
+request through with its strobes intact, and the core does not know the
+stage is there.
+
+The area comes out of registers the core already had: CP15 c9 opcode_2 0
+and 1 carry the base and the size, four kilobytes doubled by size[5:1]
+minus three, c1 bit 16 and bit 18 the enables, and (addr - base) < size is
+the whole test, which wraps right at 4 GB. The DS firmware programs the
+ITCM area as 32 MB, so the 32 KB of storage answers at every 32 KB of it
+and the mirror falls out of the index wrap rather than a wider compare.
+Both TCMs are dormant at reset: the region registers are zero and a zero
+size is no area, which is the state the core's post-BIOS control register
+leaves them in. This core has no BIOS to fill them, and starting them
+enabled would shadow the low vector page with zeros.
+
+The memory is one byte-wide block RAM per lane, four per word. That is not
+the obvious form. A single 32-bit array with byte-select writes into its
+word is what the change was written as first, and Quartus 17.0's Verific
+front end does not recognize it: all 12,288 words became registers, and
+that fit reports 318,777 ALMs against 41,910, 761% of the device, 421,680
+registers and 0 of 553 M10K blocks. Eight plain 8-bit arrays with one write
+enable each ask nothing of the front end, so every lane is inferred as an
+altsyncram: the fit below uses 289 M10K against 241 before it, and its
+block memory is 393,216 bits larger, which is the 48 KB exactly.
+
+At seed 4 against the tree before it:
+
+| seed 4, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
+|---|---|---|---|---|---|---|---|---|
+| both bank writes captured | 4,016 | 34,663 | 31,830 | -4.205 | -14,778.535 | +0.250 | +0.136 | 3,775,172 |
+| both bank writes captured, no TCM | 4,021 | 34,638 | 31,783 | -4.662 | -13,964.027 | +0.250 | +0.261 | 3,611,128 |
+
+Five LABs and 0.457 ns of `emu` setup come off, and 25 ALMs, 47 registers,
+814.508 of TNS and 0.125 ns of `pll_hdmi` go on. None of that is the TCM's
+own arithmetic, two levels of register feeding a block RAM compared against
+a bus decode: the ALM and register counts have moved further than this
+between two fits of one design at one seed, and TNS follows the endpoints
+the fitter picks. The bitstream is 164,044 bytes larger because every one
+of those M10K blocks carries its initial contents. `emu` fails either way,
+as it has since the ARM7 work; the release is timed on `pll_hdmi`, which
+was 0.261 and is 0.136, so it stays positive. Hold does not move.
+
+The benches run against this tree: 48 step(s), 48 passed, with sixteen
+checks in `tb_tcm` -- the DTCM write and read with no fabric traffic either
+way, the byte and halfword lanes, a miss keeping its strobes, the c1 and c9
+gates for both TCMs, the ITCM's 32 MB mirror at 0x01000000, a 64 KB area
+answering where the storage wraps, and `c_ready` as a pulse. Nothing here
+has run on a board: that a game which relocates itself into the ITCM runs
+from it is the thing only hardware can show, and both TCMs start empty, so
+a tree that never programs them behaves as it did.
+
+The label `both bank writes captured` moves to this row; the touchpad's row
+takes a qualifier.
