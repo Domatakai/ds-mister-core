@@ -217,9 +217,11 @@ a 4 KB data cache and an 8 KB instruction cache, four-way set associative,
 32-byte lines (eight words), allocate on read miss, round-robin or
 pseudo-random replacement selected by c1 bit 14, write-through or
 write-back on the data side by c1 bit 3, and a write buffer between the
-cache and the bus. The cache type register at c0, c0, 1 reads 0x0F0D2112,
-which is how software sizes its maintenance loops, so that value has to be
-right before anything else is.
+cache and the bus. The cache type register at c0, c0, 1 already reads
+0x0F0D2112 -- the core returns it today -- and the caches have to be the
+shape it advertises, because that is what software sizes its maintenance
+loops from: four ways, 32-byte lines, 4 KB of data and 8 KB of
+instruction cache.
 
 In this design the step has four parts, in the order they have to go:
 
