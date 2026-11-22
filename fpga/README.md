@@ -41,9 +41,9 @@ is written down rather than left to be discovered:
   sequence, but it stays unverified against real hardware: the protocol is
   not vendor-documented and the accessory itself was never available to
   check it. Missing: local DS-to-DS wireless.
-- **M6, the front end** — the cheat engine and the DS-native menu are in; save
-  states, rewind and replay are rows in that menu whose hardware does not
-  exist yet.
+- **M6, the front end** — the cheat engine, the DS-native menu and the input
+  replay log are in; save states and a true (per-frame) rewind are rows in
+  that menu whose hardware does not exist yet.
 
 Underneath that: the framework wiring, the OSD menu, the memory map, the
 SDRAM controller, the complete video path, the input path (DS keys, stylus,
@@ -1502,6 +1502,17 @@ iverilog -g2012 -o /tmp/tb_mic tb/tb_mic_adc.sv \
 vvp /tmp/tb_mic
 # tb_mic_adc: PASS
 
+# 3a-2. input replay — record and play back the one-word-per-frame input
+#       image: Off is a wire, Record stores every field (all 48 bits, high
+#       padding included), Play returns the words in order and hands the
+#       live input back, a full log stops at its depth and replays whole,
+#       the log survives a core reset, and a new Record starts at index 0
+iverilog -g2012 -o /tmp/tb_replay tb/tb_input_replay.sv \
+         rtl/input/input_replay.sv
+vvp /tmp/tb_replay
+#   30 checks
+# TB INPUT REPLAY PASS
+
 # 3b. ARM7TDMI core — two hand-assembled programs run through a bus model:
 #     ARM execution (ADD/CMP/MOVEQ/MUL/barrel shifter), STR/LDR round trip,
 #     B/BL and BX into Thumb and back, the SWI and IRQ vectors with MOVS
@@ -2009,7 +2020,7 @@ this core added:
 | **Sound** | master volume, **Sound output Stereo / Mono / Headphones** (the DS Settings wording), SPU sync, I²S latency 1 / 2 / 4 frames, audio filter Off / Warm / Bright / Bass, stereo width Off / Soft / Strong |
 | **Touch & Pad** | stylus cursor Off / D-pad / Left stick / Pointer (USB or Bluetooth mouse, trackpad, pen tablet), **Touchpad stylus Off / Absolute** (a DualShock 4 or DualSense touchpad, or any light gun, in MiSTer's Light Gun mode), stylus tap L2 / R2 / L3 / R3, **Lid close Ignore / L2+R2 / L3+R3**, **Microphone Off / Button / Host device** (Host device samples the board ADC at 48 kHz; the mic has to be wired to the ADC pins), rumble pak, **motion pak Off / On** (slot-2 Motion Pack on the sticks), face + shoulder swaps, pad profile |
 | **Firmware** | **ARM7 BIOS HLE / bios7.bin**, **ARM9 BIOS HLE / bios9.bin**, **Firmware HLE / firmware.bin**, **Language English / Japanese / French / German / Italian / Spanish**, **Auto-start Manual / Auto**, **RTC source Internal / Host**, region |
-| **System** | core speed 100 / 150 / 200 / Max %, CPU overclock Normal / ARM7 ×2 / ARM7 ×4, **auto overclock On / Off** (per game — see below), frameskip, auto frameskip, rewind buffer. A `Diagnostics` header row follows with FPS, frame graph, bus LEDs, log level and **Disable all cheats** |
+| **System** | core speed 100 / 150 / 200 / Max %, CPU overclock Normal / ARM7 ×2 / ARM7 ×4, **auto overclock On / Off** (per game — see below), frameskip, auto frameskip, rewind buffer, **input replay Off / Record / Play**. A `Diagnostics` header row follows with FPS, frame graph, bus LEDs, log level and **Disable all cheats** |
 | **MIDI** | MT-32-pi link, MIDI volume 0–100% for the return path, internal demo stream, Pi LCD on screen, LCD size 1x / 2x, corner Top left / Top right / Bottom left / Bottom right, synth MT-32 / SoundFont, SoundFont bank 0-7 |
 
 ![OSD menu outline](docs/osd-menu.svg)
@@ -2104,6 +2115,15 @@ before the core sees them, so they cannot be offered as separate choices.
 and therefore what TAS material replays against. Either way the counters run
 on the core's free-running crystal afterwards, exactly as the chip does, and
 a date a game writes through the port survives until the next load.
+- **Input replay** — the System page's row records the whole input image
+  the machine sees (keys, stylus, microphone and hinge) as one 48-bit word
+  per frame in block RAM, about two minutes at 59.83 Hz. Play feeds the log
+  back from its first frame at the same rate and returns the live pad when
+  it ends. The log survives a core reset, which is how a run is reproduced
+  from boot: Record, reset, play; later Play, reset, watch. It stores
+  nothing of the machine, so it is the replay half of save states rather
+  than a savestate: keep RTC source Internal and the same ROM and save, or
+  the run diverges on whatever was seeded from outside it.
 - **Backlight** and **Sound output** — the DS's own panel-brightness and
 sound-output settings, driving the same video gain and mix the rows always
 did.
@@ -2161,7 +2181,7 @@ diagnostics overlay only — NTSC-U, NTSC-J and PAL carts all boot.
 | M3 | GXFIFO → serialised multiplier → triangle setup → flat rasteriser → VRAM write-back → 3D layer composited by engine A; both 2D engines' fetches in bursts and the OAM scan pipelined so a line fits its period | **working** | W-buffer depth, fog, edge marking, toon shading, alpha test, QUADS/QUAD_STRIP, span fill |
 | M4 | Sixteen SPU channels (PCM8/PCM16/ADPCM, loops, pan, master volume, 48 kHz mix); AUXSPI save probe over an emulated EEPROM/FRAM/FLASH chip; MT-32-pi MIDI and its return mix; timers, IPC, maths, per-CPU IRQ banks, HALT, RTC and the three-device SPI bus | **working** | SPU capture units, `.sav` persistence and erase, cart unlock sequence, FLASH above its 64 KB backed window |
 | M5 | Microphone Off / R3 button / board ADC (LTC2308 at 48 kHz through the touchscreen's AUX channel) and the SPI touchscreen; slot-2 rumble pak (open-bus pattern, pad motors); the lid chord on `EXTKEYIN` | **working** | DS-to-DS wireless |
-| M6 | Cheat engine (Action Replay, 8 entries per clock) and the DS-native menu, profiles and the video/audio filter rows | **partial** | Save states, rewind, replay |
+| M6 | Cheat engine (Action Replay, 8 entries per clock), the DS-native menu, profiles, the video/audio filter rows and the input replay log | **partial** | Save states, rewind |
 
 What each of those measured, for the record: a 4bpp BG line fetches in 425
 clocks and a burst 3D line in 322, the OAM scan went from 820 to 258, and a

@@ -2869,7 +2869,7 @@ fit cannot ship. At seed 2 it closes with 10 ps to spare:
 
 | seed 2, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
 |---|---|---|---|---|---|---|---|---|
-| both bank writes captured | 4,046 | 34,809 | 32,510 | -4.758 | -16,699.057 | +0.250 | +0.010 | 3,760,180 |
+| both bank writes captured, cache state | 4,046 | 34,809 | 32,510 | -4.758 | -16,699.057 | +0.250 | +0.010 | 3,760,180 |
 | ..., no cache state, seed 4 | 4,016 | 34,663 | 31,830 | -4.205 | -14,778.535 | +0.250 | +0.136 | 3,775,172 |
 | ..., cache state, seed 4, does not ship | 4,035 | 34,728 | 32,545 | -4.880 | -14,215.390 | +0.244 | -0.257 | 3,780,436 |
 
@@ -2884,7 +2884,9 @@ pushed the fitter, not a path through the new state, which lives in the
 tree has shipped on, so `NDS.qsf` now says SEED 2 and the next RTL change
 should be fitted before anything else is built on it.
 
-The benches: 50 steps, 50 passed. `tb_arm9_cp15` contributes 43 checks --
+The label `both bank writes captured` moved to this row when it landed; the
+section below moves it on. The benches: 50 steps, 50 passed.
+`tb_arm9_cp15` contributes 43 checks --
 the two c2 maps and their masking, c3, four c5 halves, eight c6 regions
 with the DS's opcode_2 1 mirror, both c9 pairs, the c7 reads, the ten
 strobe values including the WFI, the two encodings that must not strobe,
@@ -2894,3 +2896,83 @@ here has run on a board.
 What is left of the cache step is the caches: c1 bit 12 and bit 2, the
 4 KB data and 8 KB instruction arrays, the line reload and the coherence
 hook. The strobe and the state are the pieces they hang off.
+
+### An input log instead of a savestate (2026-11-22)
+
+M6 is the last open milestone, and the two rows still open in it, save states
+and a true per-frame rewind, want the same improbable thing: the whole
+machine -- both CPUs, both buses, the 2D engines, the audio channels, the
+caches, the firmware's own state -- captured and put back inside one frame on
+a device at 96% of its LABs. That is not a fit that gets better with effort.
+It is megabytes of state behind a 16-bit DDR path whose `emu` domain already
+misses timing, and a savestate that takes two frames to load is not one.
+
+What a run actually needs from a savestate, for the things people use one
+for -- practise a section again, hand a run to someone else, record a TAS --
+is the frame-by-frame input, because from the same boot the rest of the
+machine is a function of it. So that is what this step stores.
+`rtl/input/input_replay.sv` keeps the mapper's whole output as one word per
+frame:
+
+    {5'd0, hinge, mic_lvl[11:0], touch_down, touch_y[7:0], touch_x[8:0],
+     keys[11:0]}
+
+the buttons, the touch panel's pressed flag and both coordinates, the
+microphone level and the hinge, with five zero bits on top to make the word
+48 wide in the source. Quartus sees the zeros and infers the array as
+8192x43: 43 M10K blocks and 352,256 bits, against 289 M10K blocks in the
+tree before it. 8192 frames is 2 minutes 17 seconds at the DS's 59.83 Hz,
+one simple dual-port block RAM, port A writing the live word and port B
+reading the next one back, both at `clk_sys` on the frame tick.
+
+The log is session state and not saved state: power takes it, and `reset`
+deliberately does not, because a log is worth nothing unless it can be
+replayed from boot. Selecting Play and then resetting the core replays a run
+from its first frame. Record stops at the depth instead of wrapping, so a
+run that fills the log replays whole, and the frames nobody can replay are
+the ones after the end rather than the ones where the log ate its own start.
+
+The row is on the System page, `Input replay` with Off, Record and Play, on
+P6O[98:97]. Those two bits were free, so `Rewind buffer` at P6O[46:45] and
+everything else in the map keep their meanings. A mode change takes effect
+on the next frame tick, never in the middle of a word, and Play primes its
+read on the frame it is selected, so the first frame played is the first
+frame recorded rather than the second. Off passes the mapper's outputs
+straight through.
+
+The cost, the two seed-2 rows compared against each other and the shipped
+row at seed 1:
+
+| seed 1, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
+|---|---|---|---|---|---|---|---|---|
+| both bank writes captured | 4,038 | 35,143 | 32,736 | -4.004 | -11,854.877 | +0.257 | +0.241 | 3,871,272 |
+| ..., input log, seed 2, does not ship | 4,018 | 35,192 | 32,793 | -4.091 | -12,661.459 | +0.249 | -0.087 | 3,886,764 |
+| ..., cache state, seed 2 | 4,046 | 34,809 | 32,510 | -4.758 | -16,699.057 | +0.250 | +0.010 | 3,760,180 |
+
+At one seed the log is 383 ALMs, 283 registers, 43 M10K blocks and 126,584
+bitstream bytes, and it takes 0.097 ns off `pll_hdmi`, +0.010 to -0.087, so
+seed 2 of this tree misses the release -- the second time in this work that
+it has gone negative, after the cache tree at seed 4. The same tree at seed
+1 closes at +0.241, and the 0.328 ns between two seeds of one unchanged
+tree is larger than the effect being measured; the cache tree moved 0.267 ns
+between seeds 2 and 4 for the same reason. What is not noise is the shape of
+the cost: 283 flops, less than half the 680 device registers the cache state
+added, but 43 block RAMs that no placement removes and 383 ALMs, which is
+more than those flops alone account for because the ring's address compare
+and the read-back mux do not fold into the memory. Seed 1 pays it out of
+placement and 0.231 ns of margin over what had shipped, so `NDS.qsf` now
+says SEED 1. `emu` setup is still negative and still not the release path;
+the worst hold falls from +0.208 to +0.131, the lowest this tree has shown
+and still positive.
+
+The benches: 51 steps, 51 passed, `tb_input_replay` contributing 30 checks
+-- Off as a wire, Record storing one word per frame and counting them, Play
+returning them first one first and stopping at the end of the log, the log
+surviving a core reset and replaying again after it, Record starting a fresh
+log at index 0, and a log filled to its depth that stops recording and still
+replays whole.
+
+None of this has run on a board. A log also reproduces inputs and not a
+machine: anything a game reads from outside the mapped inputs -- the RTC,
+microphone noise, the wireless unit -- diverges on replay, and save states
+and a true rewind remain M6 rows.

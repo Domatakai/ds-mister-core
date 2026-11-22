@@ -313,6 +313,7 @@ export const OSD_ROOT: OsdSubmenu = {
         { id: "emu.frameskip", kind: "choice", label: "Frameskip", options: ["Off", "1", "2", "3"] },
         { id: "emu.autoskip", kind: "toggle", label: "Auto frameskip" },
         { id: "emu.rewind", kind: "choice", label: "Rewind buffer", options: ["Off", "5 s", "15 s", "30 s"] },
+        { id: "emu.replay", kind: "choice", label: "Input replay", options: ["Off", "Record", "Play"] },
       ],
     },
     {

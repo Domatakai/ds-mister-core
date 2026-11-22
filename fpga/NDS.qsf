@@ -54,7 +54,7 @@ set_global_assignment -name ALM_REGISTER_PACKING_EFFORT HIGH
 # Seed 6 with the switch on lands in 4,092 LABs, closes it at +0.138 ns and
 # is 1.049 ns shallower on emu, but moving to it is a release decision:
 # changing this line retires that table.
-set_global_assignment -name SEED 2
+set_global_assignment -name SEED 1
 # The reduced NDS build is 99% LAB-full; routing it needs aggressive
 # routability and a seed that places well (AREA.md, "Decoupling the
 # core's clock"): default settings abandon it on congestion.

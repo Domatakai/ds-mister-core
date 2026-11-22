@@ -242,7 +242,7 @@ const ROADMAP_COPY: [string, string, string][] = [
   [
     "M6",
     "Front end",
-    "Cheat engine and the DS-native menu, profiles and filter rows; save states, rewind, replay still out.",
+    "Cheat engine, the DS-native menu, profiles, filters and the input replay log; save states and rewind still out.",
   ],
 ];
 

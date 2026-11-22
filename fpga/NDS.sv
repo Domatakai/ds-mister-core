@@ -42,6 +42,7 @@
 //   [43:42] frameskip
 //   [44]    auto frameskip
 //   [46:45] rewind buffer
+//   [98:97] input replay     (Off / Record / Play)
 //   [47]    show FPS
 //   [48]    frame graph
 //   [49]    bus activity LEDs
@@ -189,6 +190,7 @@ localparam [20655:0] CONF_STR = {   // 2582 string bytes, the 6-char `BUILD_DATE
 "P6O[43:42],Frameskip,Off,1,2,3;",
 "P6O[44],Auto frameskip,Off,On;",
 "P6O[46:45],Rewind buffer,Off,5 s,15 s,30 s;",
+"P6O[98:97],Input replay,Off,Record,Play;",
 "P6-;",
 "P6-,Diagnostics;",
 "P6O[47],Show FPS,Off,On;",
@@ -371,6 +373,7 @@ wire  [1:0] core_speed    = status[41:40];
 wire  [1:0] frameskip     = status[43:42];
 wire        autoskip      = status[44];
 wire  [1:0] rewind_buf    = status[46:45];
+wire  [1:0] replay_mode   = status[98:97];
 wire        show_fps      = status[47];
 wire        frame_graph   = status[48];
 wire        bus_leds      = status[49];
@@ -1074,6 +1077,15 @@ wire [11:0] mic_lvl;      // 12-bit microphone level: Off / R3 / board ADC
 wire [11:0] mic_adc_lvl;  // the board converter's sample, clk_sys domain
 wire        hinge_j;      // EXTKEYIN bit 7 / the shell's magnetic hinge
 
+// The mapper's live image, and the recorder between it and the machine:
+// one word per frame carries every input the cores see, so a run can be
+// replayed from reset without a savestate (M6's replay row).
+wire [11:0] raw_keys, raw_mic;
+wire  [8:0] raw_touch_x;
+wire  [7:0] raw_touch_y;
+wire        raw_touch_down, raw_hinge;
+wire [47:0] live_input, replay_input;
+
 //------------------------------------------------------------------
 // Microphone: the board's LTC2308, one channel at 48 kHz
 //
@@ -1108,13 +1120,38 @@ input_mapper input_mapper (
 	.mic_source(mic_source),
 	.mic_adc(mic_adc_lvl),
 	.lid_sel(lid_sel),
-	.keys(ds_keys),
-	.touch_x(touch_x),
-	.touch_y(touch_y),
-	.touch_down(touch_down),
-	.mic_lvl(mic_lvl),
-	.hinge_closed(hinge_j)
+	.keys(raw_keys),
+	.touch_x(raw_touch_x),
+	.touch_y(raw_touch_y),
+	.touch_down(raw_touch_down),
+	.mic_lvl(raw_mic),
+	.hinge_closed(raw_hinge)
 );
+
+// frame_start is the first active pixel, the same edge the reset is
+// released on, so a log starts and ends on frame boundaries
+assign live_input = {5'd0, raw_hinge, raw_mic, raw_touch_down,
+                     raw_touch_y, raw_touch_x, raw_keys};
+
+input_replay #(.DEPTH(8192)) u_input_replay (
+	.clk(clk_sys),
+	.reset(reset),
+	.frame(frame_start),
+	.mode(replay_mode),
+	.live(live_input),
+	.out(replay_input),
+	.recording(),
+	.playing(),
+	.count(),
+	.pos()
+);
+
+assign ds_keys    = replay_input[11:0];
+assign touch_x    = replay_input[20:12];
+assign touch_y    = replay_input[28:21];
+assign touch_down = replay_input[29];
+assign mic_lvl    = replay_input[41:30];
+assign hinge_j    = replay_input[42];
 
 //------------------------------------------------------------------
 // CPUs + bus — stubs (M1). The bus keeps the NDS memory map; both CPUs
