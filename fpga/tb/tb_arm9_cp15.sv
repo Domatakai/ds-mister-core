@@ -27,9 +27,14 @@
 //   * c7 writes: each of the nine commands the ARM946E-S defines raises the
 //     strobe with its own CRm/opcode_2 and Rd, two encodings the part does
 //     not have raise nothing, and a WFI stops the core until an interrupt
+//   * the line state: with c1 bit 2 turned on, a store fills a line and
+//     leaves it dirty, so the first test-and-clean reads 0 and clears it
+//     and the second reads 1. Both results are held in registers and
+//     written afterwards, because a store between the two reads would
+//     dirty a line again
 //
-// The caches themselves are not here yet; this is the state and the command
-// decode they will sit behind.
+// The data arrays are not here yet; this is the state and the command decode
+// they will sit behind, and the tags the maintenance commands act on.
 //============================================================================
 `timescale 1ns / 1ps
 
@@ -301,29 +306,38 @@ task load_cp15_prog;
 		ram[18'd101] = 32'hE4881004;  // 02000194  str r1, [r8], #4; 22: 1
 		ram[18'd102] = 32'hEE171F7E;  // 02000198  mrc p15, 0, r1, c7, c14, 3   (mrc p15, #0, r1, c7, c14, #3); test, clean and invalidate
 		ram[18'd103] = 32'hE4881004;  // 0200019c  str r1, [r8], #4; 23: 1
-		ram[18'd104] = 32'hE3A00402;  // 020001a0  mov r0, #0x02000000   (mov r0, #0x2000000)
-		ram[18'd105] = 32'hE3800E12;  // 020001a4  orr r0, r0, #0x120
-		ram[18'd106] = 32'hE3800003;  // 020001a8  orr r0, r0, #3; the line address the strobe carries
-		ram[18'd107] = 32'hEE070F15;  // 020001ac  mcr p15, 0, r0, c7, c5, 0   (mcr p15, #0, r0, c7, c5, #0); invalidate the whole I-cache
-		ram[18'd108] = 32'hEE070F35;  // 020001b0  mcr p15, 0, r0, c7, c5, 1   (mcr p15, #0, r0, c7, c5, #1); invalidate an I-cache line by address
-		ram[18'd109] = 32'hEE070F16;  // 020001b4  mcr p15, 0, r0, c7, c6, 0   (mcr p15, #0, r0, c7, c6, #0); invalidate the whole D-cache
-		ram[18'd110] = 32'hEE070F36;  // 020001b8  mcr p15, 0, r0, c7, c6, 1   (mcr p15, #0, r0, c7, c6, #1); invalidate a D-cache line by address
-		ram[18'd111] = 32'hEE070F3A;  // 020001bc  mcr p15, 0, r0, c7, c10, 1   (mcr p15, #0, r0, c7, c10, #1); clean a D-cache line by address
-		ram[18'd112] = 32'hEE070F5A;  // 020001c0  mcr p15, 0, r0, c7, c10, 2   (mcr p15, #0, r0, c7, c10, #2); clean a D-cache line by index
-		ram[18'd113] = 32'hEE070F3E;  // 020001c4  mcr p15, 0, r0, c7, c14, 1   (mcr p15, #0, r0, c7, c14, #1); clean and invalidate by address
-		ram[18'd114] = 32'hEE070F5E;  // 020001c8  mcr p15, 0, r0, c7, c14, 2   (mcr p15, #0, r0, c7, c14, #2); clean and invalidate by index
-		ram[18'd115] = 32'hEE070F3D;  // 020001cc  mcr p15, 0, r0, c7, c13, 1   (mcr p15, #0, r0, c7, c13, #1); prefetch an I-cache line
-		ram[18'd116] = 32'hEE070F55;  // 020001d0  mcr p15, 0, r0, c7, c5, 2   (mcr p15, #0, r0, c7, c5, #2); not on this part: invalidate by index
-		ram[18'd117] = 32'hEE070F9A;  // 020001d4  mcr p15, 0, r0, c7, c10, 4   (mcr p15, #0, r0, c7, c10, #4); not on this part: drain write buffer
-		ram[18'd118] = 32'hEE070F90;  // 020001d8  mcr p15, 0, r0, c7, c0, 4   (mcr p15, #0, r0, c7, c0, #4); wait for interrupt
-		ram[18'd119] = 32'hE3A0005A;  // 020001dc  mov r0, #0x5A   (mov r0, #0x5a); only runs if the interrupt woke it
-		ram[18'd120] = 32'hE5880000;  // 020001e0  str r0, [r8]; one word past the results block
-		ram[18'd121] = 32'hEAFFFFFE;  // 020001e4  b .   (b #0x20001e4); the end marker, reached after the wake
+		ram[18'd104] = 32'hE3A00004;  // 020001a0  mov r0, #4; c1 bit 2: the data cache on
+		ram[18'd105] = 32'hEE010F10;  // 020001a4  mcr p15, 0, r0, c1, c0, 0   (mcr p15, #0, r0, c1, c0, #0)
+		ram[18'd106] = 32'hE3A000DE;  // 020001a8  mov r0, #0xDE   (mov r0, #0xde)
+		ram[18'd107] = 32'hE5880040;  // 020001ac  str r0, [r8, #0x40]; a store the tags see: fill, then dirty
+		ram[18'd108] = 32'hEE172F7A;  // 020001b0  mrc p15, 0, r2, c7, c10, 3   (mrc p15, #0, r2, c7, c10, #3); test and clean: a dirty line
+		ram[18'd109] = 32'hEE173F7A;  // 020001b4  mrc p15, 0, r3, c7, c10, 3   (mrc p15, #0, r3, c7, c10, #3); and now nothing is dirty
+		ram[18'd110] = 32'hE4882004;  // 020001b8  str r2, [r8], #4; 24: 0
+		ram[18'd111] = 32'hE4883004;  // 020001bc  str r3, [r8], #4; 25: 1
+		ram[18'd112] = 32'hE3A00000;  // 020001c0  mov r0, #0
+		ram[18'd113] = 32'hEE010F10;  // 020001c4  mcr p15, 0, r0, c1, c0, 0   (mcr p15, #0, r0, c1, c0, #0); the cache off again
+		ram[18'd114] = 32'hE3A00402;  // 020001c8  mov r0, #0x02000000   (mov r0, #0x2000000)
+		ram[18'd115] = 32'hE3800E12;  // 020001cc  orr r0, r0, #0x120
+		ram[18'd116] = 32'hE3800003;  // 020001d0  orr r0, r0, #3; the line address the strobe carries
+		ram[18'd117] = 32'hEE070F15;  // 020001d4  mcr p15, 0, r0, c7, c5, 0   (mcr p15, #0, r0, c7, c5, #0); invalidate the whole I-cache
+		ram[18'd118] = 32'hEE070F35;  // 020001d8  mcr p15, 0, r0, c7, c5, 1   (mcr p15, #0, r0, c7, c5, #1); invalidate an I-cache line by address
+		ram[18'd119] = 32'hEE070F16;  // 020001dc  mcr p15, 0, r0, c7, c6, 0   (mcr p15, #0, r0, c7, c6, #0); invalidate the whole D-cache
+		ram[18'd120] = 32'hEE070F36;  // 020001e0  mcr p15, 0, r0, c7, c6, 1   (mcr p15, #0, r0, c7, c6, #1); invalidate a D-cache line by address
+		ram[18'd121] = 32'hEE070F3A;  // 020001e4  mcr p15, 0, r0, c7, c10, 1   (mcr p15, #0, r0, c7, c10, #1); clean a D-cache line by address
+		ram[18'd122] = 32'hEE070F5A;  // 020001e8  mcr p15, 0, r0, c7, c10, 2   (mcr p15, #0, r0, c7, c10, #2); clean a D-cache line by index
+		ram[18'd123] = 32'hEE070F3E;  // 020001ec  mcr p15, 0, r0, c7, c14, 1   (mcr p15, #0, r0, c7, c14, #1); clean and invalidate by address
+		ram[18'd124] = 32'hEE070F5E;  // 020001f0  mcr p15, 0, r0, c7, c14, 2   (mcr p15, #0, r0, c7, c14, #2); clean and invalidate by index
+		ram[18'd125] = 32'hEE070F3D;  // 020001f4  mcr p15, 0, r0, c7, c13, 1   (mcr p15, #0, r0, c7, c13, #1); prefetch an I-cache line
+		ram[18'd126] = 32'hEE070F55;  // 020001f8  mcr p15, 0, r0, c7, c5, 2   (mcr p15, #0, r0, c7, c5, #2); not on this part: invalidate by index
+		ram[18'd127] = 32'hEE070F9A;  // 020001fc  mcr p15, 0, r0, c7, c10, 4   (mcr p15, #0, r0, c7, c10, #4); not on this part: drain write buffer
+		ram[18'd128] = 32'hEE070F90;  // 02000200  mcr p15, 0, r0, c7, c0, 4   (mcr p15, #0, r0, c7, c0, #4); wait for interrupt
+		ram[18'd129] = 32'hE3A0005A;  // 02000204  mov r0, #0x5A   (mov r0, #0x5a); only runs if the interrupt woke it
+		ram[18'd130] = 32'hE5880000;  // 02000208  str r0, [r8]; one word past the results block
+		ram[18'd131] = 32'hEAFFFFFE;  // 0200020c  b .   (b #0x200020c); the end marker, reached after the wake
 	end
 endtask
-// the program ends at 0x020001e8: the WFI at 0x020001dc, the marker at
-// 0x020001e4; the results block starts at 0x02000400
-
+// the program ends at 0x02000210: the WFI at 0x02000204, the marker at
+// 0x0200020c; the results block starts at 0x02000400
 integer i;
 initial begin
 	for (i = 0; i < 65536; i = i + 1) ram[i] = 32'h0000_0000;
@@ -334,7 +348,7 @@ initial begin
 	// ---- WFI stops the core at the instruction after it ----
 	wait_halt(20000, "the CP15 program");
 	check_val(halted, 32'd1, "c7,c0,4 stopped the core");
-	check_val(pc_out, 32'h0200_01DC, "the halted PC is past the WFI");
+	check_val(pc_out, 32'h0200_0204, "the halted PC is past the WFI");
 
 	// ---- what the program read back out of CP15 ----
 	check_ram(16'h0100, 32'h0000_0000, "c2 data map at reset");
@@ -361,6 +375,8 @@ initial begin
 	check_ram(16'h0115, 32'h0000_0000, "c7 reads zero");
 	check_ram(16'h0116, 32'h0000_0001, "test and clean: already clean");
 	check_ram(16'h0117, 32'h0000_0001, "test, clean and invalidate");
+	check_ram(16'h0118, 32'h0000_0000, "test and clean found the store's line");
+	check_ram(16'h0119, 32'h0000_0001, "and the second read found it clean");
 
 	// ---- the command decode ----
 	check_val(nops, 32'd10, "ten c7 commands decoded, the two invalid ones not");
@@ -383,8 +399,8 @@ initial begin
 	irq = 0;
 	repeat (4) @(posedge clk);
 	check_val(halted, 32'd0, "an interrupt left the CP15 wait");
-	run_to(32'h0200_01E4, 200, "the instruction after WFI");
-	check_ram(16'h0118, 32'h0000_005A, "the store after WFI reached memory");
+	run_to(32'h0200_020C, 200, "the instruction after WFI");
+	check_ram(16'h011A, 32'h0000_005A, "the store after WFI reached memory");
 
 	$display("  %0d checks", checks);
 	if (errors == 0) $display("TB ARM9 CP15 PASS");

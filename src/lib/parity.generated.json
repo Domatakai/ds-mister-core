@@ -31,7 +31,7 @@
   },
   "M6": {
     "id": "M6",
-    "scope": "Cheat engine (Action Replay, 8 entries per clock), the DS-native menu, profiles, the video/audio filter rows and the input replay log",
+    "scope": "Cheat engine (Action Replay, 8 entries per clock), the DS-native menu, profiles, the video/audio filter rows, the input replay log and its status strip",
     "state": "partial",
     "left": "Save states, rewind"
   }

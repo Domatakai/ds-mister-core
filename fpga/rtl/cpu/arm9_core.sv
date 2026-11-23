@@ -29,15 +29,18 @@
 //   vectors  undefined 0x04, SWI 0x08, prefetch abort 0x0C, IRQ 0x18, FIQ
 //            0x1C, taken at 0x00000000 or (V=1) 0xFFFF0000
 //
-// Not modelled yet: the caches themselves and the protection unit's
+// Not modelled yet: the caches' data arrays and the protection unit's
 // permission checks. Their CP15 state is real -- c2's cachability bits, c3's
 // write-bufferability bits, c5/c6's eight regions, c9's lockdown and TCM
-// registers, and every c7 maintenance command the ARM946E-S defines -- so
-// software that programs them reads back what it wrote, and the c7 decode
-// already drops the fetch buffer where an instruction-side invalidate says to.
-// Every access still goes to the bus until the caches land. Timing is
-// functional rather than cycle-accurate, exactly as in the ARM7 core: one bus
-// access per fetch and one per load/store beat.
+// registers, and every c7 maintenance command the ARM946E-S defines. The
+// line state those commands act on now exists too (rtl/cpu/arm9_cache_tag.sv):
+// each cache's tags, one valid bit and the data cache's dirty bits follow the
+// accesses the core makes once c1 enables the cache, so a test-and-clean
+// reports a line a store really dirtied and clears it. Every access still
+// goes to the bus, and nothing is served out of the tags: they are the state
+// the data arrays will sit behind, not a cache yet. Timing is functional
+// rather than cycle-accurate, exactly as in the ARM7 core: one bus access per
+// fetch and one per load/store beat.
 //
 // The data-abort vector (0x10) is not entered from anywhere yet — the bus
 // cannot report an error and there is no MPU/MMU to raise a translation or
@@ -206,6 +209,13 @@ reg [31:0] c9_lock_d, c9_lock_i;
 // CP15 c7, CRm 0 opcode_2 4 (and c8,2, which GBATEK lists as the same thing):
 // wait for an interrupt. The core already has this stop for HALTCNT.
 reg        cp15_wait;
+// c7's two test-and-clean reads are MRCs with a side effect, so they get a
+// strobe of their own: {a read happened, it was the invalidating form}
+reg  [1:0] cp15_tc;
+// the caches' line state (rl/cpu/arm9_cache_tag.sv): the data cache's dirty
+// bit is what a test-and-clean reports
+wire       d_tag_dirty;
+wire [15:0] d_tag_hits, d_tag_misses, i_tag_hits, i_tag_misses;
 // reset values, and the two read-only identification values (ARM946E-S: the
 // ID decodes as architecture 5TE, part 0x946, revision 1; the cache type
 // decodes as 4 KB four-way data and 8 KB four-way instruction caches, which is
@@ -953,10 +963,11 @@ always @(*) begin
 	// CRm (the DS mirrors opcode_2 1 onto the same register)
 	4'h5:    cprd = (cp15_op2 <= 3'd3) ? cp15_c5[cp15_op2] : 32'd0;
 	4'h6:    cprd = cp15_c6[cp15_crm];
-	// c7 is write-only, except the two test-and-clean reads: with no
-	// dirty line they report the cache already clean (bit 0) at once
+	// c7 is write-only, except the two test-and-clean reads: bit 0 is set
+	// when the data cache had no dirty line to clean, from the tags' own
+	// dirty state rather than a constant
 	4'h7:    cprd = ((cp15_crm == 4'd10 || cp15_crm == 4'd14) &&
-	                cp15_op2 == 3'd3) ? 32'd1 : 32'd0;
+	                cp15_op2 == 3'd3) ? {31'd0, ~d_tag_dirty} : 32'd0;
 	// c1 opcode_2 1 is the auxiliary control register
 	4'h1:    cprd = (cp15_op2 == 3'd1) ? cp15_aux : cp15_r[1];
 	// c9: CRm 0 is cache lockdown, CRm 1 the TCM region; opcode_2 1 is
@@ -1004,6 +1015,7 @@ always @(posedge clk) begin
 		cp15_wait <= 1'b0;
 		cp15_c7     <= 8'd0;
 		cp15_c7_arg <= 32'd0;
+		cp15_tc     <= 2'd0;
 		state    <= S_FETCH;
 		bus_rd   <= 1'b0;
 		bus_wr   <= 1'b0;
@@ -1024,6 +1036,7 @@ always @(posedge clk) begin
 		// the c7 strobe lasts the one cycle after the instruction that
 		// decoded it; a new command below overrides this clear
 		cp15_c7 <= 8'd0;
+		cp15_tc <= 2'd0;
 		// commit the deferred write: the value this edge, the bank it was
 		// captured in, and the readers that take a pending value
 		if (pw_en) begin
@@ -1917,8 +1930,15 @@ always @(posedge clk) begin
 					if (cp15_sel && mode != 5'h10 && insn[15:12] != 4'hF) begin
 						if (cp15_rd) begin
 							// MRC: c0 is the identification space (read
-							// only) and c7 is write-only maintenance, both
-							// of which `cprd` above already accounts for
+							// only) and c7 is maintenance, which `cprd`
+							// above already accounts for. The two
+							// test-and-clean reads also clean: the tags
+							// clear their dirty bits and, for c14, the
+							// whole cache with them.
+							if (cp15_crn == 4'h7 &&
+							    (cp15_crm == 4'd10 || cp15_crm == 4'd14) &&
+							    cp15_op2 == 3'd3)
+								cp15_tc <= {1'b1, (cp15_crm == 4'd14)};
 							`WREG_P(insn[15:12], cprd)
 						end else begin
 							// MCR: keep the register whole. A write to the
@@ -2230,5 +2250,87 @@ end
 // a throwaway module with the same shape: 5 such warnings without this, 0 with.
 wire _unused_spsr = &{1'b0, spsr_abt, spsr_fiq, spsr_irq, spsr_svc, spsr_und};
 always @(*) if (_unused_spsr) begin end
+
+//------------------------------------------------------------------
+// Cache tags and line state
+//
+// The caches' first step: the tags follow every access the core makes while
+// c1 enables the cache, a store marks the line it lands on dirty, and the c7
+// maintenance commands act on the arrays. Nothing is served out of them, so
+// a lost or late observation costs a line of state and never data -- which
+// is why the compare can lag the access by a cycle. Every access still goes
+// to the bus, exactly as it did before this existed.
+//------------------------------------------------------------------
+wire d_cache_on = cp15_r[1][2];    // c1 bit 2: the data cache's enable
+wire i_cache_on = cp15_r[1][12];   // c1 bit 12: the instruction cache's
+
+wire        d_acc   = (state == S_MW) && bus_ready;
+wire        d_acc_w = bus_wr;                 // the store the bus saw
+wire        i_acc   = (state == S_FW) && bus_ready;
+
+wire  [7:0] c7v = cp15_c7;
+wire        d_mnt = c7v[7] && (c7v[6:3] == 4'd6 || c7v[6:3] == 4'd10 ||
+                               c7v[6:3] == 4'd14);
+wire        i_mnt = c7v[7] && (c7v[6:3] == 4'd5);
+
+// the command numbers are the ones rtl/cpu/arm9_cache_tag.sv documents
+wire [3:0] d_mnt_cmd =
+	c7v[6:3] == 4'd6  && c7v[2:0] == 3'd0 ? 4'd1 :   // invalidate all
+	c7v[6:3] == 4'd6  && c7v[2:0] == 3'd1 ? 4'd2 :   // invalidate a line
+	c7v[6:3] == 4'd10 && c7v[2:0] == 3'd1 ? 4'd3 :   // clean a line
+	c7v[6:3] == 4'd10 && c7v[2:0] == 3'd2 ? 4'd5 :   // clean by index
+	c7v[6:3] == 4'd14 && c7v[2:0] == 3'd1 ? 4'd4 :   // clean and invalidate
+	c7v[6:3] == 4'd14 && c7v[2:0] == 3'd2 ? 4'd6 :   // ... by index
+	cp15_tc[1] ? (cp15_tc[0] ? 4'd8 : 4'd7) : 4'd0;  // the two reads
+
+wire [3:0] i_mnt_cmd =
+	c7v[6:3] == 4'd5 && c7v[2:0] == 3'd0 ? 4'd1 : 4'd9;
+wire       i_mnt_any = i_mnt && (i_mnt_cmd != 4'd9);
+
+arm9_cache_tag #(.SETS(32), .SETB(5), .TAGW(22), .DIRTY(1)) d_cache_tag (
+	.clk(clk),
+	.ce(ce),
+	.reset(reset),
+	.enable(d_cache_on),
+	.acc(d_acc),
+	.acc_addr(bus_addr),
+	.acc_wr(d_acc_w),
+	.mnt(d_mnt || cp15_tc[1]),
+	.mnt_cmd(d_mnt_cmd),
+	.mnt_arg(cp15_c7_arg),
+	.lock_way(c9_lock_d[1:0]),
+	.lock_en(c9_lock_d[31]),
+	.dirty_any(d_tag_dirty),
+	.last_hit(),
+	.last_way(),
+	.last_valid(),
+	.hits(d_tag_hits),
+	.misses(d_tag_misses)
+);
+
+arm9_cache_tag #(.SETS(64), .SETB(6), .TAGW(21), .DIRTY(0)) i_cache_tag (
+	.clk(clk),
+	.ce(ce),
+	.reset(reset),
+	.enable(i_cache_on),
+	.acc(i_acc),
+	.acc_addr(bus_addr),
+	.acc_wr(1'b0),
+	.mnt(i_mnt_any),
+	.mnt_cmd(i_mnt_cmd),
+	.mnt_arg(cp15_c7_arg),
+	.lock_way(c9_lock_i[1:0]),
+	.lock_en(c9_lock_i[31]),
+	.dirty_any(),
+	.last_hit(),
+	.last_way(),
+	.last_valid(),
+	.hits(i_tag_hits),
+	.misses(i_tag_misses)
+);
+
+wire _unused_tag = &{1'b0, d_tag_hits, d_tag_misses, i_tag_hits,
+                     i_tag_misses, i_mnt};
+always @(*) if (_unused_tag) begin end
 
 endmodule

@@ -731,11 +731,12 @@ lcd_overlay lcd_overlay (
 // CEs, so the text coordinates are delayed to match its DE.
 //------------------------------------------------------------------
 reg  [8:0] mx1 = 9'd0, my1 = 9'd0, mx2 = 9'd0, my2 = 9'd0;
-reg  [8:0] mx3 = 9'd0, my3 = 9'd0;
+reg  [8:0] mx3 = 9'd0, my3 = 9'd0, mx4 = 9'd0, my4 = 9'd0;
 always @(posedge clk_sys) if (clk_pix_ce) begin
 	mx1 <= pix_x;  my1 <= pix_y;
 	mx2 <= mx1;    my2 <= my1;
 	mx3 <= mx2;    my3 <= my2;
+	mx4 <= mx3;    my4 <= my3;
 end
 
 wire [15:0] m_out;
@@ -772,13 +773,43 @@ boot_menu boot_menu (
 	.vs_o(m_vs)
 );
 
-wire [4:0] out_r = m_out[14:10], out_g = m_out[9:5], out_b = m_out[4:0];
-assign VGA_R = m_de ? {out_r, out_r[4:2]} : 8'd0;
-assign VGA_G = m_de ? {out_g, out_g[4:2]} : 8'd0;
-assign VGA_B = m_de ? {out_b, out_b[4:2]} : 8'd0;
-assign VGA_HS = m_hs;
-assign VGA_VS = m_vs;
-assign VGA_DE = m_de;
+//------------------------------------------------------------------
+// Replay status strip — the input log's own counters along the bottom
+// row, drawn only while a replay mode is selected and the boot menu is
+// closed. One more CE, so the coordinates step to mx4/my4.
+//------------------------------------------------------------------
+wire [15:0] s_out;
+wire        s_de, s_hs, s_vs;
+
+replay_status replay_status (
+	.clk(clk_sys),
+	.ce(clk_pix_ce),
+	.reset(reset),
+	.mode(menu_active ? 2'd0 : replay_mode),
+	.recording(replay_recording),
+	.playing(replay_playing),
+	.count(replay_count),
+	.frames_bcd(replay_frames_bcd),
+	.pos_bcd(replay_pos_bcd),
+	.x(mx4),
+	.y(my4),
+	.de(m_de),
+	.hs(m_hs),
+	.vs(m_vs),
+	.rgb_in(m_out),
+	.rgb_o(s_out),
+	.de_o(s_de),
+	.hs_o(s_hs),
+	.vs_o(s_vs)
+);
+
+wire [4:0] out_r = s_out[14:10], out_g = s_out[9:5], out_b = s_out[4:0];
+assign VGA_R = s_de ? {out_r, out_r[4:2]} : 8'd0;
+assign VGA_G = s_de ? {out_g, out_g[4:2]} : 8'd0;
+assign VGA_B = s_de ? {out_b, out_b[4:2]} : 8'd0;
+assign VGA_HS = s_hs;
+assign VGA_VS = s_vs;
+assign VGA_DE = s_de;
 assign VGA_F1 = 0;
 assign VGA_SL = scanlines;
 assign VGA_SCALER = 0;
@@ -1133,6 +1164,9 @@ input_mapper input_mapper (
 assign live_input = {5'd0, raw_hinge, raw_mic, raw_touch_down,
                      raw_touch_y, raw_touch_x, raw_keys};
 
+wire        replay_recording, replay_playing;
+wire [15:0] replay_count, replay_frames_bcd, replay_pos_bcd;
+
 input_replay #(.DEPTH(8192)) u_input_replay (
 	.clk(clk_sys),
 	.reset(reset),
@@ -1140,10 +1174,12 @@ input_replay #(.DEPTH(8192)) u_input_replay (
 	.mode(replay_mode),
 	.live(live_input),
 	.out(replay_input),
-	.recording(),
-	.playing(),
-	.count(),
-	.pos()
+	.recording(replay_recording),
+	.playing(replay_playing),
+	.count(replay_count),
+	.pos(),
+	.frames_bcd(replay_frames_bcd),
+	.pos_bcd(replay_pos_bcd)
 );
 
 assign ds_keys    = replay_input[11:0];

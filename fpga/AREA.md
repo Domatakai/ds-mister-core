@@ -2945,7 +2945,7 @@ row at seed 1:
 
 | seed 1, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
 |---|---|---|---|---|---|---|---|---|
-| both bank writes captured | 4,038 | 35,143 | 32,736 | -4.004 | -11,854.877 | +0.257 | +0.241 | 3,871,272 |
+| both bank writes captured, replay log | 4,038 | 35,143 | 32,736 | -4.004 | -11,854.877 | +0.257 | +0.241 | 3,871,272 |
 | ..., input log, seed 2, does not ship | 4,018 | 35,192 | 32,793 | -4.091 | -12,661.459 | +0.249 | -0.087 | 3,886,764 |
 | ..., cache state, seed 2 | 4,046 | 34,809 | 32,510 | -4.758 | -16,699.057 | +0.250 | +0.010 | 3,760,180 |
 
@@ -2976,3 +2976,93 @@ None of this has run on a board. A log also reproduces inputs and not a
 machine: anything a game reads from outside the mapped inputs -- the RTC,
 microphone noise, the wireless unit -- diverges on replay, and save states
 and a true rewind remain M6 rows.
+### Cache line state, and a readout for the log (2026-11-22)
+
+Two of the rows the log left behind, in one tree: the state a cache
+maintenance command acts on, and something on screen that says what the
+input log is doing.
+
+`rtl/cpu/arm9_cache_tag.sv` is that state and nothing else. Four tag arrays
+per cache at the geometry CP15_CACHETYPE already declares -- 32-byte lines,
+four ways, 32 sets over 4 KB of data cache and 64 sets over 8 KB of
+instruction cache -- plus a valid bit per set and way and a dirty bit for
+each of the data cache's 128 lines. Nothing is filled from memory, nothing
+is served out of the arrays, and every access still reaches the bus, so no
+timing changed; what changed is that the nine c7 commands CP15 already
+decoded now do something. Before this, test-and-clean answered "clean" by
+construction because there was no line state to test.
+
+Two decisions came out of making the commands mean what they say.
+
+Whole-cache invalidate clears a bitmap. A generation bit is smaller, but it
+flips back: invalidate twice with a fill in between and the second one
+revalidates the line the first threw away. A walk over the sets is exact
+but lets an allocation land in a set that has been cleared or is about to
+be. One cycle and a bitmap is both.
+
+The compare is combinational and the state moves on the access's own cycle.
+Software writes a line and then cleans it -- a DMA writeback does exactly
+that -- so the clean has to see the store that came before it. A registered
+array read put the dirty bit a cycle behind the store and the clean found
+nothing to do; `tb_arm9_cp15` caught it in the core, as a test-and-clean
+reading 1 where it should read 0, before a fit was spent on it.
+
+The strip is the other half. `rtl/video/replay_status.sv` draws the log's
+state along the bottom row of the picture while the row is not Off: `REC
+0123`, `FULL8192`, `PLAY0123/8192`, `END 0123/8192` or `EMPTY`, in a bar
+from column 8 to 23 with the text from column 9. The digits are BCD
+counters inside the recorder, incremented on the same frame tick as `count`
+and `pos`, so the readout cannot disagree with what is stored and there is
+no divider in the video path. One pixel clock enable, gated off while the
+boot menu is open, so the two overlays never share the row.
+
+The README also stops implying things the menu cannot do. `Show FPS`,
+`Frame graph`, `Bus activity LEDs` and `Rewind buffer` are rows with
+nothing behind them, and it now says so where those rows are described.
+
+The cost, the row that shipped and the fits behind it:
+
+| seed 1, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
+|---|---|---|---|---|---|---|---|---|
+| ..., replay log, seed 1 | 4,038 | 35,143 | 32,736 | -4.004 | -11,854.877 | +0.257 | +0.241 | 3,871,272 |
+| both bank writes captured | 4,105 | 37,556 | 35,893 | -5.378 | -16,596.011 | +0.248 | +0.128 | 3,915,836 |
+| ..., staging copy, seed 2, does not ship | 4,108 | 37,512 | 36,011 | -5.202 | -18,941.233 | +0.245 | -0.010 | 3,990,212 |
+
+The cache state is not cheap, and it is not cheap where it was designed to
+be. Both caches' tags come to 2,816 bits, which is nothing, but Quartus put
+them in registers rather than RAM: 3,157 flops and 2,413 ALMs, which takes
+the design from 84% to 90% of its ALMs. The strip is inside that figure and
+the fit does not separate it out, but its counters and font cells are a
+handful next to 3,157. The 44 ALMs between the two seeds say this is not a
+placement accident; it is what an associative tag compare costs when it
+cannot be read a cycle late. The next step, 12 KB of data arrays and the
+line reload, therefore has to go to block RAM: 45% of the block memory is
+spent and the 10% of ALMs left is not another set of arrays this size.
+
+Seed 1 was measured twice. The first fit was of the staged copy; `rr_way`
+then moved up the file so iverilog would accept it, and a comment changed,
+and fitting the tree as committed reproduced that row figure for figure --
+4,105 LABs, 37,556 ALMs, the same +0.128. The fingerprint is what noticed
+the difference at all: it refused the first fit as evidence for a tree it
+was not built from, which is the check doing its job on an edit that
+turned out not to matter. The seed-2 row is the staged copy, one
+declaration away from what ships.
+
+Seed 2 misses the release by 10 ps -- `pll_hdmi` at -0.010 against +0.128
+at seed 1 -- so `NDS.qsf` still says SEED 1 and all three rows are in the
+ledger. The margin is thinner than the log alone left it, +0.241 to +0.128,
+against the 0.328 ns that two seeds of one unchanged tree have moved. This
+is the second tree in a row where seed 1 is the one that closes.
+
+The benches: 53 steps, 53 passed. `tb_arm9_cache_tag` is 58 checks over
+both geometries -- fill, hit, the dirty bit, every c7 form, lockdown, and
+the whole-cache invalidate that a walk would get wrong. `tb_arm9_cp15`
+grew to 45 with a store, a clean and two test-and-cleans run through the
+core, and `tb_input_replay` is 37 with the tens carry at depth 16 as well
+as at 8192. The strip has its own bench, 75 checks over its five states,
+the digits and the bar's edges.
+
+None of it has run on a board. The tags and the strip are simulation and
+Quartus claims only, and the state without the data arrays is correct and
+useless: a cache that allocates is still the missing half, and until it
+lands the strip reports on a log that no game can see.

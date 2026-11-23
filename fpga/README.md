@@ -42,8 +42,9 @@ is written down rather than left to be discovered:
   not vendor-documented and the accessory itself was never available to
   check it. Missing: local DS-to-DS wireless.
 - **M6, the front end** — the cheat engine, the DS-native menu and the input
-  replay log are in; save states and a true (per-frame) rewind are rows in
-  that menu whose hardware does not exist yet.
+  replay log, with the status strip that shows what the log is doing, are
+  in; save states and a true (per-frame) rewind are rows in that menu whose
+  hardware does not exist yet.
 
 Underneath that: the framework wiring, the OSD menu, the memory map, the
 SDRAM controller, the complete video path, the input path (DS keys, stylus,
@@ -254,21 +255,29 @@ one-cycle strobe (`cp15_c7`, with CRm in bits 6:3 and opcode_2 in 2:0;
 `cp15_c7_arg` is Rd). An instruction-side invalidate drops the fetch
 buffer, and a WFI -- c7,c0,4 and the c8,2 alias GBATEK lists -- stops the
 core until an interrupt, the same stop HALTCNT uses. `tb_arm9_cp15` runs
-the whole set through the core: 43 checks over the register read-backs,
-the ten commands that decode, the two that must not, and the wake.
+the whole set through the core: 45 checks over the register read-backs,
+the ten commands that decode, the two that must not, the dirty line a
+store leaves behind, and the wake.
 
-The caches themselves are not in yet. When they are, c1 bit 12 enables
-the instruction side and bit 2 the data side, c2's maps decide what is
-cacheable, and the c7 strobe is where their maintenance attaches. The
-state alone is 585 new flops and 65 ALMs -- 680 to 715 more device
-registers depending on the seed -- enough to tip the release path: seed 4
-ends at -0.257 ns on `pll_hdmi`, so the shipped fit is seed 2 at +0.010
-(4,046 LABs, 34,809 ALMs, 32,510 registers).
+The next step is in: `rtl/cpu/arm9_cache_tag.sv` holds both caches'
+tags, a valid bit per set and way, and the data cache's dirty bits, and
+c1 bit 12 / bit 2 gate whether an access is recorded at all. That makes a
+maintenance command act on something real -- the test-and-clean reads now
+answer from the dirty bits instead of returning 1 by construction, and
+`tb_arm9_cp15` checks the store-then-clean sequence through the core
+while `tb_arm9_cache_tag` drives both geometries directly: 58 checks over
+the fill, the hit, the dirty line, clean by address, clean by index,
+test-and-clean, invalidate-all (twice, because a generation bit would
+resurrect the first one's lines) and lockdown.
 
-The caches' bench will have the shape of `tb_arm9_tcm`: a
-keystone-assembled program that enables them, runs a loop that must not
-touch the fabric twice for one line, and issues each c7 operation so the
-decode is checked opcode by opcode rather than by watching a game.
+What is not in is the data: no line is filled from memory and nothing is
+served from the arrays, so every access still reaches the bus and none of
+the timing changes. That is the remaining half -- the 4 KB and 8 KB data
+arrays, the line reload behind a miss, and the coherence hook -- and it is
+the half that reaches into the fetch and load/store path, which is where
+the release margin will be spent. The state alone cost 585 flops and 65
+ALMs, enough to tip `pll_hdmi` at seed 4; the tags and their bitmaps are
+measured in the section of `AREA.md` that covers this change.
 
 What follows the caches, in the order the remaining work costs most:
 
@@ -733,6 +742,10 @@ fpga/
     video/boot_menu.sv        in-core game picker: slot title + game
                               code, drawn over the picture, pad-driven
                                                                 [SIM-VERIFIED]
+    video/replay_status.sv    the input log's state along the bottom row:
+                              REC/FULL, PLAY/END with position and
+                              length, EMPTY, from the recorder's own
+                              decimal counters                     [SIM-VERIFIED]
     video/font5x7.sv          5x7 font for the menu (A-Z, 0-9,
                               punctuation)                     [SIM-VERIFIED]
     video/renderer_2d.sv      shared 2D text renderer: BG0-3, OBJ,
@@ -757,6 +770,10 @@ fpga/
                               LDRD/STRD), CP15, CPSR/SPSR banks, the six
                               exception vectors, HALT, bus master, one-word
                               fetch buffer                [SIM-VERIFIED]
+    cpu/arm9_cache_tag.sv     the ARM9's cache tags, a valid bit per set
+                              and way, the data cache's dirty bits, and
+                              every c7 maintenance command acting on them
+                              (no data arrays yet)             [SIM-VERIFIED]
     cpu/arm7_core.sv          ARM7TDMI: ARMv4T ARM + Thumb, CPSR/SPSR
                               banks, exceptions, HALT, bus master, one-word
                               fetch buffer (Thumb halfwords share a bus read)
@@ -837,6 +854,11 @@ fpga/
   tb/tb_cart_slot.sv      DDR3 download + capacity + four game slots
                                                           [SIM-VERIFIED]
   tb/tb_boot_menu.sv      menu layout, bar, boot pulse, passthrough
+                                                          [SIM-VERIFIED]
+  tb/tb_replay_status.sv  the status strip's five states, digits, bar edges
+                                                          [SIM-VERIFIED]
+  tb/tb_arm9_cache_tag.sv tags and line state at both geometries: fill,
+                          hit, dirty, the c7 forms, lockdown
                                                           [SIM-VERIFIED]
   tb/tb_main_bus.sv       fabric: masters, RAM, cart, slot-2 pak, cheat, IO
                           [SIM-VERIFIED] (also built with -DPAK_REAL, which
@@ -1510,8 +1532,19 @@ vvp /tmp/tb_mic
 iverilog -g2012 -o /tmp/tb_replay tb/tb_input_replay.sv \
          rtl/input/input_replay.sv
 vvp /tmp/tb_replay
-#   30 checks
+#   37 checks
 # TB INPUT REPLAY PASS
+
+# 3a-3. the replay status strip — the log's state drawn along the bottom
+#       row of the picture: REC or FULL with the stored frames, PLAY or END
+#       with the position and the log's length, EMPTY when Play was chosen
+#       with nothing recorded, the bar's own edges, and nothing at all
+#       while the OSD row is Off
+iverilog -g2012 -o /tmp/tb_replay_status tb/tb_replay_status.sv \
+         rtl/video/replay_status.sv rtl/video/font5x7.sv
+vvp /tmp/tb_replay_status
+#   75 checks
+# TB REPLAY STATUS PASS
 
 # 3b. ARM7TDMI core — two hand-assembled programs run through a bus model:
 #     ARM execution (ADD/CMP/MOVEQ/MUL/barrel shifter), STR/LDR round trip,
@@ -1542,7 +1575,7 @@ vvp /tmp/tb_arm7
 #     through the low vector, an undefined coprocessor opcode, MSR/MRS over
 #     the flag fields, and Thumb PUSH/POP, BKPT and BLX
 iverilog -g2012 -I tb -o /tmp/tb_arm9 tb/tb_arm9.sv rtl/cpu/arm9_core.sv \
-         rtl/cpu/swi_hle.sv rtl/cpu/swi_share.sv
+         rtl/cpu/arm9_cache_tag.sv rtl/cpu/swi_hle.sv rtl/cpu/swi_share.sv
 vvp /tmp/tb_arm9
 # fetch buffer on : 387 bus reads
 # TB ARM9 PASS (109 checks)
@@ -1568,7 +1601,7 @@ vvp /tmp/tb_tcm
 #       fabric model, that a TCM access is answered on the cycle the core
 #       samples it while a fabric access takes its wait state, and that the
 #       fabric did serve the program and its results block
-iverilog -g2012 -o /tmp/tb_arm9_tcm tb/tb_arm9_tcm.sv          rtl/cpu/arm9_core.sv rtl/cpu/arm9_tcm.sv
+iverilog -g2012 -o /tmp/tb_arm9_tcm tb/tb_arm9_tcm.sv          rtl/cpu/arm9_core.sv rtl/cpu/arm9_tcm.sv rtl/cpu/arm9_cache_tag.sv
 vvp /tmp/tb_arm9_tcm
 # 20 checks
 # TB ARM9 TCM PASS
@@ -1582,10 +1615,22 @@ vvp /tmp/tb_arm9_tcm
 #       has (the two it does not raise nothing), and a WFI that stops the
 #       core until an interrupt and resumes at the next instruction
 iverilog -g2012 -o /tmp/tb_arm9_cp15 tb/tb_arm9_cp15.sv \
-         rtl/cpu/arm9_core.sv
+         rtl/cpu/arm9_core.sv rtl/cpu/arm9_cache_tag.sv
 vvp /tmp/tb_arm9_cp15
-# 43 checks
+# 45 checks
 # TB ARM9 CP15 PASS
+
+# 3c-5. the cache tags and the line state the c7 commands act on, at both
+#       geometries — an access fills a line and hits on it next time, a
+#       store dirties it, clean by address and by index clear one line,
+#       test-and-clean clears them all in a cycle, invalidate-all empties
+#       the cache at once (twice over: the second must not resurrect a line
+#       the first threw away), and a locked way is never chosen as a victim
+iverilog -g2012 -o /tmp/tb_cache_tag tb/tb_arm9_cache_tag.sv \
+         rtl/cpu/arm9_cache_tag.sv
+vvp /tmp/tb_cache_tag
+#   58 checks
+# TB ARM9 CACHE TAG PASS
 
 # 3d. CPU clock ratio — both cores through cpu_ce and cpu_ce_bridge onto the
 #     REAL bus (main_bus, mem_arbiter, an SDRAM device model), running the same
@@ -1597,7 +1642,7 @@ vvp /tmp/tb_arm9_cp15
 #     to wall-clock time, which is 1.12x, not 2x (see the CPU section above)
 iverilog -g2012 -I tb -o /tmp/tb_clk tb/tb_cpu_clk.sv \
          rtl/cpu/arm9_core.sv rtl/cpu/arm7_core.sv rtl/cpu/swi_hle.sv \
-         rtl/cpu/swi_share.sv \
+         rtl/cpu/swi_share.sv rtl/cpu/arm9_cache_tag.sv \
          rtl/cpu/cpu_ce.sv rtl/cpu/cpu_ce_bridge.sv \
          rtl/bus/main_bus.sv rtl/mem/mem_arbiter.sv rtl/cart/cheat_engine.sv \
          rtl/audio/midi_port.sv rtl/bus/ipc.sv rtl/bus/nds_timers.sv \
@@ -2028,6 +2073,14 @@ this core added:
 The outline is the tree `CONF_STR` builds; the **Slot-2 RAM expansion**
 row (top left) and the video output modes are the ones this core added.
 
+Four rows there have no hardware behind them, and it is worth saying so
+rather than letting a menu imply otherwise: `Show FPS` and `Frame graph`
+draw nothing, `Bus activity LEDs` only blinks `LED_USER`, and `Rewind
+buffer` writes `status[46:45]`, which no module reads. They stay because
+the menu is the OSD's own tree and the diagnostics rows are the obvious
+place for those readouts once they exist; until then they are labels, not
+switches.
+
 Plus the cheat file load (`F2,.CHT` — parsed by `cheat_engine`, applied as
 RAM read patches), soft reset and reset. The full status-bit map is
 documented at the top of `NDS.sv`.
@@ -2123,7 +2176,11 @@ a date a game writes through the port survives until the next load.
   from boot: Record, reset, play; later Play, reset, watch. It stores
   nothing of the machine, so it is the replay half of save states rather
   than a savestate: keep RTC source Internal and the same ROM and save, or
-  the run diverges on whatever was seeded from outside it.
+  the run diverges on whatever was seeded from outside it. While the row is
+  not Off, a strip along the bottom row of the picture says what the log is
+  doing, in decimal from the recorder's own counters: `REC 0123`,
+  `FULL8192`, `PLAY0123/8192`, `END 0123/8192`, or `EMPTY` when Play was
+  chosen with nothing recorded.
 - **Backlight** and **Sound output** — the DS's own panel-brightness and
 sound-output settings, driving the same video gain and mix the rows always
 did.
@@ -2181,7 +2238,7 @@ diagnostics overlay only — NTSC-U, NTSC-J and PAL carts all boot.
 | M3 | GXFIFO → serialised multiplier → triangle setup → flat rasteriser → VRAM write-back → 3D layer composited by engine A; both 2D engines' fetches in bursts and the OAM scan pipelined so a line fits its period | **working** | W-buffer depth, fog, edge marking, toon shading, alpha test, QUADS/QUAD_STRIP, span fill |
 | M4 | Sixteen SPU channels (PCM8/PCM16/ADPCM, loops, pan, master volume, 48 kHz mix); AUXSPI save probe over an emulated EEPROM/FRAM/FLASH chip; MT-32-pi MIDI and its return mix; timers, IPC, maths, per-CPU IRQ banks, HALT, RTC and the three-device SPI bus | **working** | SPU capture units, `.sav` persistence and erase, cart unlock sequence, FLASH above its 64 KB backed window |
 | M5 | Microphone Off / R3 button / board ADC (LTC2308 at 48 kHz through the touchscreen's AUX channel) and the SPI touchscreen; slot-2 rumble pak (open-bus pattern, pad motors); the lid chord on `EXTKEYIN` | **working** | DS-to-DS wireless |
-| M6 | Cheat engine (Action Replay, 8 entries per clock), the DS-native menu, profiles, the video/audio filter rows and the input replay log | **partial** | Save states, rewind |
+| M6 | Cheat engine (Action Replay, 8 entries per clock), the DS-native menu, profiles, the video/audio filter rows, the input replay log and its status strip | **partial** | Save states, rewind |
 
 What each of those measured, for the record: a 4bpp BG line fetches in 425
 clocks and a burst 3D line in 322, the OAM scan went from 820 to 258, and a

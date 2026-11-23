@@ -23,7 +23,9 @@ then issues every c7 command the ARM946E-S defines before a WFI:
     registers are written and read back while both TCM registers are
     programmed and read back, and neither pair disturbs the other
   * c7 reads: the write-only register reads zero, while test-and-clean and
-    test-clean-invalidate report the cache already clean
+    test-clean-invalidate report the cache already clean -- and then, with
+    c1 bit 2 turned on and a store made, they report the line that store
+    dirtied and clear it, so the second read is clean again
   * c7 writes: the nine encoded commands, then two encodings the ARM946E-S
     does not have (an invalidate by index and a write-buffer drain), which
     must not decode
@@ -171,6 +173,23 @@ PROGRAM = [
     ("str r1, [r8], #4",           "22: 1"),
     ("mrc p15, 0, r1, c7, c14, 3", "test, clean and invalidate"),
     ("str r1, [r8], #4",           "23: 1"),
+
+    # ---- the line state: a store with the data cache enabled is dirty ----
+    # The caches' tags follow the accesses once c1 turns them on, so the two
+    # reads here are the CP15-visible half of that: the first finds the line
+    # the store below it created, the second finds nothing left dirty. Both
+    # results are kept in registers and written afterwards, because a store
+    # between the two reads would dirty a line again.
+    ("mov r0, #4",                  "c1 bit 2: the data cache on"),
+    ("mcr p15, 0, r0, c1, c0, 0",   ""),
+    ("mov r0, #0xDE",               ""),
+    ("str r0, [r8, #0x40]",         "a store the tags see: fill, then dirty"),
+    ("mrc p15, 0, r2, c7, c10, 3",  "test and clean: a dirty line"),
+    ("mrc p15, 0, r3, c7, c10, 3",  "and now nothing is dirty"),
+    ("str r2, [r8], #4",            "24: 0"),
+    ("str r3, [r8], #4",            "25: 1"),
+    ("mov r0, #0",                  ""),
+    ("mcr p15, 0, r0, c1, c0, 0",   "the cache off again"),
 
     # ---- c7 writes the ARM946E-S defines ----
     ("mov r0, #0x02000000",        ""),

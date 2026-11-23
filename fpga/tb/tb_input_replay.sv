@@ -34,7 +34,7 @@ reg [47:0] live  = 0;
 
 wire [47:0] out;
 wire        recording, playing;
-wire [15:0] count, pos;
+wire [15:0] count, pos, frames_bcd, pos_bcd;
 
 integer checks = 0;
 integer errors = 0;
@@ -43,7 +43,20 @@ input_replay #(.DEPTH(8)) dut (
 	.clk(clk), .reset(reset), .frame(frame), .mode(mode),
 	.live(live), .out(out),
 	.recording(recording), .playing(playing),
-	.count(count), .pos(pos)
+	.count(count), .pos(pos),
+	.frames_bcd(frames_bcd), .pos_bcd(pos_bcd)
+);
+
+// a deeper copy, for the decimal counters: the strip's four digits have to
+// carry out of the units and into the tens, which eight frames never reach
+wire [15:0] count2, pos2, frames2_bcd, pos2_bcd;
+
+input_replay #(.DEPTH(16)) dut2 (
+	.clk(clk), .reset(reset), .frame(frame), .mode(mode),
+	.live(live), .out(),
+	.recording(), .playing(),
+	.count(count2), .pos(pos2),
+	.frames_bcd(frames2_bcd), .pos_bcd(pos2_bcd)
 );
 
 task tick;
@@ -128,6 +141,7 @@ initial begin
 	do_frame(w3);
 	do_frame(w4);
 	check_val(count, 5, "five frames recorded");
+	check_val(frames_bcd, 16'h0005, "the decimal count reads five");
 	check_out(w4, "recording still passes the live input");
 
 	// ---- Off, then play it back ----
@@ -148,6 +162,7 @@ initial begin
 	check_out(w3, "fourth replayed frame");
 	do_frame(48'h0);
 	check_val(pos, 5, "five frames replayed");
+	check_val(pos_bcd, 16'h0005, "the decimal position reads five");
 	check_val(playing, 0, "play stops at the end of the log");
 	check_out(48'h0, "the live input comes back");
 
@@ -169,6 +184,7 @@ initial begin
 	for (i = 0; i < 8; i = i + 1)
 		do_frame(48'h0000_0000_0100 + i);
 	check_val(count, 8, "a full log holds its depth");
+	check_val(frames_bcd, 16'h0008, "and its decimal count reads eight");
 	check_val(recording, 0, "recording stops when the log is full");
 	// the last frame pulse after the full one must not write past the end
 	frame = 1'b1;
@@ -205,6 +221,20 @@ initial begin
 	frame = 1'b0;
 	check_out(w4, "and its second");
 	tick;
+
+	// ---- the decimal counter carries into the tens ----
+	// dut2 is the same recorder with a deeper log, so twelve frames reach
+	// a digit the eight-frame log cannot
+	set_mode(0);
+	set_mode(1);
+	for (i = 0; i < 12; i = i + 1) do_frame(48'h0000_0000_0001 + i);
+	check_val(count2, 12, "the deeper log recorded twelve frames");
+	check_val(frames2_bcd, 16'h0012, "its decimal count carried to twelve");
+	set_mode(0);
+	set_mode(2);
+	for (i = 0; i < 12; i = i + 1) do_frame(48'h0);
+	check_val(pos2, 12, "and replayed twelve");
+	check_val(pos2_bcd, 16'h0012, "with its decimal position carried too");
 
 	$display("  %0d checks", checks);
 	if (errors == 0) $display("TB INPUT REPLAY PASS");

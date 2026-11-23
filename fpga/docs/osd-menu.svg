@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="1229" viewBox="0 0 1040 1229" role="img" aria-labelledby="t d">
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="1253" viewBox="0 0 1040 1253" role="img" aria-labelledby="t d">
 <title id="t">NDS MiSTer core: OSD menu outline</title>
 <desc id="d">The CONF_STR menu tree of the NDS core, in menu order. Slot-2 RAM expansion and Video output are highlighted.</desc>
-<rect width="1040" height="1229" fill="#f6f5f2"/>
-<rect x="1" y="1" width="1038" height="1227" fill="none" stroke="#c9c5bd"/>
+<rect width="1040" height="1253" fill="#f6f5f2"/>
+<rect x="1" y="1" width="1038" height="1251" fill="none" stroke="#c9c5bd"/>
 <text x="26" y="34" font-family="monospace" font-size="19" font-weight="700" fill="#24211d">NDS MiSTer core &#8212; OSD menu outline</text>
 <text x="26" y="53" font-family="monospace" font-size="10.5" fill="#6b665e">Every row below is a CONF_STR entry, in menu order. Slot-2 RAM expansion and Video output are highlighted.</text>
 <rect x="26" y="70" width="486" height="197" rx="6" fill="#fffdf9" stroke="#c9c5bd"/>
@@ -87,21 +87,21 @@
 <circle cx="41" cy="989" r="2.3" fill="#8a857c"/>
 <text x="51" y="993" font-family="monospace" font-size="11.5" fill="#24211d">Pi LCD corner</text>
 <text x="51" y="1006" font-family="monospace" font-size="10.5" fill="#6b665e">Top left / Top right / Bottom left / Bottom right</text>
-<circle cx="41" cy="1019" r="2.3" fill="#8a857c"/>
-<text x="51" y="1023" font-family="monospace" font-size="11.5" fill="#24211d">MT-32-pi synth</text>
-<text x="51" y="1036" font-family="monospace" font-size="10.5" fill="#6b665e">MT-32 / SoundFont</text>
-<circle cx="41" cy="1049" r="2.3" fill="#8a857c"/>
-<text x="51" y="1053" font-family="monospace" font-size="11.5" fill="#24211d">SoundFont bank</text>
-<text x="51" y="1066" font-family="monospace" font-size="10.5" fill="#6b665e">0 ... 7</text>
-<rect x="26" y="1111" width="486" height="118" rx="6" fill="#fffdf9" stroke="#c9c5bd"/>
-<text x="38" y="1131" font-family="monospace" font-size="13" font-weight="700" fill="#24211d">Top level</text>
-<circle cx="41" cy="1145" r="2.3" fill="#8a857c"/>
-<text x="51" y="1149" font-family="monospace" font-size="11.5" fill="#24211d">CHT</text>
-<text x="51" y="1162" font-family="monospace" font-size="10.5" fill="#6b665e">cheat file (F2)</text>
-<circle cx="41" cy="1175" r="2.3" fill="#8a857c"/>
-<text x="51" y="1179" font-family="monospace" font-size="11.5" fill="#24211d">Soft reset</text>
-<circle cx="41" cy="1194" r="2.3" fill="#8a857c"/>
-<text x="51" y="1198" font-family="monospace" font-size="11.5" fill="#24211d">Reset core and close OSD</text>
+<circle cx="41" cy="1043" r="2.3" fill="#8a857c"/>
+<text x="51" y="1047" font-family="monospace" font-size="11.5" fill="#24211d">MT-32-pi synth</text>
+<text x="51" y="1060" font-family="monospace" font-size="10.5" fill="#6b665e">MT-32 / SoundFont</text>
+<circle cx="41" cy="1073" r="2.3" fill="#8a857c"/>
+<text x="51" y="1077" font-family="monospace" font-size="11.5" fill="#24211d">SoundFont bank</text>
+<text x="51" y="1090" font-family="monospace" font-size="10.5" fill="#6b665e">0 ... 7</text>
+<rect x="26" y="1135" width="486" height="118" rx="6" fill="#fffdf9" stroke="#c9c5bd"/>
+<text x="38" y="1155" font-family="monospace" font-size="13" font-weight="700" fill="#24211d">Top level</text>
+<circle cx="41" cy="1169" r="2.3" fill="#8a857c"/>
+<text x="51" y="1173" font-family="monospace" font-size="11.5" fill="#24211d">CHT</text>
+<text x="51" y="1186" font-family="monospace" font-size="10.5" fill="#6b665e">cheat file (F2)</text>
+<circle cx="41" cy="1199" r="2.3" fill="#8a857c"/>
+<text x="51" y="1203" font-family="monospace" font-size="11.5" fill="#24211d">Soft reset</text>
+<circle cx="41" cy="1218" r="2.3" fill="#8a857c"/>
+<text x="51" y="1222" font-family="monospace" font-size="11.5" fill="#24211d">Reset core and close OSD</text>
 <rect x="528" y="70" width="486" height="350" rx="6" fill="#fffdf9" stroke="#c9c5bd"/>
 <text x="540" y="90" font-family="monospace" font-size="13" font-weight="700" fill="#24211d">Screens</text>
 <circle cx="543" cy="104" r="2.3" fill="#8a857c"/>
@@ -167,7 +167,7 @@
 <circle cx="543" cy="740" r="2.3" fill="#8a857c"/>
 <text x="553" y="744" font-family="monospace" font-size="11.5" fill="#24211d">Pad profile</text>
 <text x="553" y="757" font-family="monospace" font-size="10.5" fill="#6b665e">Default / Left-hand / Arcade stick</text>
-<rect x="528" y="802" width="486" height="384" rx="6" fill="#fffdf9" stroke="#c9c5bd"/>
+<rect x="528" y="802" width="486" height="408" rx="6" fill="#fffdf9" stroke="#c9c5bd"/>
 <text x="540" y="822" font-family="monospace" font-size="13" font-weight="700" fill="#24211d">System</text>
 <circle cx="543" cy="836" r="2.3" fill="#8a857c"/>
 <text x="553" y="840" font-family="monospace" font-size="11.5" fill="#24211d">Core speed</text>
@@ -188,19 +188,22 @@
 <text x="553" y="990" font-family="monospace" font-size="11.5" fill="#24211d">Rewind buffer</text>
 <text x="553" y="1003" font-family="monospace" font-size="10.5" fill="#6b665e">Off / 5 s / 15 s / 30 s</text>
 <circle cx="543" cy="1016" r="2.3" fill="#8a857c"/>
-<text x="553" y="1020" font-family="monospace" font-size="11.5" font-style="italic" fill="#4a453d">Diagnostics</text>
-<circle cx="543" cy="1031" r="2.3" fill="#8a857c"/>
-<text x="553" y="1035" font-family="monospace" font-size="11.5" fill="#24211d">Show FPS</text>
-<text x="553" y="1048" font-family="monospace" font-size="10.5" fill="#6b665e">Off / On</text>
-<circle cx="543" cy="1061" r="2.3" fill="#8a857c"/>
-<text x="553" y="1065" font-family="monospace" font-size="11.5" fill="#24211d">Frame graph</text>
-<text x="553" y="1078" font-family="monospace" font-size="10.5" fill="#6b665e">Off / On</text>
-<circle cx="543" cy="1091" r="2.3" fill="#8a857c"/>
-<text x="553" y="1095" font-family="monospace" font-size="11.5" fill="#24211d">Bus activity LEDs</text>
-<text x="553" y="1108" font-family="monospace" font-size="10.5" fill="#6b665e">Off / On</text>
-<circle cx="543" cy="1121" r="2.3" fill="#8a857c"/>
-<text x="553" y="1125" font-family="monospace" font-size="11.5" fill="#24211d">Log level</text>
-<text x="553" y="1138" font-family="monospace" font-size="10.5" fill="#6b665e">Off / Errors / Verbose</text>
-<circle cx="543" cy="1151" r="2.3" fill="#8a857c"/>
-<text x="553" y="1155" font-family="monospace" font-size="11.5" fill="#24211d">Disable all cheats</text>
+<text x="553" y="1020" font-family="monospace" font-size="11.5" fill="#24211d">Input replay</text>
+<text x="553" y="1033" font-family="monospace" font-size="10.5" fill="#6b665e">Off / Record / Play</text>
+<circle cx="543" cy="1040" r="2.3" fill="#8a857c"/>
+<text x="553" y="1044" font-family="monospace" font-size="11.5" font-style="italic" fill="#4a453d">Diagnostics</text>
+<circle cx="543" cy="1055" r="2.3" fill="#8a857c"/>
+<text x="553" y="1059" font-family="monospace" font-size="11.5" fill="#24211d">Show FPS</text>
+<text x="553" y="1072" font-family="monospace" font-size="10.5" fill="#6b665e">Off / On</text>
+<circle cx="543" cy="1085" r="2.3" fill="#8a857c"/>
+<text x="553" y="1089" font-family="monospace" font-size="11.5" fill="#24211d">Frame graph</text>
+<text x="553" y="1102" font-family="monospace" font-size="10.5" fill="#6b665e">Off / On</text>
+<circle cx="543" cy="1115" r="2.3" fill="#8a857c"/>
+<text x="553" y="1119" font-family="monospace" font-size="11.5" fill="#24211d">Bus activity LEDs</text>
+<text x="553" y="1132" font-family="monospace" font-size="10.5" fill="#6b665e">Off / On</text>
+<circle cx="543" cy="1145" r="2.3" fill="#8a857c"/>
+<text x="553" y="1149" font-family="monospace" font-size="11.5" fill="#24211d">Log level</text>
+<text x="553" y="1162" font-family="monospace" font-size="10.5" fill="#6b665e">Off / Errors / Verbose</text>
+<circle cx="543" cy="1175" r="2.3" fill="#8a857c"/>
+<text x="553" y="1179" font-family="monospace" font-size="11.5" fill="#24211d">Disable all cheats</text>
 </svg>

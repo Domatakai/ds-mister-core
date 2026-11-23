@@ -31,6 +31,13 @@
 // the RTC row set to Host, a real BIOS that reads that clock at boot, or a
 // fresh `.sav`. With RTC source Internal and the same ROM/save starting
 // point, the frame the DS gets is the same one the recording saw.
+//
+// `frames_bcd` and `pos_bcd` are the two counters again in four decimal
+// digits, for the on-screen status strip: they are incremented on the same
+// frame tick as `count` and `pos`, so the readout costs no divider. A BCD
+// counter that only ever counts to 8192 also cannot wrap a digit into a
+// non-decimal value, which a binary-to-decimal conversion in the video path
+// would have to be trusted not to do.
 //============================================================================
 `timescale 1ns / 1ps
 
@@ -48,10 +55,27 @@ module input_replay #(
 	output reg        recording,
 	output reg        playing,
 	output reg [15:0] count = 16'd0, // frames in the log (survives reset)
-	output reg [15:0] pos           // frames replayed so far
+	output reg [15:0] pos,          // frames replayed so far
+	output reg [15:0] frames_bcd,   // count in four decimal digits
+	output reg [15:0] pos_bcd       // pos in four decimal digits
 );
 
 localparam OFF = 2'd0, REC = 2'd1, PLAY = 2'd2;
+
+// one decimal increment on a four-digit packed value: 0x0009 -> 0x0010
+function [15:0] bcd_inc;
+	input [15:0] v;
+	reg         c;
+	begin
+		bcd_inc[3:0] = (v[3:0] == 4'd9) ? 4'd0 : (v[3:0] + 4'd1);
+		c = (v[3:0] == 4'd9);
+		bcd_inc[7:4] = (c && v[7:4] == 4'd9) ? 4'd0 : (v[7:4] + {3'd0, c});
+		c = c && (v[7:4] == 4'd9);
+		bcd_inc[11:8] = (c && v[11:8] == 4'd9) ? 4'd0 : (v[11:8] + {3'd0, c});
+		c = c && (v[11:8] == 4'd9);
+		bcd_inc[15:12] = (c && v[15:12] == 4'd9) ? 4'd0 : (v[15:12] + {3'd0, c});
+	end
+endfunction
 
 reg [47:0] mem [0:DEPTH-1];
 reg [47:0] q;              // the word prefetched for the next frame
@@ -79,9 +103,13 @@ always @(posedge clk) begin
 			rd     <= 16'd0;
 			primed <= 1'b0;
 			pos    <= 16'd0;
+			pos_bcd <= 16'd0;
 			recording <= (mode == REC);
 			playing   <= (mode == PLAY) && (count != 16'd0);
-			if (mode == REC) count <= 16'd0;
+			if (mode == REC) begin
+				count      <= 16'd0;
+				frames_bcd <= 16'd0;
+			end
 		end else if (mode == OFF) begin
 			recording <= 1'b0;
 			playing   <= 1'b0;
@@ -92,6 +120,7 @@ always @(posedge clk) begin
 			out <= live;
 			if (frame) begin
 				mem[wr] <= live;
+				frames_bcd <= bcd_inc(frames_bcd);
 				if (wr + 16'd1 >= DEPTH) begin
 					count     <= DEPTH;
 					recording <= 1'b0;   // full: stop, keep the log
@@ -111,6 +140,7 @@ always @(posedge clk) begin
 			end else if (frame) begin
 				out <= q;
 				pos <= pos + 16'd1;
+				pos_bcd <= bcd_inc(pos_bcd);
 				if (rd < count) begin
 					q  <= mem[rd];
 					rd <= rd + 16'd1;
