@@ -774,6 +774,11 @@ fpga/
                               and way, the data cache's dirty bits, and
                               every c7 maintenance command acting on them
                               (no data arrays yet)             [SIM-VERIFIED]
+    cpu/arm9_cache_data.sv    the lines themselves: four ways of eight
+                              words per set behind one byte-enabled write
+                              port and one registered read port, 4 KB of
+                              data cache and 8 KB of instruction cache
+                                                          [SIM-VERIFIED]
     cpu/arm7_core.sv          ARM7TDMI: ARMv4T ARM + Thumb, CPSR/SPSR
                               banks, exceptions, HALT, bus master, one-word
                               fetch buffer (Thumb halfwords share a bus read)
@@ -859,6 +864,9 @@ fpga/
                                                           [SIM-VERIFIED]
   tb/tb_arm9_cache_tag.sv tags and line state at both geometries: fill,
                           hit, dirty, the c7 forms, lockdown
+                                                          [SIM-VERIFIED]
+  tb/tb_arm9_cache_data.sv the line store: ways, words, byte lanes, both
+                          geometries, the registered read, the enable
                                                           [SIM-VERIFIED]
   tb/tb_main_bus.sv       fabric: masters, RAM, cart, slot-2 pak, cheat, IO
                           [SIM-VERIFIED] (also built with -DPAK_REAL, which
@@ -1631,6 +1639,18 @@ iverilog -g2012 -o /tmp/tb_cache_tag tb/tb_arm9_cache_tag.sv \
 vvp /tmp/tb_cache_tag
 #   58 checks
 # TB ARM9 CACHE TAG PASS
+
+# 3c-6. the lines themselves — a word read back where it was written, the
+#       four ways of a set kept apart, the eight words of a line kept apart,
+#       one byte lane written and the other three untouched, an all-lanes-off
+#       write changing nothing, the deepest address of each geometry not
+#       wrapping onto set 0, the two geometries not sharing cells, and the
+#       enable holding the read port still
+iverilog -g2012 -o /tmp/tb_cache_data tb/tb_arm9_cache_data.sv \
+         rtl/cpu/arm9_cache_data.sv
+vvp /tmp/tb_cache_data
+#   31 checks
+# TB ARM9 CACHE DATA PASS
 
 # 3d. CPU clock ratio — both cores through cpu_ce and cpu_ce_bridge onto the
 #     REAL bus (main_bus, mem_arbiter, an SDRAM device model), running the same

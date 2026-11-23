@@ -83,10 +83,16 @@ module arm9_cache_tag #(
 	//------------------------------------------------------------------
 	// the four ways: tags in arrays, valid and dirty as bitmaps
 	//------------------------------------------------------------------
-	reg [TAGW-1:0] t0 [0:SETS-1];
-	reg [TAGW-1:0] t1 [0:SETS-1];
-	reg [TAGW-1:0] t2 [0:SETS-1];
-	reg [TAGW-1:0] t3 [0:SETS-1];
+	// Marked for the memory blocks in the LABs rather than left to the
+	// fitter, which chose registers on its own: 3,157 flops and 2,413 ALMs
+	// for both caches' tags (AREA.md). An asynchronous read is not what a
+	// block RAM is for, but an MLAB is a LUT RAM and can serve one; whether
+	// it is cheaper than the registers is a measurement, and the ledger
+	// holds the answer for this tree.
+	(* ramstyle = "MLAB" *) reg [TAGW-1:0] t0 [0:SETS-1];
+	(* ramstyle = "MLAB" *) reg [TAGW-1:0] t1 [0:SETS-1];
+	(* ramstyle = "MLAB" *) reg [TAGW-1:0] t2 [0:SETS-1];
+	(* ramstyle = "MLAB" *) reg [TAGW-1:0] t3 [0:SETS-1];
 
 	reg [SETS-1:0] v0, v1, v2, v3;
 	reg [SETS-1:0] dw0, dw1, dw2, dw3;

@@ -3066,3 +3066,64 @@ None of it has run on a board. The tags and the strip are simulation and
 Quartus claims only, and the state without the data arrays is correct and
 useless: a cache that allocates is still the missing half, and until it
 lands the strip reports on a log that no game can see.
+### The lines themselves, and the tags in MLAB (2026-11-22)
+
+Two more of the rows after the cache state: the storage a cache needs, and
+whether the tags can be moved out of the registers they landed in.
+
+`rtl/cpu/arm9_cache_data.sv` is the storage: four ways of eight words per
+set behind one byte-enabled write port and one registered read port, sized
+for both geometries by the same parameters -- 1,024 words for the data
+cache's 4 KB, 2,048 for the instruction cache's 8 KB. Byte lanes are four
+byte-wide arrays rather than one word-wide array with a byte enable,
+because a store has to write the lane it addresses without reading the word
+first. The module holds no idea of what it holds: validity and dirtiness
+stay in `arm9_cache_tag.sv`, and this is indexed by what that one says.
+
+The read port is registered on purpose. An asynchronous read of a
+1,024-word array is not a memory to Quartus, it is registers -- the same
+finding that cost the tags 3,157 flops. A registered read is what makes
+this a memory: by arithmetic, a lane of 1,024 bytes is one M10K block, so
+four blocks for the data cache's 4 KB and eight for the instruction cache's
+8 KB, against the 45% of the device's block memory the design already
+spends. No fit holds this module yet, so that is arithmetic and not a
+measurement.
+
+What is not here is the path that uses it. Today the core reads memory
+through the bus and updates the tags as a side effect; serving a load out
+of these arrays needs a probe cycle, a fill on a miss and -- because the
+DS's data cache is write-back -- eviction that writes a dirty line back and
+a c7 clean that copies the line to memory instead of clearing a bit. A fill
+with nothing serving it is eight bus reads for no return, and serving
+without write-back hands back stale lines as soon as a game's working set
+outgrows the cache. So the array is built and benched and not yet in the
+datapath, and the next step is all of that rather than a shortcut through
+it.
+
+The tags, part two: the register bill. Both caches' tags are marked
+`ramstyle = "MLAB"` -- a LUT RAM in the LAB can serve an asynchronous read,
+where a block RAM cannot -- and the fit came back byte for byte identical
+to the register one: 4,105 LABs, 37,556 ALMs, 35,893 registers, 3,915,836
+bytes, -5.378 setup, +0.128 on `pll_hdmi`, and "Total MLAB memory bits: 0"
+in the report. The attribute is inert. Quartus 17.0 will not put an array
+with an asynchronous read in MLAB either, and it says so nowhere except by
+doing exactly what it did before; the ledger row is `nds-mlab-s1`, and the
+figures are the ones the shipped row already carries because the build is
+the same build.
+
+The way to get those 2,413 ALMs back is to register the tag read and
+forward the store -- the fix the module header already names as the price
+of the asynchronous compare. That costs a probe cycle, which is the cycle
+the data array's registered read needs anyway, so it belongs with the
+serving path rather than before it.
+
+The bench: `tb_arm9_cache_data` is 31 checks -- a word read back where it
+was written, the four ways of a set kept apart, the eight words of a line
+kept apart, each byte lane written alone with the other three untouched, a
+write with no lanes enabled changing nothing, the deepest address of each
+geometry not wrapping onto set 0, the two geometries not sharing cells, and
+the enable holding the read port still. Two of them failed on the first
+run and both were the bench's own mistakes: a byte lane written with its
+data in the wrong bits, and a read of a word nothing had ever written.
+
+The suite is 54 steps, all passing.
