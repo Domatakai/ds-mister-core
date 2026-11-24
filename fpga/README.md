@@ -257,7 +257,7 @@ buffer, and a WFI -- c7,c0,4 and the c8,2 alias GBATEK lists -- stops the
 core until an interrupt, the same stop HALTCNT uses. `tb_arm9_cp15` runs
 the whole set through the core: 45 checks over the register read-backs,
 the ten commands that decode, the two that must not, the dirty line a
-store leaves behind, and the wake.
+load-then-store leaves behind, and the wake.
 
 The next step is in: `rtl/cpu/arm9_cache_tag.sv` holds both caches'
 tags, a valid bit per set and way, and the data cache's dirty bits, and
@@ -265,19 +265,45 @@ c1 bit 12 / bit 2 gate whether an access is recorded at all. That makes a
 maintenance command act on something real -- the test-and-clean reads now
 answer from the dirty bits instead of returning 1 by construction, and
 `tb_arm9_cp15` checks the store-then-clean sequence through the core
-while `tb_arm9_cache_tag` drives both geometries directly: 58 checks over
+while `tb_arm9_cache_tag` drives both geometries directly: 62 checks over
 the fill, the hit, the dirty line, clean by address, clean by index,
 test-and-clean, invalidate-all (twice, because a generation bit would
-resurrect the first one's lines) and lockdown.
+resurrect the first one's lines), lockdown, and the probe outputs the
+serving path decides on.
 
-What is not in is the data: no line is filled from memory and nothing is
-served from the arrays, so every access still reaches the bus and none of
-the timing changes. That is the remaining half -- the 4 KB and 8 KB data
-arrays, the line reload behind a miss, and the coherence hook -- and it is
-the half that reaches into the fetch and load/store path, which is where
-the release margin will be spent. The state alone cost 585 flops and 65
-ALMs, enough to tip `pll_hdmi` at seed 4; the tags and their bitmaps are
-measured in the section of `AREA.md` that covers this change.
+The serving path is in. `rtl/cpu/arm9_cache_data.sv` holds the lines --
+four ways of eight words per set, byte-enabled writes, one registered read
+-- and the core probes the tags in the decode's own cycle, so a load that
+hits is answered out of the array with no bus read at all, and a load that
+misses is filled behind with eight bus reads. Stores are write-through:
+they reach memory and, when the line is here, the array as well, so a
+cached word is never stale after a store. Only a load the cache is going
+to fill may take a line -- allocation is gated on it -- so a valid line
+always has its eight words, and a store to a line the cache does not hold
+writes memory and allocates nothing.
+
+Write-through is a choice and not the part's behaviour. The ARM946E-S in
+the DS is write-back; this is the smaller, safer half of that, because
+memory is always current: nothing has to be written back when a line is
+evicted and a c7 clean has nothing to do beyond clearing a bit. The price
+is bus traffic on stores a write-back cache would absorb. The bug that
+shape does not have is the one that loses data, which is why the first
+version is this one.
+
+What is still out: the instruction cache's arrays are not wired into the
+fetch path (its tags are recorded, as before), so code is fetched from the
+bus and `tb_arm9_cache_path` says nothing about it. Coherence is the other
+hole: the cache is write-through but not snooped, so a DMA write into main
+RAM leaves a cached line stale until software invalidates it, which is
+what the hardware requires of software too.
+
+`tb_arm9_cache_path` runs a program through the core with the cache on and
+watches the bus rather than only the registers: 22 checks, ten of them by
+bus-read count -- the first load's own read plus its eight-word fill, four
+hits that cost nothing, the value a store leaves in the array, a byte and
+a halfword taken out of a cached word, a second line filling into the next
+way without disturbing the first, an invalidate that makes the next load
+pay again, and the cache switched off.
 
 What follows the caches, in the order the remaining work costs most:
 
@@ -771,13 +797,15 @@ fpga/
                               exception vectors, HALT, bus master, one-word
                               fetch buffer                [SIM-VERIFIED]
     cpu/arm9_cache_tag.sv     the ARM9's cache tags, a valid bit per set
-                              and way, the data cache's dirty bits, and
-                              every c7 maintenance command acting on them
-                              (no data arrays yet)             [SIM-VERIFIED]
+                              and way, the data cache's dirty bits, every
+                              c7 maintenance command acting on them, and
+                              the probe the load path decides on
+                                                          [SIM-VERIFIED]
     cpu/arm9_cache_data.sv    the lines themselves: four ways of eight
                               words per set behind one byte-enabled write
-                              port and one registered read port, 4 KB of
-                              data cache and 8 KB of instruction cache
+                              port and one registered read port; the data
+                              cache's 4 KB is in the load path, the 8 KB
+                              of instruction cache is not wired yet
                                                           [SIM-VERIFIED]
     cpu/arm7_core.sv          ARM7TDMI: ARMv4T ARM + Thumb, CPSR/SPSR
                               banks, exceptions, HALT, bus master, one-word
@@ -867,6 +895,11 @@ fpga/
                                                           [SIM-VERIFIED]
   tb/tb_arm9_cache_data.sv the line store: ways, words, byte lanes, both
                           geometries, the registered read, the enable
+                                                          [SIM-VERIFIED]
+  tb/tb_arm9_cache_path.sv the serving path through the core: a miss and
+                          its fill, hits that cost no bus read, a store
+                          the array keeps, byte and halfword lanes, a
+                          second line into the same set, invalidate
                                                           [SIM-VERIFIED]
   tb/tb_main_bus.sv       fabric: masters, RAM, cart, slot-2 pak, cheat, IO
                           [SIM-VERIFIED] (also built with -DPAK_REAL, which
@@ -1583,10 +1616,12 @@ vvp /tmp/tb_arm7
 #     through the low vector, an undefined coprocessor opcode, MSR/MRS over
 #     the flag fields, and Thumb PUSH/POP, BKPT and BLX
 iverilog -g2012 -I tb -o /tmp/tb_arm9 tb/tb_arm9.sv rtl/cpu/arm9_core.sv \
-         rtl/cpu/arm9_cache_tag.sv rtl/cpu/swi_hle.sv rtl/cpu/swi_share.sv
+         rtl/cpu/arm9_cache_tag.sv rtl/cpu/arm9_cache_data.sv \
+         rtl/cpu/swi_hle.sv rtl/cpu/swi_share.sv
 vvp /tmp/tb_arm9
-# fetch buffer on : 387 bus reads
-# TB ARM9 PASS (109 checks)
+# fetch buffer on : 563 bus reads
+# 161 checks, 0 failure(s)
+# TB ARM9 PASS
 # iverilog -Ptb_arm9.FETCH_BUF=0 ... prints the same program without the
 # buffer (372 bus reads)
 # 3c-2. ARM9 TCM — the 32 KB instruction and 16 KB data TCM as storage behind
@@ -1609,7 +1644,8 @@ vvp /tmp/tb_tcm
 #       fabric model, that a TCM access is answered on the cycle the core
 #       samples it while a fabric access takes its wait state, and that the
 #       fabric did serve the program and its results block
-iverilog -g2012 -o /tmp/tb_arm9_tcm tb/tb_arm9_tcm.sv          rtl/cpu/arm9_core.sv rtl/cpu/arm9_tcm.sv rtl/cpu/arm9_cache_tag.sv
+iverilog -g2012 -o /tmp/tb_arm9_tcm tb/tb_arm9_tcm.sv          rtl/cpu/arm9_core.sv rtl/cpu/arm9_tcm.sv rtl/cpu/arm9_cache_tag.sv \
+         rtl/cpu/arm9_cache_data.sv
 vvp /tmp/tb_arm9_tcm
 # 20 checks
 # TB ARM9 TCM PASS
@@ -1623,7 +1659,8 @@ vvp /tmp/tb_arm9_tcm
 #       has (the two it does not raise nothing), and a WFI that stops the
 #       core until an interrupt and resumes at the next instruction
 iverilog -g2012 -o /tmp/tb_arm9_cp15 tb/tb_arm9_cp15.sv \
-         rtl/cpu/arm9_core.sv rtl/cpu/arm9_cache_tag.sv
+         rtl/cpu/arm9_core.sv rtl/cpu/arm9_cache_tag.sv \
+         rtl/cpu/arm9_cache_data.sv
 vvp /tmp/tb_arm9_cp15
 # 45 checks
 # TB ARM9 CP15 PASS
@@ -1637,8 +1674,21 @@ vvp /tmp/tb_arm9_cp15
 iverilog -g2012 -o /tmp/tb_cache_tag tb/tb_arm9_cache_tag.sv \
          rtl/cpu/arm9_cache_tag.sv
 vvp /tmp/tb_cache_tag
-#   58 checks
+#   62 checks
 # TB ARM9 CACHE TAG PASS
+
+# 3c-7. the data cache serving loads — a program through the core with c1
+#       bit 2 on, watched at the bus rather than only at the registers: the
+#       first load's own read plus its eight-word fill, then four loads that
+#       cost nothing, a store whose value comes back out of the array, a byte
+#       and a halfword taken out of a cached word, a second line in the same
+#       set filling the next way, invalidate-all, and the cache switched off
+iverilog -g2012 -o /tmp/tb_cache_path tb/tb_arm9_cache_path.sv \
+         rtl/cpu/arm9_core.sv rtl/cpu/arm9_cache_tag.sv \
+         rtl/cpu/arm9_cache_data.sv rtl/cpu/swi_hle.sv rtl/cpu/swi_share.sv
+vvp /tmp/tb_cache_path
+#   22 checks
+# TB ARM9 CACHE PATH PASS
 
 # 3c-6. the lines themselves — a word read back where it was written, the
 #       four ways of a set kept apart, the eight words of a line kept apart,
@@ -1663,6 +1713,7 @@ vvp /tmp/tb_cache_data
 iverilog -g2012 -I tb -o /tmp/tb_clk tb/tb_cpu_clk.sv \
          rtl/cpu/arm9_core.sv rtl/cpu/arm7_core.sv rtl/cpu/swi_hle.sv \
          rtl/cpu/swi_share.sv rtl/cpu/arm9_cache_tag.sv \
+         rtl/cpu/arm9_cache_data.sv \
          rtl/cpu/cpu_ce.sv rtl/cpu/cpu_ce_bridge.sv \
          rtl/bus/main_bus.sv rtl/mem/mem_arbiter.sv rtl/cart/cheat_engine.sv \
          rtl/audio/midi_port.sv rtl/bus/ipc.sv rtl/bus/nds_timers.sv \

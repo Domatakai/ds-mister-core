@@ -216,6 +216,21 @@ reg  [1:0] cp15_tc;
 // bit is what a test-and-clean reports
 wire       d_tag_dirty;
 wire [15:0] d_tag_hits, d_tag_misses, i_tag_hits, i_tag_misses;
+// the data cache's serving path, declared here because the reset and the
+// access states both reach them (the derived wires that need `ea` are at the
+// end, with the instances)
+reg         d_is_cached;   // this access is one the cache may serve
+reg         d_serve;       // ... and it hit: the array answers, not the bus
+reg  [31:0] d_line;        // the line being filled
+reg  [1:0]  d_way;         // and the way the tags gave it
+reg  [2:0]  d_fl;          // which of its eight words is next
+wire [31:0] ar_rd_data;
+wire        tag_hit;
+wire [1:0]  tag_way;
+wire        tag_alloc_ok;  // the set has a way a line may be taken in
+// the bus returns either what the fabric said or, on a hit, the array word
+// read on the cycle the probe answered
+wire [31:0] mem_rdata = d_serve ? ar_rd_data : bus_rdata;
 // reset values, and the two read-only identification values (ARM946E-S: the
 // ID decodes as architecture 5TE, part 0x946, revision 1; the cache type
 // decodes as 4 KB four-way data and 8 KB four-way instruction caches, which is
@@ -290,7 +305,9 @@ localparam S_RST  = 4'd0,
            S_HALT = 4'd7,
            S_SWI  = 4'd8,   // a BIOS call, running on the HLE bank
            S_ML1  = 4'd9,   // long multiply: the product
-           S_ML2  = 4'd10;  // and the 64-bit accumulate and write
+           S_ML2  = 4'd10,  // and the 64-bit accumulate and write
+           S_DFILL= 4'd11,  // a cache line fill: one bus read
+           S_DFW  = 4'd12;  // ... and waiting for it
 reg [3:0] state;
 
 // BIOS SWI hand-off (see swi_hle and swi_share): the core traps the call,
@@ -987,6 +1004,164 @@ integer rk;
 // set by the first halfword of a Thumb BLX and consumed by the second
 reg bl_pending;   // seen the high half of a Thumb BL/BLX pair
 
+//------------------------------------------------------------------
+// Cache tags and line state
+//
+// The caches' tags follow every access the core makes while c1 enables
+// the cache, a store marks the line it lands on dirty, and the c7
+// maintenance commands act on them. These declarations stand here, above
+// the machine's states, because the states use them: iverilog wants a name
+// before the line that reads it, and names declared at the end of the file
+// only ever worked for Quartus.
+//
+// The data cache serves a load: an access it may serve is a load from main
+// RAM with c1 bit 2 set -- the DS maps everything else, VRAM, the IO block
+// and the TCMs, somewhere a cache must not hold -- and a hit is answered
+// from the array instead of the bus. A miss fills the line behind the
+// load, one word per bus read.
+//
+// A store is write-through and never takes a line: it reaches memory and
+// updates the array if the line is already here, so memory stays
+// authoritative and there is nothing to write back. Only a load that the
+// core is going to fill may allocate, so a valid line always has its eight
+// words in it.
+//------------------------------------------------------------------
+wire d_cache_on = cp15_r[1][2];    // c1 bit 2: the data cache's enable
+wire i_cache_on = cp15_r[1][12];   // c1 bit 12: the instruction cache's
+
+// The data cache's serving path. An access the cache may serve is one to
+// main RAM with c1 bit 2 set: the DS maps everything else -- VRAM, the IO
+// block, the TCMs -- somewhere a cache must not hold, and without an MPU
+// this is the region that matters.
+wire        d_cached  = d_cache_on && (ea[31:24] == 8'h02) && !is_io_region;
+wire        d_probe   = d_cached && mload && !swap_en && !dw_run && !blk_run;
+wire        st_cached = d_cache_on && (bus_addr[31:24] == 8'h02);
+
+// The tags are read from the decode's address in S_MEM, where the hit has to
+// be known before the bus is asked, and from the bus address in S_MW, where
+// an access is being recorded. The two states never overlap, so one address
+// mux serves both.
+wire [31:0] tag_addr  = (state == S_MEM) ? ea : bus_addr;
+
+// The array's read address is combinational off the decode's address, so it
+// is already the access's own when the array registers the read: the word
+// lands at the end of S_MEM and is waiting in S_MW, which is the cycle a hit
+// needs. Driven from a register set in S_MEM it read the previous access.
+wire [4:0]  ar_rd_set  = ea[9:5];
+wire [1:0]  ar_rd_way  = tag_way;
+wire [2:0]  ar_rd_word = ea[4:2];
+
+wire        d_acc   = (state == S_MW) && bus_ready;
+wire        d_acc_w = bus_wr;                 // the store the bus saw
+wire        i_acc   = (state == S_FW) && bus_ready;
+
+wire  [7:0] c7v = cp15_c7;
+wire        d_mnt = c7v[7] && (c7v[6:3] == 4'd6 || c7v[6:3] == 4'd10 ||
+                               c7v[6:3] == 4'd14);
+wire        i_mnt = c7v[7] && (c7v[6:3] == 4'd5);
+
+// the command numbers are the ones rtl/cpu/arm9_cache_tag.sv documents
+wire [3:0] d_mnt_cmd =
+	c7v[6:3] == 4'd6  && c7v[2:0] == 3'd0 ? 4'd1 :   // invalidate all
+	c7v[6:3] == 4'd6  && c7v[2:0] == 3'd1 ? 4'd2 :   // invalidate a line
+	c7v[6:3] == 4'd10 && c7v[2:0] == 3'd1 ? 4'd3 :   // clean a line
+	c7v[6:3] == 4'd10 && c7v[2:0] == 3'd2 ? 4'd5 :   // clean by index
+	c7v[6:3] == 4'd14 && c7v[2:0] == 3'd1 ? 4'd4 :   // clean and invalidate
+	c7v[6:3] == 4'd14 && c7v[2:0] == 3'd2 ? 4'd6 :   // ... by index
+	cp15_tc[1] ? (cp15_tc[0] ? 4'd8 : 4'd7) : 4'd0;  // the two reads
+
+wire [3:0] i_mnt_cmd =
+	c7v[6:3] == 4'd5 && c7v[2:0] == 3'd0 ? 4'd1 : 4'd9;
+wire       i_mnt_any = i_mnt && (i_mnt_cmd != 4'd9);
+
+	arm9_cache_tag #(.SETS(32), .SETB(5), .TAGW(22), .DIRTY(1)) d_cache_tag (
+	.clk(clk),
+	.ce(ce),
+	.reset(reset),
+	.enable(d_cache_on),
+	// only a load the cache is going to fill may take a line: a store is
+	// write-through and never allocates, so a line cannot become valid with
+	// nothing in it, and a block or doubleword transfer is not filled either
+	.alloc(d_acc && !d_acc_w && d_is_cached && tag_alloc_ok && !blk_run &&
+	       !dw_run && !swap_en),
+	.alloc_ok(tag_alloc_ok),
+	.acc(d_acc),
+	.acc_addr(tag_addr),
+	.acc_wr(d_acc_w),
+	.mnt(d_mnt || cp15_tc[1]),
+	.mnt_cmd(d_mnt_cmd),
+	.mnt_arg(cp15_c7_arg),
+	.lock_way(c9_lock_d[1:0]),
+	.lock_en(c9_lock_d[31]),
+	.dirty_any(d_tag_dirty),
+	.hit_now(tag_hit),
+	.way_now(tag_way),
+	.last_hit(),
+	.last_way(),
+	.last_valid(),
+	.hits(d_tag_hits),
+	.misses(d_tag_misses)
+);
+
+arm9_cache_tag #(.SETS(64), .SETB(6), .TAGW(21), .DIRTY(0)) i_cache_tag (
+	.clk(clk),
+	.ce(ce),
+	.reset(reset),
+	.enable(i_cache_on),
+	// nothing allocates here yet: the instruction cache has no array in the
+	// fetch path, and a line taken now would be a valid line with nothing in
+	// it, waiting to serve garbage the day that path is wired up
+	.alloc(1'b0),
+	.alloc_ok(),
+	.acc(i_acc),
+	.acc_addr(bus_addr),
+	.acc_wr(1'b0),
+	.mnt(i_mnt_any),
+	.mnt_cmd(i_mnt_cmd),
+	.mnt_arg(cp15_c7_arg),
+	.lock_way(c9_lock_i[1:0]),
+	.lock_en(c9_lock_i[31]),
+	.dirty_any(),
+	.hit_now(),
+	.way_now(),
+	.last_hit(),
+	.last_way(),
+	.last_valid(),
+	.hits(i_tag_hits),
+	.misses(i_tag_misses)
+);
+
+// The data cache's lines: four ways of eight words per set, one write port
+// and one registered read port (rtl/cpu/arm9_cache_data.sv). The write port
+// has two users -- a store that hits the line, which keeps the array in step
+// with memory since stores are write-through, and a line fill, which brings
+// eight words in from the bus. The read port is the probe's answer.
+wire        fill_wr   = (state == S_DFW) && bus_ready;
+wire        keep_wr   = (state == S_MW) && bus_ready && bus_wr &&
+                        st_cached && tag_hit;
+wire        ar_wr     = fill_wr || keep_wr;
+wire [4:0]  ar_wr_set = fill_wr ? d_line[9:5] : bus_addr[9:5];
+wire [1:0]  ar_wr_way = fill_wr ? d_way : tag_way;
+wire [2:0]  ar_wr_word= fill_wr ? d_fl : bus_addr[4:2];
+wire [31:0] ar_wr_data= fill_wr ? bus_rdata : bus_wdata;
+wire [3:0]  ar_wr_be  = fill_wr ? 4'b1111 : bus_be;
+
+arm9_cache_data #(.SETS(32), .SETB(5)) d_cache_data (
+	.clk(clk),
+	.ce(ce),
+	.rd_set(ar_rd_set),
+	.rd_way(ar_rd_way),
+	.rd_word(ar_rd_word),
+	.rd_data(ar_rd_data),
+	.wr(ar_wr),
+	.wr_set(ar_wr_set),
+	.wr_way(ar_wr_way),
+	.wr_word(ar_wr_word),
+	.wr_data(ar_wr_data),
+	.wr_be(ar_wr_be)
+);
+
+
 always @(posedge clk) begin
 	// the pending banked link register, committed on the edge after its
 	// instruction; this cycle's readers see it through lr_rd
@@ -1032,6 +1207,11 @@ always @(posedge clk) begin
 		f_valid  <= 1'b0;
 		bl_pending <= 1'b0;
 		hle_go   <= 1'b0;
+		d_is_cached <= 1'b0;
+		d_serve  <= 1'b0;
+		d_line   <= 32'd0;
+		d_way    <= 2'd0;
+		d_fl     <= 3'd0;
 	end else if (ce) begin
 		// the c7 strobe lasts the one cycle after the instruction that
 		// decoded it; a new command below overrides this clear
@@ -2076,15 +2256,29 @@ always @(posedge clk) begin
 					                   : {16'h0000, wdata_r[15:0]};
 				else
 					bus_wdata <= wdata_r;
-				bus_rd <= mload;
+				// The data cache looks before the bus is asked. The probe is
+				// combinational off the address the decode computed, so its
+				// answer is here in this cycle, and the array's registered
+				// read lands in the one that would have been the bus wait.
+				if (d_probe) begin
+					d_is_cached <= 1'b1;
+					d_serve     <= tag_hit;
+					d_way       <= tag_way;
+				end else begin
+					d_is_cached <= 1'b0;
+					d_serve     <= 1'b0;
+				end
+				bus_rd <= mload && !(d_probe && tag_hit);
 				bus_wr <= ~mload;
 				state  <= S_MW;
 			end
 		end
 
 		S_MW: begin
-			if (bus_ready) begin
+			if (bus_ready || d_serve) begin
 				bus_rd <= 1'b0;
+				d_serve <= 1'b0;
+				d_is_cached <= 1'b0;
 				// a store may have changed the word the buffer holds
 				if (bus_wr) f_valid <= 1'b0;
 				bus_wr <= 1'b0;
@@ -2136,30 +2330,42 @@ always @(posedge clk) begin
 					if (mload) begin
 						if (msz == 2'd0) begin
 							case (ea[1:0])
-							2'b00:   t32 = msigned ? {{24{bus_rdata[7]}},  bus_rdata[7:0]}
-							                        : {24'd0, bus_rdata[7:0]};
-							2'b01:   t32 = msigned ? {{24{bus_rdata[15]}}, bus_rdata[15:8]}
-							                        : {24'd0, bus_rdata[15:8]};
-							2'b10:   t32 = msigned ? {{24{bus_rdata[23]}}, bus_rdata[23:16]}
-							                        : {24'd0, bus_rdata[23:16]};
-							default: t32 = msigned ? {{24{bus_rdata[31]}}, bus_rdata[31:24]}
-							                        : {24'd0, bus_rdata[31:24]};
+							2'b00:   t32 = msigned ? {{24{mem_rdata[7]}},  mem_rdata[7:0]}
+							                        : {24'd0, mem_rdata[7:0]};
+							2'b01:   t32 = msigned ? {{24{mem_rdata[15]}}, mem_rdata[15:8]}
+							                        : {24'd0, mem_rdata[15:8]};
+							2'b10:   t32 = msigned ? {{24{mem_rdata[23]}}, mem_rdata[23:16]}
+							                        : {24'd0, mem_rdata[23:16]};
+							default: t32 = msigned ? {{24{mem_rdata[31]}}, mem_rdata[31:24]}
+							                        : {24'd0, mem_rdata[31:24]};
 							endcase
 						end else if (msz == 2'd1) begin
 							// A misaligned LDRH/LDRSH force-aligns, and the DS
 							// does not rotate it (that is the GBA's ARM7). The I/O
 							// block answers the addressed halfword itself.
-							t32d = (ea[1] && !is_io_region) ? bus_rdata[31:16]
-							                              : bus_rdata[15:0];
+							t32d = (ea[1] && !is_io_region) ? mem_rdata[31:16]
+							                              : mem_rdata[15:0];
 							t32 = msigned ? {{16{t32d[15]}}, t32d[15:0]}
 							              : {16'd0, t32d[15:0]};
 						end else begin
-							t32 = mrot ? rotr(bus_rdata, {ea[1:0], 3'b000}) : bus_rdata;
+							t32 = mrot ? rotr(mem_rdata, {ea[1:0], 3'b000}) : mem_rdata;
 						end
 						if (dst == 5'd15) pc <= t32;
 						else               `WREG(dst, t32)
 					end
-					state <= S_FETCH;
+					// A load the cache missed brings its line in behind it,
+					// and the register is written from the bus word above.
+					// Only when the tags actually took a line: with every
+					// way in the set locked there is nothing to fill and
+					// writing into one of them would corrupt a line the
+					// tags still call valid.
+					if (d_is_cached && !d_serve && tag_alloc_ok) begin
+						d_line <= {bus_addr[31:5], 5'd0};
+						d_way  <= tag_way;
+						d_fl   <= 3'd0;
+					end
+					state <= (d_is_cached && !d_serve && tag_alloc_ok)
+					         ? S_DFILL : S_FETCH;
 				end
 			end
 		end
@@ -2221,6 +2427,30 @@ always @(posedge clk) begin
 			end
 		end
 
+		//--------------------------------------------------------
+		// a line fill: the eight words of one line, into the array
+		//--------------------------------------------------------
+		S_DFILL: begin
+			bus_addr  <= d_line + {27'd0, d_fl, 2'b00};
+			bus_be    <= 4'b1111;
+			bus_wdata <= 32'd0;
+			bus_rd    <= 1'b1;
+			bus_wr    <= 1'b0;
+			state     <= S_DFW;
+		end
+
+		S_DFW: begin
+			if (bus_ready) begin
+				bus_rd <= 1'b0;
+				if (d_fl == 3'd7) begin
+					state <= S_FETCH;
+				end else begin
+					d_fl  <= d_fl + 3'd1;
+					state <= S_DFILL;
+				end
+			end
+		end
+
 		default: state <= S_FETCH;
 		endcase
 		// The deferred user-bank write lands last on its edge. It belongs to
@@ -2250,84 +2480,6 @@ end
 // a throwaway module with the same shape: 5 such warnings without this, 0 with.
 wire _unused_spsr = &{1'b0, spsr_abt, spsr_fiq, spsr_irq, spsr_svc, spsr_und};
 always @(*) if (_unused_spsr) begin end
-
-//------------------------------------------------------------------
-// Cache tags and line state
-//
-// The caches' first step: the tags follow every access the core makes while
-// c1 enables the cache, a store marks the line it lands on dirty, and the c7
-// maintenance commands act on the arrays. Nothing is served out of them, so
-// a lost or late observation costs a line of state and never data -- which
-// is why the compare can lag the access by a cycle. Every access still goes
-// to the bus, exactly as it did before this existed.
-//------------------------------------------------------------------
-wire d_cache_on = cp15_r[1][2];    // c1 bit 2: the data cache's enable
-wire i_cache_on = cp15_r[1][12];   // c1 bit 12: the instruction cache's
-
-wire        d_acc   = (state == S_MW) && bus_ready;
-wire        d_acc_w = bus_wr;                 // the store the bus saw
-wire        i_acc   = (state == S_FW) && bus_ready;
-
-wire  [7:0] c7v = cp15_c7;
-wire        d_mnt = c7v[7] && (c7v[6:3] == 4'd6 || c7v[6:3] == 4'd10 ||
-                               c7v[6:3] == 4'd14);
-wire        i_mnt = c7v[7] && (c7v[6:3] == 4'd5);
-
-// the command numbers are the ones rtl/cpu/arm9_cache_tag.sv documents
-wire [3:0] d_mnt_cmd =
-	c7v[6:3] == 4'd6  && c7v[2:0] == 3'd0 ? 4'd1 :   // invalidate all
-	c7v[6:3] == 4'd6  && c7v[2:0] == 3'd1 ? 4'd2 :   // invalidate a line
-	c7v[6:3] == 4'd10 && c7v[2:0] == 3'd1 ? 4'd3 :   // clean a line
-	c7v[6:3] == 4'd10 && c7v[2:0] == 3'd2 ? 4'd5 :   // clean by index
-	c7v[6:3] == 4'd14 && c7v[2:0] == 3'd1 ? 4'd4 :   // clean and invalidate
-	c7v[6:3] == 4'd14 && c7v[2:0] == 3'd2 ? 4'd6 :   // ... by index
-	cp15_tc[1] ? (cp15_tc[0] ? 4'd8 : 4'd7) : 4'd0;  // the two reads
-
-wire [3:0] i_mnt_cmd =
-	c7v[6:3] == 4'd5 && c7v[2:0] == 3'd0 ? 4'd1 : 4'd9;
-wire       i_mnt_any = i_mnt && (i_mnt_cmd != 4'd9);
-
-arm9_cache_tag #(.SETS(32), .SETB(5), .TAGW(22), .DIRTY(1)) d_cache_tag (
-	.clk(clk),
-	.ce(ce),
-	.reset(reset),
-	.enable(d_cache_on),
-	.acc(d_acc),
-	.acc_addr(bus_addr),
-	.acc_wr(d_acc_w),
-	.mnt(d_mnt || cp15_tc[1]),
-	.mnt_cmd(d_mnt_cmd),
-	.mnt_arg(cp15_c7_arg),
-	.lock_way(c9_lock_d[1:0]),
-	.lock_en(c9_lock_d[31]),
-	.dirty_any(d_tag_dirty),
-	.last_hit(),
-	.last_way(),
-	.last_valid(),
-	.hits(d_tag_hits),
-	.misses(d_tag_misses)
-);
-
-arm9_cache_tag #(.SETS(64), .SETB(6), .TAGW(21), .DIRTY(0)) i_cache_tag (
-	.clk(clk),
-	.ce(ce),
-	.reset(reset),
-	.enable(i_cache_on),
-	.acc(i_acc),
-	.acc_addr(bus_addr),
-	.acc_wr(1'b0),
-	.mnt(i_mnt_any),
-	.mnt_cmd(i_mnt_cmd),
-	.mnt_arg(cp15_c7_arg),
-	.lock_way(c9_lock_i[1:0]),
-	.lock_en(c9_lock_i[31]),
-	.dirty_any(),
-	.last_hit(),
-	.last_way(),
-	.last_valid(),
-	.hits(i_tag_hits),
-	.misses(i_tag_misses)
-);
 
 wire _unused_tag = &{1'b0, d_tag_hits, d_tag_misses, i_tag_hits,
                      i_tag_misses, i_mnt};

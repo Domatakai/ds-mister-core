@@ -49,12 +49,12 @@ set_global_assignment -name PHYSICAL_SYNTHESIS_ASYNCHRONOUS_SIGNAL_PIPELINING ON
 set_global_assignment -name ALM_REGISTER_PACKING_EFFORT HIGH
 # The seed this core ships with. Seeds 1, 2, 4 and 5 are measured in
 # AREA.md, as are timing-driven seeds 3 and 6 and seed 2 both ways; all of
-# them fit. Seed 2 on the current tree is 4,125 LABs, -8.907 ns of emu
-# setup and -0.064 ns of pll_hdmi, so it no longer closes the video path.
-# Seed 6 with the switch on lands in 4,092 LABs, closes it at +0.138 ns and
-# is 1.049 ns shallower on emu, but moving to it is a release decision:
-# changing this line retires that table.
-set_global_assignment -name SEED 1
+# them fit. On the cache tree seed 1 is 4,107 LABs, -4.512 ns of emu setup
+# and -0.064 ns of pll_hdmi, which misses the video path; seed 2 of the
+# same tree is 4,130 LABs, -4.972 ns of emu setup and +0.081 ns of
+# pll_hdmi, so it closes. Moving to it is a release decision, because
+# changing this line retires the seed-1 rows in that table.
+set_global_assignment -name SEED 2
 # The reduced NDS build is 99% LAB-full; routing it needs aggressive
 # routability and a seed that places well (AREA.md, "Decoupling the
 # core's clock"): default settings abandon it on congestion.
@@ -83,6 +83,14 @@ set_global_assignment -name PLACEMENT_EFFORT_MULTIPLIER 8.0
 # is a separate, harmless front-end quirk: it is printed for a variable index of
 # any width and not for a constant one, and masking the index (which the core
 # does anyway) does not clear it.
+# ...with one exception inside it. The data cache's array is a real memory:
+# 1,024 words of 32 bits behind one write port and one registered read port,
+# and it wants to be block RAM. Recognition is turned back on for that module
+# alone. Measured both ways in a project of the core by itself: off, the array
+# is 32,800 flops and no block bits; on, it is 32,768 block bits and 6,340
+# flops for the whole core. (Quartus does not honour a ramstyle attribute
+# against this switch.)
+set_global_assignment -name AUTO_RAM_RECOGNITION ON -entity arm9_cache_data
 set_global_assignment -name AUTO_RAM_RECOGNITION OFF -entity arm9_core
 #set_global_assignment -name VERILOG_MACRO "MISTER_FB=1"
 #set_global_assignment -name VERILOG_MACRO "MISTER_DEBUG_NOHDMI=1"

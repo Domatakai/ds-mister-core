@@ -180,10 +180,17 @@ PROGRAM = [
     # the store below it created, the second finds nothing left dirty. Both
     # results are kept in registers and written afterwards, because a store
     # between the two reads would dirty a line again.
+    #
+    # The load comes first because a store no longer takes a line: the data
+    # cache is write-through and only a load that will fill a line allocates
+    # one, so a store to a line the cache does not hold writes memory and
+    # leaves no dirty state behind -- which is the truth about this cache and
+    # not a thing to paper over. The load fills the line, the store hits it.
     ("mov r0, #4",                  "c1 bit 2: the data cache on"),
     ("mcr p15, 0, r0, c1, c0, 0",   ""),
+    ("ldr r1, [r8, #0x40]",         "bring the line in: a load allocates"),
     ("mov r0, #0xDE",               ""),
-    ("str r0, [r8, #0x40]",         "a store the tags see: fill, then dirty"),
+    ("str r0, [r8, #0x40]",         "a store that hits it: now dirty"),
     ("mrc p15, 0, r2, c7, c10, 3",  "test and clean: a dirty line"),
     ("mrc p15, 0, r3, c7, c10, 3",  "and now nothing is dirty"),
     ("str r2, [r8], #4",            "24: 0"),

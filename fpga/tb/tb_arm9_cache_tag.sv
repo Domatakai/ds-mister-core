@@ -46,25 +46,31 @@ reg  lock_en = 0;
 
 wire        d_dirty, i_dirty;
 wire        d_hit, i_hit;
+wire        d_probe_hit, i_probe_hit;
+wire [1:0]  d_probe_way, i_probe_way;
 wire [1:0]  d_way, i_way;
 wire [3:0]  d_valid, i_valid;
 wire [15:0] d_hits, d_misses, i_hits, i_misses;
 
 arm9_cache_tag #(.SETS(32), .SETB(5), .TAGW(22), .DIRTY(1)) dtag (
 	.clk(clk), .ce(1'b1), .reset(reset), .enable(enable),
+	.alloc(enable),
 	.acc(acc), .acc_addr(acc_addr), .acc_wr(acc_wr),
 	.mnt(mnt), .mnt_cmd(mnt_cmd), .mnt_arg(mnt_arg),
 	.lock_way(lock_way), .lock_en(lock_en),
-	.dirty_any(d_dirty), .last_hit(d_hit), .last_way(d_way),
+	.dirty_any(d_dirty), .hit_now(d_probe_hit), .way_now(d_probe_way),
+	.last_hit(d_hit), .last_way(d_way),
 	.last_valid(d_valid), .hits(d_hits), .misses(d_misses)
 );
 
 arm9_cache_tag #(.SETS(64), .SETB(6), .TAGW(21), .DIRTY(0)) itag (
 	.clk(clk), .ce(1'b1), .reset(reset), .enable(enable),
+	.alloc(enable),
 	.acc(acc), .acc_addr(acc_addr), .acc_wr(acc_wr),
 	.mnt(mnt), .mnt_cmd(mnt_cmd), .mnt_arg(mnt_arg),
 	.lock_way(lock_way), .lock_en(lock_en),
-	.dirty_any(i_dirty), .last_hit(i_hit), .last_way(i_way),
+	.dirty_any(i_dirty), .hit_now(i_probe_hit), .way_now(i_probe_way),
+	.last_hit(i_hit), .last_way(i_way),
 	.last_valid(i_valid), .hits(i_hits), .misses(i_misses)
 );
 
@@ -217,6 +223,28 @@ initial begin
 	command(M_INVALL, 32'h0);
 	access(32'h0200_2004, 1'b0);
 	check("I: invalidate-all dropped it", i_hit === 1'b0);
+
+	// ------------------------------------------- 8. the probe outputs
+	// hit_now and way_now are what the core decides on before it goes to the
+	// bus, so they have to be right in the cycle the address is presented and
+	// not a cycle later, which is what the registered last_hit gives.
+	command(M_INVALL, 32'h0);
+	enable = 1;
+	access(32'h0200_0800, 1'b0);
+	@(negedge clk);
+	acc = 1; acc_addr = 32'h0200_0810; acc_wr = 0;
+	#1;
+	check("probe: the line reports a hit in its own cycle",
+	      d_probe_hit === 1'b1);
+	check("probe: and names the way", d_probe_way === 2'd0);
+	acc_addr = 32'h0200_0900;
+	#1;
+	check("probe: a line that is not there misses",
+	      d_probe_hit === 1'b0);
+	check("probe: and offers the free way as the victim",
+	      d_probe_way === 2'd0);
+	@(negedge clk);
+	acc = 0;
 
 	$display("  %0d checks", d_hits + d_misses + i_hits + i_misses);
 	if (errors == 0) $display("TB ARM9 CACHE TAG PASS");

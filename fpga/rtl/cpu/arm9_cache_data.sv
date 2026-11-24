@@ -12,13 +12,19 @@
 // line's words are at address bits 4:2, so a fill walks eight of them and a
 // store lands on one.
 //
-// The read port is registered, deliberately. An array read in the access's
-// own cycle would be an asynchronous read, and Quartus answers an
-// asynchronous read of a 4,096-word array by building it out of registers:
-// the tags took 3,157 flops that way and 2,413 ALMs with them. A registered
-// read is what makes this block RAM instead -- 4 M10K blocks for the data
-// cache's 4 KB, 8 for the instruction cache's 8 KB, from a device that is
-// less than half full of them.
+// The read port is registered, deliberately: an array read in the access's
+// own cycle is an asynchronous read, and Quartus answers an asynchronous
+// read of a 4,096-word array by building it out of registers (the tags took
+// 3,157 flops that way and 2,413 ALMs with them).
+//
+// A registered read is necessary for block RAM and not sufficient, which the
+// first fit of this module proved: with the read and the write in one always
+// block and a 16-bit index into a 1,024-word array, the whole thing came out
+// as 21,824 logic elements, and the design stopped fitting the device by
+// 1,415 LABs. The two conditions this now keeps are that the read and the
+// write are separate always blocks, so there are visibly two ports, and that
+// the index is exactly as wide as the array, so the address is provably in
+// range.
 //
 // The price is a cycle: whoever reads this has to present an address and
 // take the word on the next edge. The tags are the exception on purpose --
@@ -60,6 +66,7 @@ module arm9_cache_data #(
 );
 
 	localparam DEPTH = SETS * 4 * WORDS;
+	localparam IW    = $clog2(DEPTH);
 
 	// one array per byte lane, so a byte store is one array write
 	(* ramstyle = "M10K" *) reg [7:0] lane0 [0:DEPTH-1];
@@ -67,25 +74,36 @@ module arm9_cache_data #(
 	(* ramstyle = "M10K" *) reg [7:0] lane2 [0:DEPTH-1];
 	(* ramstyle = "M10K" *) reg [7:0] lane3 [0:DEPTH-1];
 
-	// a line is one contiguous run of WORDS, ways above sets
-	function [15:0] index (input [1:0] way, input [SETB-1:0] set,
+	// a line is one contiguous run of WORDS, ways above sets. The index is
+	// exactly as wide as the array: an index wider than DEPTH is an index
+	// Quartus cannot prove in range, and it answers by building the array
+	// out of registers instead of block RAM.
+	function [31:0] index (input [1:0] way, input [SETB-1:0] set,
 	                       input [2:0] word);
 		begin
 			index = (way * SETS + set) * WORDS + word;
 		end
 	endfunction
 
-	wire [15:0] rd_idx = index(rd_way, rd_set, rd_word);
-	wire [15:0] wr_idx = index(wr_way, wr_set, wr_word);
+	wire [IW-1:0] rd_idx = index(rd_way, rd_set, rd_word);
+	wire [IW-1:0] wr_idx = index(wr_way, wr_set, wr_word);
+
+	// the write port and the read port are separate always blocks on purpose:
+	// one write port and one read port in one block is a pattern Quartus reads
+	// as a single-port memory with a bypass, and it answers that by building
+	// registers. Two blocks are two ports, and two ports of this shape are
+	// what an M10K is.
+	always @(posedge clk) begin
+		if (ce && wr) begin
+			if (wr_be[0]) lane0[wr_idx] <= wr_data[7:0];
+			if (wr_be[1]) lane1[wr_idx] <= wr_data[15:8];
+			if (wr_be[2]) lane2[wr_idx] <= wr_data[23:16];
+			if (wr_be[3]) lane3[wr_idx] <= wr_data[31:24];
+		end
+	end
 
 	always @(posedge clk) begin
 		if (ce) begin
-			if (wr) begin
-				if (wr_be[0]) lane0[wr_idx] <= wr_data[7:0];
-				if (wr_be[1]) lane1[wr_idx] <= wr_data[15:8];
-				if (wr_be[2]) lane2[wr_idx] <= wr_data[23:16];
-				if (wr_be[3]) lane3[wr_idx] <= wr_data[31:24];
-			end
 			rd_data <= {lane3[rd_idx], lane2[rd_idx],
 			            lane1[rd_idx], lane0[rd_idx]};
 		end

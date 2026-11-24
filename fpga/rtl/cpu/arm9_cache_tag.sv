@@ -58,7 +58,8 @@ module arm9_cache_tag #(
 	input              clk,
 	input              ce,
 	input              reset,
-	input              enable,     // c1: the cache's enable bit (allocation)
+	input              enable,     // c1: the cache's enable bit
+	input              alloc,      // this access may take a line, not just look
 	input              acc,        // one access, one-cycle pulse
 	input      [31:0]  acc_addr,
 	input              acc_wr,     // a store: the line it lands on is dirty
@@ -68,6 +69,14 @@ module arm9_cache_tag #(
 	input      [1:0]   lock_way,   // c9 lockdown: ways up to here stay
 	input              lock_en,
 	output             dirty_any,
+	// the probe, valid in the cycle the address is presented: what the
+	// core needs to decide whether to go to the bus at all
+	output             hit_now,
+	output      [1:0]  way_now,    // the way that hits, else the victim
+	// whether a line could be taken at all: with every way in the set
+	// locked and none free, a fill must not write into a way that this
+	// module is still calling valid
+	output             alloc_ok,
 	output reg         last_hit,   // the access just compared
 	output reg  [1:0]  last_way,
 	output reg  [3:0]  last_valid,
@@ -83,16 +92,14 @@ module arm9_cache_tag #(
 	//------------------------------------------------------------------
 	// the four ways: tags in arrays, valid and dirty as bitmaps
 	//------------------------------------------------------------------
-	// Marked for the memory blocks in the LABs rather than left to the
-	// fitter, which chose registers on its own: 3,157 flops and 2,413 ALMs
-	// for both caches' tags (AREA.md). An asynchronous read is not what a
-	// block RAM is for, but an MLAB is a LUT RAM and can serve one; whether
-	// it is cheaper than the registers is a measurement, and the ledger
-	// holds the answer for this tree.
-	(* ramstyle = "MLAB" *) reg [TAGW-1:0] t0 [0:SETS-1];
-	(* ramstyle = "MLAB" *) reg [TAGW-1:0] t1 [0:SETS-1];
-	(* ramstyle = "MLAB" *) reg [TAGW-1:0] t2 [0:SETS-1];
-	(* ramstyle = "MLAB" *) reg [TAGW-1:0] t3 [0:SETS-1];
+	// No ramstyle hint: MLAB was tried on the same arrays and the fit came
+	// back byte for byte identical, with the report counting no MLAB bits
+	// at all (AREA.md). An asynchronous read of 32 entries is registers to
+	// Quartus and stays registers until the read can be registered.
+	reg [TAGW-1:0] t0 [0:SETS-1];
+	reg [TAGW-1:0] t1 [0:SETS-1];
+	reg [TAGW-1:0] t2 [0:SETS-1];
+	reg [TAGW-1:0] t3 [0:SETS-1];
 
 	reg [SETS-1:0] v0, v1, v2, v3;
 	reg [SETS-1:0] dw0, dw1, dw2, dw3;
@@ -258,8 +265,8 @@ module arm9_cache_tag #(
 						if (hit_vec[2]) dw2[set_of] <= 1'b1;
 						if (hit_vec[3]) dw3[set_of] <= 1'b1;
 					end
-				end else if (enable && (|allow)) begin
-					// fill the line: nothing is fetched, only the tag
+				end else if (alloc && enable && (|allow)) begin
+					// take the line: the tag and the valid bit, nothing else
 					case (victim)
 					2'd0: begin t0[set_of] <= tag_of; v0[set_of] <= 1'b1; end
 					2'd1: begin t1[set_of] <= tag_of; v1[set_of] <= 1'b1; end
@@ -279,5 +286,13 @@ module arm9_cache_tag #(
 			end
 		end
 	end
+
+	// the probe outputs: a comparison, not a stored result
+	assign alloc_ok = |allow;
+	assign hit_now = |hit_vec;
+	assign way_now = hit_vec[0] ? 2'd0 :
+	                 hit_vec[1] ? 2'd1 :
+	                 hit_vec[2] ? 2'd2 :
+	                 hit_vec[3] ? 2'd3 : victim;
 
 endmodule

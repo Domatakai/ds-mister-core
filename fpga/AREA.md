@@ -3025,7 +3025,7 @@ The cost, the row that shipped and the fits behind it:
 | seed 1, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
 |---|---|---|---|---|---|---|---|---|
 | ..., replay log, seed 1 | 4,038 | 35,143 | 32,736 | -4.004 | -11,854.877 | +0.257 | +0.241 | 3,871,272 |
-| both bank writes captured | 4,105 | 37,556 | 35,893 | -5.378 | -16,596.011 | +0.248 | +0.128 | 3,915,836 |
+| both bank writes captured, seed 1, retired | 4,105 | 37,556 | 35,893 | -5.378 | -16,596.011 | +0.248 | +0.128 | 3,915,836 |
 | ..., staging copy, seed 2, does not ship | 4,108 | 37,512 | 36,011 | -5.202 | -18,941.233 | +0.245 | -0.010 | 3,990,212 |
 
 The cache state is not cheap, and it is not cheap where it was designed to
@@ -3126,4 +3126,120 @@ the enable holding the read port still. Two of them failed on the first
 run and both were the bench's own mistakes: a byte lane written with its
 data in the wrong bits, and a read of a word nothing had ever written.
 
-The suite is 54 steps, all passing.
+The suite is 55 steps, all passing.
+
+### The cache serves a load (2026-11-22)
+
+The arrays are wired in. A load from main RAM with c1 bit 2 set looks in
+the tags in the cycle the decode produces its address, and if the line is
+there the word comes back out of `rtl/cpu/arm9_cache_data.sv` with no bus
+access at all; if it is not, the line is filled behind the load with eight
+bus reads. The probe is in that cycle because the decision to ask the bus
+or not has to be made before the bus is asked, and a registered tag read
+would arrive a cycle too late. The array's read is registered, so the word
+lands at the end of that cycle and is waiting in the one that used to be
+the bus wait.
+
+Stores stay write-through, and that is a choice about what can go wrong.
+The ARM946E-S in a DS is write-back; a write-back cache writes a dirty
+line out when it evicts it and copies it to memory on a c7 clean, which is
+two more bus paths and two ways to lose data if either is wrong.
+Write-through keeps memory authoritative: a store reaches memory and, if
+the line is here, the array as well, so nothing is written back, nothing
+is lost, and a c7 clean is a bit. The price is bus traffic on stores a
+write-back cache would absorb, and it is worth paying before the fetch
+path and the coherence hook exist.
+
+Allocation follows from that. Only a load the core is going to fill may
+take a line, so a valid line always has its eight words; a store to a line
+the cache does not hold writes memory and allocates nothing, which is why
+`tb_arm9_cp15` now loads its line before it stores into it. Block
+transfers, LDRD/STRD and SWP bypass the cache -- they are not filled, so
+they must not allocate -- and a block store into a line the cache does
+hold does update it.
+
+Three real defects turned up between the first compile and this row, and
+none of them was in the part of the design that was being thought about:
+
+* with every way of a set locked, a miss could not take a line but the
+  fill ran anyway and wrote its eight words into the way the tags still
+  called valid, corrupting a locked line. The tags now report whether a
+  line can be taken at all (`alloc_ok`), and the core only fills when they
+  say yes.
+* the array's read address was a register set in the decode cycle, so the
+  array registered the previous access's address and every hit returned
+  the word before the one asked for. The bench saw it as a hit whose value
+  was right for the wrong word; the address is combinational now.
+* the hand-assembled program in the new bench put its register number in
+  the CRn field of three CP15 encodings, so it wrote c9 instead of c1 and
+  the cache never came on -- which the bus counts showed at once, because
+  every load still cost a read.
+
+And the one the fit found, which no bench could have: `NDS.qsf` switches
+RAM recognition off for `arm9_core`, because Quartus 17.0's Verific front
+end aborts on the core's register arrays; the comment there has
+the failure and the KB number. The data array
+lives inside that entity, so it was built out of registers -- 21,824 logic
+elements, and the design needed 5,606 LABs against a 4,191-LAB device.
+Quartus does not honour `ramstyle` against that switch, and says nothing.
+Recognition is now turned back on for `arm9_cache_data` alone; measured in
+a project of the core by itself, the array is 32,768 block bits and 6,340
+registers for the whole core with the switch on, and 32,800 flops and no
+block bits with it off.
+
+The other thing no bench caught: moving the cache's declarations above the
+machine's states, where iverilog can see them before the lines that read
+them, left `tb_arm9` uncompilable for a while with `d_probe` used 239
+lines before it was declared. Quartus never complained, which is exactly
+why the suite has to be run on the tree and not on memory of it.
+
+The cost, and the two seeds it took to ship:
+
+| seed 1 and seed 2, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
+|---|---|---|---|---|---|---|---|---|
+| both bank writes captured, seed 1, tags only | 4,105 | 37,556 | 35,893 | -5.378 | -16,596.011 | +0.248 | +0.128 | 3,915,836 |
+| the arrays wired in, seed 1, does not ship | 4,107 | 37,465 | 35,904 | -4.512 | -16,603.387 | +0.201 | -0.064 | 3,998,024 |
+| both bank writes captured | 4,130 | 37,518 | 36,019 | -4.972 | -24,042.628 | +0.244 | +0.081 | 4,005,936 |
+
+The array costs two LABs at seed 1 and the fit comes in ninety-one ALMs
+lighter, because 32,768 bits that were never in the logic budget now sit
+in four M10K blocks: block memory goes from 2,545,995 to 2,579,787 bits.
+What it costs is on the release path, and at seed 1 it costs too much:
+`pll_hdmi` was +0.128 on the tags-only tree and is -0.064 here, which by
+this project's rule does not ship. The seed-2 fit of the same tree, same
+settings, is +0.081 with TNS 0.000, so `NDS.qsf` now says SEED 2 and the
+seed-2 row is the shipped one. The tags-only row it replaces was a seed-1
+build, which is why the table above names both seeds: that row is evidence
+about the tree before this change, not about the configuration that now
+ships.
+
+Seed 2 is 25 LABs over that tree's seed-1 fit -- 4,130 against 4,105, 61
+spare of 4,191 instead of 84 -- and 53 more ALMs. Against the tags-only
+row it is 38 fewer ALMs and 126 more registers. The `emu` figure moved the
+other way at both seeds, from -5.378 to -4.972 at seed 2, and its TNS is
+the worse one, -24,042.628 against -16,596.011, so what bought the video
+path is where one path landed and not a shallower machine.
+
++0.081 ns is thin, and this file has measured thin before: two seeds of
+one unchanged tree have moved `pll_hdmi` by 0.328 ns. The rule is a
+measured non-negative slack and +0.081 is one, but another tree's placement
+can put the video path back under zero without touching the cache at all.
+
+The bench measures the bus, not the registers, because a hit is a claim
+about the bus: `tb_arm9_cache_path` counts the reads of one line's 32 bytes
+and stops the program at ten points to record the count. A miss and its
+fill are nine reads; four different loads of the line are nine; a store
+and a reload are nine, because the store updated the array; a byte and a
+halfword out of the cached word are nine; a second line in the same set
+fills into the next way and leaves the first at nine; an invalidate makes
+the next load pay nine again; and with the cache off one more read takes
+it to nineteen. Twenty-two checks, with the values beside them.
+
+What is still not there: the instruction cache's arrays (its tags are
+recorded, but nothing is served and allocation is off, since a valid line
+with no data in it is worse than no line); coherence, so a DMA write into
+main RAM leaves a cached line stale until software invalidates it, which
+the hardware requires of software too; and a fill is nine separate bus
+reads with no window protection, so another master writing the line while
+it is being filled leaves a mixed line behind. That last one belongs with
+the coherence hook rather than with a wider state machine.
