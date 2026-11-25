@@ -306,12 +306,25 @@ is bus traffic on stores a write-back cache would absorb. The bug that
 shape does not have is the one that loses data, which is why the first
 version is this one.
 
-What is still out is coherence, for both caches: neither is snooped, so a
-DMA write into main RAM leaves a cached line stale, and a store leaves the
-instruction cache stale until software invalidates it -- which is what the
-hardware requires of software too, and what the DS's own flush idiom does.
-There is also no protection against another master writing a line while it
-is being filled, so a fill that loses that race leaves a mixed line.
+Coherence is hooked for writes from other masters. `main_bus` offers the
+ARM9 a one-cycle strobe and the word for every completed write into main
+RAM by a master that is not the ARM9 -- the ARM7, the DMA -- the core
+hands it to both caches' tags, and the set it lands in goes, all four
+ways: the valid bits, and the dirty bits with them. Set-granular and not
+line-precise on purpose: comparing the line's tag against the four ways
+is a second asynchronous read of every tag array, some 520 ALMs, and at
+95% of this device's ALMs that is a tree that places and a tree that does
+not. The three ways given up are fetched again on their next access; a
+line kept that should have gone is a stale word. Not behind a cache's
+enable bit either, because the valid bits outlive it: a set dropped while
+a cache is off must not be there again when it is switched on. The BIOS
+call's own memory writes are this core's, and travel the same path, since
+they do not come the store way. It covers the fill window too: a line's
+valid bit is set when the line is taken, in the probe cycle, and the snoop
+block is the last one in the tag, so a write landing while a fill runs
+clears that bit and the fill finishes into a line nothing will read. What
+is left on the bus side is a burst fill -- one transaction for a whole
+line instead of seven -- and that is about bus slots, not correctness.
 
 `tb_arm9_cache_path` runs a program through the core with the cache on and
 watches the bus rather than only the registers: 22 checks, ten of them by
@@ -326,10 +339,27 @@ eight iterations that reads nothing at all; a second line served after one
 fill; and an invalidate that makes the very next fetch pay for a line it
 had just been served from.
 
+`tb_arm9_coherence` drives the snoop port the way the fabric does and
+checks what the caches then do: a word written into main RAM behind the
+cache's back is the word the next load returns, and it costs a fill again
+-- 16 reads of the line instead of 8; the same for a code line, whose
+subroutine is fetched twice; and a snoop of an address nothing holds
+drops its set anyway, so the line beside it in that set pays for a fill
+and line it did not need, while a line in another set keeps its own.
+With the port tied off the bench fails four checks and returns the stale
+word, which is the point of writing it.
+`tb_arm9_cycles` is the other half of the argument: against an eight-cycle
+bus, a loop of two fetched instructions costs 20.29 cycles an iteration
+with c1 bit 12 clear and 7.28 with it set, and a loop of three plus a load
+18.18 against 12.28. Against the two-cycle bus the other benches use a
+hit costs exactly the miss it replaces -- the probe and the registered
+read are two cycles themselves -- so a cache is worth nothing there; what
+it buys is bus slots, and this bench is the one that says so.
+
 What follows the caches, in the order the remaining work costs most:
 
-* the caches themselves, then their coherence hook, because every DMA
-  change lands on top of it
+* a burst fill: one bus transaction for a whole line instead of seven,
+  for the bus slots rather than for a gap in correctness
 * the DMA channels' edge cases against cached memory -- source and
   destination in the same line, a channel started while a line is dirty
 * the 3D path behind the current single-engine pipeline, including the
@@ -819,8 +849,10 @@ fpga/
                               fetch buffer                [SIM-VERIFIED]
     cpu/arm9_cache_tag.sv     the ARM9's cache tags, a valid bit per set
                               and way, the data cache's dirty bits, every
-                              c7 maintenance command acting on them, and
-                              the probe the load path decides on
+                              c7 maintenance command acting on them, the
+                              probe the load path decides on, and the
+                              snoop that drops a line another master
+                              wrote into
                                                           [SIM-VERIFIED]
     cpu/arm9_cache_data.sv    the lines themselves: four ways of eight
                               words per set behind one byte-enabled write
@@ -850,7 +882,9 @@ fpga/
     bus/main_bus.sv           DS memory map, both CPUs + DMA, round-robin,
                               cart window, VRAM, engine ports, GX command
                               window, cheat patch, timers ticked from the
-                              ARM7's clock enable             [SIM-VERIFIED]
+                              ARM7's clock enable, and the snoop strobe
+                              for a write into main RAM that was not the
+                              ARM9's                        [SIM-VERIFIED]
     bus/dma_engine.sv         4 GBATEK DMA channels: immediate/vblank/
                               hblank, repeat, IRQ, paced on the ARM7's clock
                               enable (a response cannot be lost to the gate)
@@ -926,6 +960,15 @@ fpga/
                           once and served without a bus read, ARM and
                           Thumb words out of the array, an invalidate
                           that makes the next fetch pay again
+                                                          [SIM-VERIFIED]
+  tb/tb_arm9_coherence.sv  a write into main RAM from another master drops
+                          the line that holds it: the next load pays a fill
+                          and returns the new word, a code line is fetched
+                          again, and a snoop elsewhere leaves it alone
+                                                          [SIM-VERIFIED]
+  tb/tb_arm9_cycles.sv    what the caches are worth in clocks: a fetch loop
+                          and a load loop against an eight-cycle bus, each
+                          run with its cache off and on
                                                           [SIM-VERIFIED]
   tb/tb_main_bus.sv       fabric: masters, RAM, cart, slot-2 pak, cheat, IO
                           [SIM-VERIFIED] (also built with -DPAK_REAL, which
@@ -1728,6 +1771,31 @@ iverilog -g2012 -o /tmp/tb_icache tb/tb_arm9_icache.sv \
 vvp /tmp/tb_icache
 #   7 checks
 # TB ARM9 ICACHE PASS
+
+# 3c-9. a write from another master — the fabric's snoop port driven the way
+#       main_bus drives it: a word written into main RAM behind the cache's
+#       back is what the next load returns, the line pays a fill again, a
+#       code line is fetched again, and a snoop of a line nothing holds
+#       leaves the line beside it alone
+iverilog -g2012 -o /tmp/tb_coh tb/tb_arm9_coherence.sv \
+         rtl/cpu/arm9_core.sv rtl/cpu/arm9_cache_tag.sv \
+         rtl/cpu/arm9_cache_data.sv rtl/cpu/swi_hle.sv \
+         rtl/cpu/swi_share.sv
+vvp /tmp/tb_coh
+#   7 checks
+# TB ARM9 COHERENCE PASS
+
+# 3c-10. what the caches are worth — the same loops at each cache bit with a
+#        clock counter and eight marker stores: 20.29 cycles an iteration
+#        for two fetched instructions and 7.28 cached, 18.18 for three and a
+#        load against 12.28
+iverilog -g2012 -o /tmp/tb_cycles tb/tb_arm9_cycles.sv \
+         rtl/cpu/arm9_core.sv rtl/cpu/arm9_cache_tag.sv \
+         rtl/cpu/arm9_cache_data.sv rtl/cpu/swi_hle.sv \
+         rtl/cpu/swi_share.sv
+vvp /tmp/tb_cycles
+#   8 checks
+# TB ARM9 CYCLES PASS
 
 # 3c-6. the lines themselves — a word read back where it was written, the
 #       four ways of a set kept apart, the eight words of a line kept apart,

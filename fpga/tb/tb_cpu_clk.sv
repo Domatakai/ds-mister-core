@@ -105,6 +105,7 @@ arm9_core u9 (
 	.bus_addr(c9_addr), .bus_wdata(c9_wdata), .bus_be(c9_be),
 	.bus_rd(c9_rd), .bus_wr(c9_wr),
 	.bus_rdata(c9_rdata), .bus_ready(c9_ready),
+	.snoop_wr(1'b0), .snoop_addr(32'd0),
 	.irq(1'b0), .fiq(1'b0), .halt(1'b0),
 	.halted(c9_halted), .thumb_state(c9_thumb), .pc_out(pc9),
 	.hle_go(h9_go), .hle_num(h9_num),

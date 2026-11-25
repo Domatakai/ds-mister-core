@@ -137,6 +137,7 @@ arm9_core #(.FETCH_BUF(FETCH_BUF)) dut (
 	.bus_addr(bus_addr), .bus_wdata(bus_wdata), .bus_be(bus_be),
 	.bus_rd(bus_rd), .bus_wr(bus_wr),
 	.bus_rdata(bus_rdata), .bus_ready(bus_ready),
+	.snoop_wr(1'b0), .snoop_addr(32'd0),
 	.irq(irq), .fiq(fiq), .halt(halt),
 	.halted(halted), .thumb_state(thumb_state), .pc_out(pc_out),
 	.hle_go(hle_go), .hle_num(hle_num),

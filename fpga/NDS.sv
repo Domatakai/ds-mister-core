@@ -1296,6 +1296,8 @@ main_bus main_bus (
 	.m9_wr(m9_wr),
 	.m9_ready(m9_ready),
 	.m9_rdata(m9_rdata),
+	.snoop_wr(snoop_wr),
+	.snoop_addr(snoop_addr),
 	.m7_addr(m7_addr),
 	.m7_wdata(m7_wdata),
 	.m7_be(m7_be),
@@ -1587,6 +1589,9 @@ wire [31:0] m9_rdata;
 wire        m9_ready;
 wire        m9_halted, m9_thumb;
 wire [31:0] m9_pc;
+// coherence: a write into main RAM from another master, for the ARM9's caches
+wire        snoop_wr;
+wire [31:0] snoop_addr;
 
 // the cores' own side of the bridges
 wire [31:0] c9_addr, c9_wdata, c9_rdata, c7_addr, c7_wdata, c7_rdata;
@@ -1697,6 +1702,8 @@ arm9_core arm9 (
 	.bus_wr(c9_wr),
 	.bus_rdata(c9_rdata),
 	.bus_ready(c9_ready),
+	.snoop_wr(snoop_wr),
+	.snoop_addr(snoop_addr),
 	.irq(irq9_cpu),
 	.fiq(1'b0),
 	.halt(arm7_halt),

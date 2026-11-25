@@ -85,6 +85,13 @@ module main_bus (
 	output reg       m9_ready,
 	output reg [31:0] m9_rdata,
 
+	// ---- coherence: a write into main RAM from a master that is not the
+	// ARM9, and the word it landed on, so the ARM9's caches can drop the
+	// line. One cycle, one word; the ARM9's own stores are not offered here,
+	// since it keeps its own lines in step.
+	output reg       snoop_wr,
+	output reg [31:0] snoop_addr,
+
 	// ---- ARM7 master ----
 	input     [31:0] m7_addr,
 	input     [31:0] m7_wdata,
@@ -694,6 +701,7 @@ always @(posedge clk) begin
 	cart_req <= 0;
 	ram_req  <= 0;
 	vram_req <= 0;
+	snoop_wr <= 0;
 	// DMA completion pulses are IRQ8..11; sys_io latches them into both banks
 
 	// A master is blocked from the moment it is answered until its strobe
@@ -927,6 +935,12 @@ always @(posedge clk) begin
 		// Offer the read to the cheat engine; the patched value lands
 		// one cycle later in S_CPATCH.
 		cheat_chk_en   <= is_read && !m_wr && is_ram;
+		// A write into main RAM from the ARM7 or the DMA leaves the ARM9's
+		// caches holding the old word, so the address goes out with it. The
+		// whole transaction is one word as the CPU sees it, split into two
+		// halfword beats or not.
+		snoop_wr   <= is_ram && !is_read && !m9_active;
+		snoop_addr <= {a[31:2], 2'b00};
 		cheat_chk_addr <= a;
 		// a read of the AUX receive register pops the byte (0x15A only; the
 		// CNT readback at 0x150 must not consume anything)

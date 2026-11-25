@@ -3311,7 +3311,7 @@ The cost, and the two seeds it took to ship this one:
 | the instruction cache served, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
 |---|---|---|---|---|---|---|---|---|
 | the instruction cache wired in, seed 2, does not ship | 4,183 | 40,521 | 41,246 | -4.823 | -26,551.557 | +0.251 | -0.010 | 4,094,536 |
-| both bank writes captured | 4,189 | 39,751 | 41,186 | -5.177 | -27,807.962 | +0.248 | +0.016 | 4,065,468 |
+| both bank writes captured, the cache tree, retired | 4,189 | 39,751 | 41,186 | -5.177 | -27,807.962 | +0.248 | +0.016 | 4,065,468 |
 
 The cache-tree fit it replaces was 4,130 LABs, 37,518 ALMs and 36,019
 registers at seed 2, so the fetch path costs 59 LABs and 2,233 ALMs -- and
@@ -3334,3 +3334,120 @@ is the headline of this row more than the slack is -- the device has room
 for the caches and not for much else, so the next change that adds logic
 has to find the room by removing something, and a fit that does not place
 is now the expected outcome rather than the exception.
+
+
+### A write from another master, and what the caches are worth (2026-11-25)
+
+The caches now hear about the writes they did not make, and the tags
+stopped holding bits that nothing behind them can tell apart. It took two
+versions of the hook and five fits to get there, and the second version is
+the one that places.
+
+`main_bus` is the only place that knows a write into main RAM has completed
+and who made it: `is_ram && !is_read && !m9_active` is a write that the
+ARM9 did not make, which is the ARM7 or one of the DMA channels. At that
+beat it offers the address for one cycle. The core hands it to both caches'
+tags, and the tag instance drops the set it lands in, all four ways --
+valid, and dirty with them -- in a block placed after the allocation
+block, so a write landing on a line being taken in the same cycle wins
+rather than being undone. The fetch buffer is cleared with it: a word
+fetched from a line the same cycle forgot must not be executed.
+
+Why the set and not the line. The first version compared the line's tag
+against the four ways and dropped the way that matched, which is exact. It
+costs a second asynchronous read of every tag array, because the access and
+the snoop present different addresses to the same flops, and the price on
+this device is about 520 ALMs: the fit puts registers down 3,344 and ALMs
+up 191, and the device packs eight registers to an ALM, so the 3,344 give
+back some 330 of the 191 and the rest is the added logic. On a tree already
+at 95% of its ALMs that mattered more than anything else in this change.
+Four seeds of the exact version (below) place it at between -0.127 and
+-0.270 ns of `pll_hdmi` slack, and a negative `pll_hdmi` slack is what this
+project does not ship. Dropping the set needs a decoder on the write side
+and no read at all. What it costs is the three ways of that set that did
+not hold the line: they refill on their next access, which is a bus read,
+where a way kept that should have gone is a stale word.
+
+Two details are worth their words:
+
+* the snoop is not gated on the cache's `enable`. The valid bits outlive
+  the enable bit, and the case a gate gets wrong is off, then on, then a
+  write from another master: the set must not be there when the cache is
+* the BIOS call's memory writes are this core's own but do not come the
+  store way (`S_SWI` writes memory from the HLE's result), so the core
+  snoops those too: `sn_wr = snoop_wr || (S_SWI && bus_ready && bus_wr)`.
+
+`tb_arm9_coherence` drives the port the way `main_bus` does. A word written
+into main RAM behind the data cache's back is the word the next load
+returns, and the line pays a fill again -- 16 bus reads where a hit is 8; a
+code line snooped makes the next fetch of its subroutine pay for it, 16
+reads instead of 8; a snoop of an address nothing holds still drops its set,
+so the line beside it in that set pays for a fill it did not need and is
+read twice; and the data line, in another set, stays at its 16. With the
+port tied off the bench fails five checks and returns the stale word, which
+is what makes it a test rather than a demonstration.
+
+The tags were 22 and 21 bits wide, the address above the line index, and
+that is more than the memory behind them can distinguish. Main RAM is 4 MB
+at 0x02000000 and `main_bus` folds the whole 16 MB 0x02 page onto
+`{3'd0, 1'b1, a[21:1]}`, so the four 4 MB blocks of that page mirror each
+other and the ten address bits above a[21] carry nothing: a line needs
+a[21:10] for the data cache and a[21:11] for the instruction cache, 12 and
+11 bits. The four mirrors are one line now instead of four, which is the
+same fact from the other side.
+
+That is 1,536 and 2,816 tag flops where there were 2,816 and 5,376, and the
+fit agrees with the arithmetic: registers go from 41,186 to 37,396 in the
+shipping fit, 3,790 against the 3,840 the widths ask for. Block memory is
+2,644,299 bits, unchanged. LABs come down rather than up, which is the
+headroom this change had to find: 4,152 where the cache tree placed 4,189
+-- thirty-nine spare, where the shipped tree had two -- and ALMs from
+39,751 to 38,342, the first change to this core in a while that leaves the
+device roomier than it found it.
+
+`tb_arm9_cycles` answers the other question -- what any of this is worth.
+Against a bus that answers in eight cycles, a loop of `subs; bne` costs
+20.29 cycles an iteration with c1 bit 12 clear and 7.28 with it set, and a
+loop of `ldr; subs; bne` costs 18.18 against 12.28. The load loop gains
+less than the fetch loop because a hit is served in two cycles and the
+phase pays one fill: 64 iterations, one line, seven more reads. And the
+bench is the one place in this file that says out loud what the caches do
+not buy: against the two-cycle bus the other benches model, a hit costs
+exactly the miss it replaces, because the probe and the registered read are
+two cycles themselves. Against that bus a cache is worth nothing but bus
+slots, and the numbers above are what a ten-plus cycle arbiter read buys
+back.
+
+One defect came out of the suite and not out of the fit. The bench runner
+puts the tree's own iverilog 14 on PATH, and 14 refuses a continuous
+assignment that names a localparam declared later in the module: `sn_wr`
+sat above the state encoding, which version 11 accepted and 14 would not.
+The two coherence wires sit below `reg [3:0] state` now, in the tree this
+section's last row measures.
+
+The cost, and the seeds it took:
+
+| the caches snoop, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
+|---|---|---|---|---|---|---|---|---|
+| line-precise hook, seed 4, does not ship | 4,185 | 39,942 | 37,842 | -5.883 | -22,239.006 | +0.252 | -0.151 | 4,049,480 |
+| line-precise hook, seed 6, does not ship | 4,189 | 40,080 | 37,842 | -4.617 | -24,348.136 | +0.243 | -0.127 | 4,046,832 |
+| line-precise hook, seed 1, does not ship | 4,175 | 39,933 | 37,809 | -4.819 | -19,642.609 | +0.253 | -0.270 | 4,054,580 |
+| line-precise hook, seed 5, does not ship | 4,189 | 40,006 | 38,273 | -4.825 | -18,008.745 | +0.245 | -0.204 | 4,039,052 |
+| both bank writes captured | 4,152 | 38,342 | 37,396 | -4.824 | -17,086.828 | +0.247 | +0.027 | 4,008,232 |
+
+The last row is the release path, and the cheaper hook is what made it
+one. The same tree at seed 4 with the exact hook was -0.151 ns; the
+set-granular one is +0.027 with TNS 0.000, at 1,600 ALMs less than the
+exact version and 1,409 fewer than the cache tree this replaces -- so the
+seed that could not close the HDMI path with the compare closes it with
+room, and `NDS.qsf` stays at SEED 4.
+
+The fill window turns out to be covered by the same block. A line's valid
+bit is set when the line is taken, in the probe cycle, and the snoop block
+is the last one in the tag, so a write that lands while a fill is still
+running clears that bit and the fill finishes into a line nothing will
+read: the array may hold a mixture of the two words, and no access can
+ever see it. That was the open question at the end of the previous section
+and it closes here. What is left on the bus side is a burst fill, one
+transaction for a whole line instead of seven, which is a question of bus
+slots rather than of correctness.

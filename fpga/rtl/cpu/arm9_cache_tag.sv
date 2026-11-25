@@ -1,18 +1,38 @@
 //============================================================================
 // NDS MiSTer Test — the ARM9's cache tags and line state
 //
-// The caches themselves are not here yet: every access still goes to the
-// bus, and nothing is served out of this module. What it holds is the part
-// the c7 maintenance commands act on -- which line of which set and way is
-// valid, which lines are dirty, and how a command turns into work on the
-// arrays. That is the half of the cache the CP15 state already promised:
-// before this, a test-and-clean had nothing to look at and answered "clean"
-// by construction.
+// This module is what decides whether an access is a hit, at the access's
+// own address and in its own cycle, and it is where the c7 maintenance
+// commands act: which line of which set and way is valid, which lines are
+// dirty, and how a command turns into work on the arrays. Both caches it
+// serves are wired to their data arrays now -- the data cache's line answers
+// a load, the instruction cache's answers a fetch -- so a tag here is the
+// difference between a bus read and an array read, and an invalidate is what
+// makes the next access pay again. The arrays themselves are in
+// rtl/cpu/arm9_cache_data.sv.
 //
 // Geometry is the ARM946E-S's, which is what CP15_CACHETYPE (0x0F0D2112)
 // declares: 32-byte lines, four ways, 4 KB of data cache (32 sets) and 8 KB
 // of instruction cache (64 sets). One way is one tag array, so an access
 // reads four tags at once.
+//
+// A tag is only as wide as the memory the cache serves. Both caches serve
+// main RAM: 4 MB at 0x02000000, and the whole 0x02 page reads back onto it
+// (`ram_word_lo` in rtl/bus/main_bus.sv is a[21:1]). So the tag is the
+// address above the line index inside those 4 MB -- 12 bits for the data
+// cache, 11 for the instruction cache -- and the four mirrors of a word are
+// one line rather than four. A wider tag holds a line per mirror, and a
+// store through one of them leaves the others serving the old word.
+//
+// A write from another master does not compare tags. It drops the set its
+// address falls in, all four ways, because the tag compare it would take to
+// keep the other three is a second asynchronous read of every tag array --
+// about 520 ALMs, which on a tree at 95% of the device's ALMs is the
+// difference between placing and not. The three ways given up belong to
+// lines that are fetched again on their next access; a way kept that should
+// have gone is a stale word. Four seeds of the precise version closed the
+// HDMI path at -0.127 to -0.270 ns (AREA.md); this one has to earn the
+// slack back.
 //
 // Valid and dirty are one bit per set and way, in flops, and the tags are
 // the only thing in an array. That split is what makes a whole-cache
@@ -77,6 +97,10 @@ module arm9_cache_tag #(
 	// locked and none free, a fill must not write into a way that this
 	// module is still calling valid
 	output             alloc_ok,
+	// a write from another master into this address: the set it lands in has
+	// to go, since this cache's copy of the line in it is now wrong
+	input              snoop,
+	input      [31:0]  snoop_addr,
 	output reg         last_hit,   // the access just compared
 	output reg  [1:0]  last_way,
 	output reg  [3:0]  last_valid,
@@ -116,6 +140,9 @@ module arm9_cache_tag #(
 	wire [1:0]      m_way   = mnt_arg[1:0];
 	wire [SETB-1:0] m_a_set = mnt_arg[5 +: SETB];       // by address
 	wire [TAGW-1:0] m_a_tag = mnt_arg[5 + SETB +: TAGW];
+
+	// the line an external write lands on
+	wire [SETB-1:0] s_set   = snoop_addr[5 +: SETB];
 
 	//------------------------------------------------------------------
 	// the compare, in the access's own cycle
@@ -282,6 +309,32 @@ module arm9_cache_tag #(
 						endcase
 					end
 					rr_way <= victim + 2'd1;
+				end
+			end
+
+			//------------------------------------------------------
+			// a write from another master
+			//------------------------------------------------------
+			// Deliberately not behind `enable`: the valid bits survive a
+			// cache being switched off, and a set dropped while it is off
+			// must not be there again when it is switched back on. This
+			// block comes last so it wins over an allocation in the same
+			// cycle -- a line taken in the cycle its word is overwritten is
+			// dropped and its fill writes into an invalid line, which is a
+			// word nobody will read.
+			//
+			// Every way of the set, not only the way holding the line: the
+			// tags are not read here, which is the point -- see the header.
+			if (snoop) begin
+				v0[s_set] <= 1'b0;
+				v1[s_set] <= 1'b0;
+				v2[s_set] <= 1'b0;
+				v3[s_set] <= 1'b0;
+				if (DIRTY) begin
+					dw0[s_set] <= 1'b0;
+					dw1[s_set] <= 1'b0;
+					dw2[s_set] <= 1'b0;
+					dw3[s_set] <= 1'b0;
 				end
 			end
 		end

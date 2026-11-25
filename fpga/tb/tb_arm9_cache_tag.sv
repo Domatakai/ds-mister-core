@@ -55,6 +55,7 @@ wire [15:0] d_hits, d_misses, i_hits, i_misses;
 arm9_cache_tag #(.SETS(32), .SETB(5), .TAGW(22), .DIRTY(1)) dtag (
 	.clk(clk), .ce(1'b1), .reset(reset), .enable(enable),
 	.alloc(enable),
+	.snoop(1'b0), .snoop_addr(32'd0),
 	.acc(acc), .acc_addr(acc_addr), .acc_wr(acc_wr),
 	.mnt(mnt), .mnt_cmd(mnt_cmd), .mnt_arg(mnt_arg),
 	.lock_way(lock_way), .lock_en(lock_en),
@@ -66,6 +67,7 @@ arm9_cache_tag #(.SETS(32), .SETB(5), .TAGW(22), .DIRTY(1)) dtag (
 arm9_cache_tag #(.SETS(64), .SETB(6), .TAGW(21), .DIRTY(0)) itag (
 	.clk(clk), .ce(1'b1), .reset(reset), .enable(enable),
 	.alloc(enable),
+	.snoop(1'b0), .snoop_addr(32'd0),
 	.acc(acc), .acc_addr(acc_addr), .acc_wr(acc_wr),
 	.mnt(mnt), .mnt_cmd(mnt_cmd), .mnt_arg(mnt_arg),
 	.lock_way(lock_way), .lock_en(lock_en),

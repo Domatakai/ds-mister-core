@@ -85,6 +85,7 @@ arm9_core dut (
 	.bus_addr(bus_addr), .bus_wdata(bus_wdata), .bus_be(bus_be),
 	.bus_rd(bus_rd), .bus_wr(bus_wr),
 	.bus_rdata(bus_rdata), .bus_ready(bus_ready),
+	.snoop_wr(1'b0), .snoop_addr(32'd0),
 	.irq(irq), .fiq(1'b0), .halt(1'b0),
 	.halted(halted), .thumb_state(thumb_state), .pc_out(pc_out),
 	.cp15_ctrl(cp15_ctrl), .cp15_c9d(cp15_c9d), .cp15_c9i(cp15_c9i),

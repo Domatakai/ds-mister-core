@@ -37,10 +37,10 @@
 // each cache's tags, one valid bit and the data cache's dirty bits follow the
 // accesses the core makes once c1 enables the cache, so a test-and-clean
 // reports a line a store really dirtied and clears it. Every access still
-// goes to the bus, and nothing is served out of the tags: they are the state
-// the data arrays will sit behind, not a cache yet. Timing is functional
-// rather than cycle-accurate, exactly as in the ARM7 core: one bus access per
-// fetch and one per load/store beat.
+// goes to the bus only when neither cache answers: a load or a fetch that hits
+// is served out of the line and a miss fills the line behind it. Timing is
+// functional rather than cycle-accurate, exactly as in the ARM7 core: one bus
+// access per miss and one per store beat.
 //
 // The data-abort vector (0x10) is not entered from anywhere yet — the bus
 // cannot report an error and there is no MPU/MMU to raise a translation or
@@ -85,6 +85,14 @@ module arm9_core #(
 	output reg        bus_wr,
 	input      [31:0] bus_rdata,
 	input             bus_ready,
+
+	// ---- coherence: another master wrote this main-RAM word ----
+	// A one-cycle strobe and the word's address. The caches drop the set it
+	// lands in and the fetch buffer is dropped whole; nothing here is behind
+	// a cache's enable bit, because a set dropped while a cache is off must
+	// not be there again when it is switched on.
+	input             snoop_wr,
+	input      [31:0] snoop_addr,
 
 	// ---- interrupts / halt ----
 	input             irq,        // IME & (IE & IF) of the ARM9 bank
@@ -326,6 +334,12 @@ localparam S_RST  = 4'd0,
            S_IFILL= 4'd14,  // an instruction line fill: one bus read
            S_IFW  = 4'd15;  // ... and waiting for it
 reg [3:0] state;
+
+// the coherence hook's own pulse: another master's write, or this core's BIOS
+// call writing memory through a path that is not the store path, so the set
+// it lands in goes stale the same way
+wire        sn_wr   = snoop_wr || ((state == S_SWI) && bus_ready && bus_wr);
+wire [31:0] sn_addr = snoop_wr ? snoop_addr : bus_addr;
 
 // BIOS SWI hand-off (see swi_hle and swi_share): the core traps the call,
 // mirrors the shared engine's bus requests onto its own master and returns
@@ -1108,7 +1122,7 @@ wire [3:0] i_mnt_cmd =
 	c7v[6:3] == 4'd5 && c7v[2:0] == 3'd0 ? 4'd1 : 4'd9;
 wire       i_mnt_any = i_mnt && (i_mnt_cmd != 4'd9);
 
-	arm9_cache_tag #(.SETS(32), .SETB(5), .TAGW(22), .DIRTY(1)) d_cache_tag (
+	arm9_cache_tag #(.SETS(32), .SETB(5), .TAGW(12), .DIRTY(1)) d_cache_tag (
 	.clk(clk),
 	.ce(ce),
 	.reset(reset),
@@ -1119,6 +1133,8 @@ wire       i_mnt_any = i_mnt && (i_mnt_cmd != 4'd9);
 	.alloc(d_acc && !d_acc_w && d_is_cached && tag_alloc_ok && !blk_run &&
 	       !dw_run && !swap_en),
 	.alloc_ok(tag_alloc_ok),
+	.snoop(sn_wr),
+	.snoop_addr(sn_addr),
 	.acc(d_acc),
 	.acc_addr(tag_addr),
 	.acc_wr(d_acc_w),
@@ -1137,7 +1153,7 @@ wire       i_mnt_any = i_mnt && (i_mnt_cmd != 4'd9);
 	.misses(d_tag_misses)
 );
 
-	arm9_cache_tag #(.SETS(64), .SETB(6), .TAGW(21), .DIRTY(0)) i_cache_tag (
+	arm9_cache_tag #(.SETS(64), .SETB(6), .TAGW(11), .DIRTY(0)) i_cache_tag (
 	.clk(clk),
 	.ce(ce),
 	.reset(reset),
@@ -1148,6 +1164,8 @@ wire       i_mnt_any = i_mnt && (i_mnt_cmd != 4'd9);
 	// taken in that cycle cannot leave a valid line with nothing in it
 	.alloc(i_probe && !i_tag_hit && i_tag_alloc_ok),
 	.alloc_ok(i_tag_alloc_ok),
+	.snoop(sn_wr),
+	.snoop_addr(sn_addr),
 	.acc(i_probe),
 	.acc_addr(pc),
 	.acc_wr(1'b0),
@@ -2587,6 +2605,11 @@ always @(posedge clk) begin
 
 		default: state <= S_FETCH;
 		endcase
+		// a write from another master may have changed the word the fetch
+		// buffer holds; it comes after the states so a fetch that completed
+		// on this same edge is dropped rather than kept, which costs one
+		// bus read and cannot be wrong
+		if (sn_wr) f_valid <= 1'b0;
 		// The deferred user-bank write lands last on its edge. It belongs to
 		// the instruction before this one, so it has to outrank the FIQ entry
 		// swap above -- that one copies the `regs` shadow in, which never saw
