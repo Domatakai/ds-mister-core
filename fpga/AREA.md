@@ -3126,7 +3126,7 @@ the enable holding the read port still. Two of them failed on the first
 run and both were the bench's own mistakes: a byte lane written with its
 data in the wrong bits, and a read of a word nothing had ever written.
 
-The suite is 55 steps, all passing.
+The suite is 56 steps, all passing.
 
 ### The cache serves a load (2026-11-22)
 
@@ -3199,7 +3199,7 @@ The cost, and the two seeds it took to ship:
 |---|---|---|---|---|---|---|---|---|
 | both bank writes captured, seed 1, tags only | 4,105 | 37,556 | 35,893 | -5.378 | -16,596.011 | +0.248 | +0.128 | 3,915,836 |
 | the arrays wired in, seed 1, does not ship | 4,107 | 37,465 | 35,904 | -4.512 | -16,603.387 | +0.201 | -0.064 | 3,998,024 |
-| both bank writes captured | 4,130 | 37,518 | 36,019 | -4.972 | -24,042.628 | +0.244 | +0.081 | 4,005,936 |
+| both bank writes captured, seed 2, the cache tree, retired | 4,130 | 37,518 | 36,019 | -4.972 | -24,042.628 | +0.244 | +0.081 | 4,005,936 |
 
 The array costs two LABs at seed 1 and the fit comes in ninety-one ALMs
 lighter, because 32,768 bits that were never in the logic budget now sit
@@ -3207,8 +3207,10 @@ in four M10K blocks: block memory goes from 2,545,995 to 2,579,787 bits.
 What it costs is on the release path, and at seed 1 it costs too much:
 `pll_hdmi` was +0.128 on the tags-only tree and is -0.064 here, which by
 this project's rule does not ship. The seed-2 fit of the same tree, same
-settings, is +0.081 with TNS 0.000, so `NDS.qsf` now says SEED 2 and the
-seed-2 row is the shipped one. The tags-only row it replaces was a seed-1
+settings, is +0.081 with TNS 0.000, so `NDS.qsf` said SEED 2 from that
+change and the seed-2 row was the shipped one -- until the instruction
+cache's array went into the fetch path (next section), which moved both.
+The tags-only row it replaces was a seed-1
 build, which is why the table above names both seeds: that row is evidence
 about the tree before this change, not about the configuration that now
 ships.
@@ -3243,3 +3245,92 @@ the hardware requires of software too; and a fill is nine separate bus
 reads with no window protection, so another master writing the line while
 it is being filled leaves a mixed line behind. That last one belongs with
 the coherence hook rather than with a wider state machine.
+
+
+### The instruction cache serves a fetch (2026-11-24)
+
+The instruction cache's arrays are wired into the fetch path, and neither
+cache's fill goes back to the bus for the word that demanded it any more.
+
+A fetch is served the way a load was, one address earlier. The probe is
+combinational off the pc in the fetch state, the array's registered read
+lands at the end of that cycle, and a new state takes the word: two cycles
+from the address to the instruction, against a bus wait that was already
+longer than that. The address is presented before the fetch decision is
+taken because the decision is "ask the bus or not", and a registered tag
+read would answer a cycle too late to stop the bus.
+
+The line is taken in the probe cycle, with the access that missed on it,
+and the fill follows from the same decision. That is only safe because
+interrupts are sampled in the fetch state, so nothing can run between
+taking a line and filling it; the probe is gated on that state's own
+decision as well, so a fetch an interrupt, a halt or the fetch buffer
+answers instead never takes a line, and a valid line is always a filled
+one. Filling behind the fetch is what the miss's own bus read allows: the
+register is written from that read, so the fill may take as long as it
+likes.
+
+Two defects, and neither was in the part of the design being thought about:
+
+* a c7 invalidate lands on the tags at the end of the cycle it decodes, and
+  the fetch after it probed in that same cycle -- the compare saw the line
+  still valid and served the instruction from the line the command was
+  dropping. The fetch now waits the one cycle the tags take. It is
+  invisible anywhere else, and `tb_arm9_icache` is what shows it: sixteen
+  reads of the line after the invalidate, where a command that never
+  reached the tags shows eight.
+* the bench's own end condition was the last instruction's address, which
+  the fetch reaches before that instruction has executed -- its line was
+  still filling, so the check read an uninitialised memory word and called
+  the loop's result wrong. It waits for the last store now, not the pc.
+
+The bench: `tb_arm9_icache` is 7 checks, and the bus counts are the whole
+argument. Three fetches before c1 bit 12 takes effect, then one line fill,
+then a loop of eight iterations that reads nothing at all: eleven reads of
+the line's 32 bytes, which is three fetches and the eight of the fill
+below. A second line is served after one fill. An invalidate makes the
+very next fetch pay for the line it had just been served from. And one
+line serves ARM and Thumb both: the program switches with bx and the Thumb
+loop's result comes back out of the array, which takes a halfword of the
+word the fill put there and would not run otherwise. `tb_arm9` is still
+161 checks and the same 563 bus reads, because c1 bit 12 is off there and
+every fetch takes the bus.
+
+The fill cut is the other half of the change. The word a miss waited for
+is the line's own and it arrives on the bus, so the array's write port
+takes it from that read, and the fill walks the other seven, skipping the
+word it already holds. A miss is eight reads rather than nine, both
+caches, and the data cache's bench says so: nine at every sample through a
+program of hits is eight, and the invalidate and reload that was eighteen
+is sixteen. The fill's word order is a function of the word the miss
+brought in, so the seven still go in in order and neither cache has a bus
+read to hide.
+
+The cost, and the two seeds it took to ship this one:
+
+| the instruction cache served, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
+|---|---|---|---|---|---|---|---|---|
+| the instruction cache wired in, seed 2, does not ship | 4,183 | 40,521 | 41,246 | -4.823 | -26,551.557 | +0.251 | -0.010 | 4,094,536 |
+| both bank writes captured | 4,189 | 39,751 | 41,186 | -5.177 | -27,807.962 | +0.248 | +0.016 | 4,065,468 |
+
+The cache-tree fit it replaces was 4,130 LABs, 37,518 ALMs and 36,019
+registers at seed 2, so the fetch path costs 59 LABs and 2,233 ALMs -- and
+5,167 registers, which is the part worth explaining. The instruction
+cache's tags are four ways of 64 sets of 21 tag bits, 5,376 flops, and
+they were in the tree before this change with `.alloc(1'b0)`: nothing
+could ever write them, so synthesis removed them whole and the fit never
+paid for them. What the register count shows is the tags existing for the
+first time, not a path that got expensive. Block memory goes from
+2,579,787 to 2,644,299 bits: the 8 KB array, in eight M10K blocks.
+
+The release path is why there are two rows. At seed 2 the tree with the
+array wired in is `pll_hdmi` -0.010 -- inside the 0.328 ns seed-to-seed
+spread this file has measured on one unchanged tree, and negative, which
+by this project's rule does not ship. The seed-4 fit of the same tree,
+same settings, closes it at +0.016 with TNS 0.000, so `NDS.qsf` says
+SEED 4 and the seed-4 row is the shipped one. It is 4,189 of 4,191 LABs:
+two spare, where the cache tree had 61, and 39,751 of 41,910 ALMs. That
+is the headline of this row more than the slack is -- the device has room
+for the caches and not for much else, so the next change that adds logic
+has to find the room by removing something, and a fit that does not place
+is now the expected outcome rather than the exception.

@@ -166,9 +166,9 @@ nonsequential main-RAM data access is 10 units either way, 10 ARM7 cycles
 or 20 ARM9 cycles for the same 298 ns — and melonDS scales ARM9 time, not
 ARM7 time, in its scheduler. So the shared memory path is *not* slowed for
 the ARM7, exactly as on the real board; the ARM7's disadvantage is its own
-execution rate, while the ARM9's is the caches it still lacks and the TCM
-it now has (with every fetch coming off the bus, both cores are
-memory-bound).
+execution rate, while the ARM9's is the bus access every fetch and every
+load used to be -- the figure above was measured before either cache was
+in, and with them an ARM9 fetch or load can stop being one.
 
 The peripherals the ARM7 owns are ticked by that same enable rather than by
 a timebase of their own, because on the DS they are dividers of it: GBATEK
@@ -274,13 +274,29 @@ serving path decides on.
 The serving path is in. `rtl/cpu/arm9_cache_data.sv` holds the lines --
 four ways of eight words per set, byte-enabled writes, one registered read
 -- and the core probes the tags in the decode's own cycle, so a load that
-hits is answered out of the array with no bus read at all, and a load that
-misses is filled behind with eight bus reads. Stores are write-through:
-they reach memory and, when the line is here, the array as well, so a
-cached word is never stale after a store. Only a load the cache is going
-to fill may take a line -- allocation is gated on it -- so a valid line
-always has its eight words, and a store to a line the cache does not hold
-writes memory and allocates nothing.
+hits is answered out of the array with no bus read at all. A load that
+misses is filled behind: the word its own read brought back is written
+into the array from that read, and the fill goes back to the bus for the
+other seven, so a miss costs eight reads rather than nine. Stores are
+write-through: they reach memory and, when the line is here, the array as
+well, so a cached word is never stale after a store. Only a load the
+cache is going to fill may take a line -- allocation is gated on it -- so
+a valid line always has its eight words, and a store to a line the cache
+does not hold writes memory and allocates nothing.
+
+The instruction cache is in the same way, one address earlier. The probe
+is combinational off the pc in the fetch cycle and the array's registered
+read lands in the state after it, so a fetch that hits costs no bus access
+and the word still arrives a cycle after the address -- where the bus wait
+would have been. A miss fetches the word as it always did and fills the
+line behind it, its own word included from that read. The line is taken
+in the probe cycle rather than when the fill starts, which is safe because
+interrupts are only sampled in the fetch state and the probe is gated on
+that state's own decision: a fetch an interrupt, a halt or the fetch
+buffer answers instead never takes a line, so a valid line is always a
+filled one. An instruction-side invalidate also holds the next fetch for
+the one cycle the tags take to apply it, since a probe in the command's
+own cycle would still compare against the line it is dropping.
 
 Write-through is a choice and not the part's behaviour. The ARM946E-S in
 the DS is write-back; this is the smaller, safer half of that, because
@@ -290,20 +306,25 @@ is bus traffic on stores a write-back cache would absorb. The bug that
 shape does not have is the one that loses data, which is why the first
 version is this one.
 
-What is still out: the instruction cache's arrays are not wired into the
-fetch path (its tags are recorded, as before), so code is fetched from the
-bus and `tb_arm9_cache_path` says nothing about it. Coherence is the other
-hole: the cache is write-through but not snooped, so a DMA write into main
-RAM leaves a cached line stale until software invalidates it, which is
-what the hardware requires of software too.
+What is still out is coherence, for both caches: neither is snooped, so a
+DMA write into main RAM leaves a cached line stale, and a store leaves the
+instruction cache stale until software invalidates it -- which is what the
+hardware requires of software too, and what the DS's own flush idiom does.
+There is also no protection against another master writing a line while it
+is being filled, so a fill that loses that race leaves a mixed line.
 
 `tb_arm9_cache_path` runs a program through the core with the cache on and
 watches the bus rather than only the registers: 22 checks, ten of them by
-bus-read count -- the first load's own read plus its eight-word fill, four
-hits that cost nothing, the value a store leaves in the array, a byte and
-a halfword taken out of a cached word, a second line filling into the next
-way without disturbing the first, an invalidate that makes the next load
-pay again, and the cache switched off.
+bus-read count -- the first load's own read plus the other seven words of
+its line, four hits that cost nothing, the value a store leaves in the
+array, a byte and a halfword taken out of a cached word, a second line
+filling into the next way without disturbing the first, an invalidate that
+makes the next load pay again, and the cache switched off. `tb_arm9_icache`
+does the same for fetches, and its counts are the whole argument: three
+fetches before c1 bit 12 takes effect, then one line fill, then a loop of
+eight iterations that reads nothing at all; a second line served after one
+fill; and an invalidate that makes the very next fetch pay for a line it
+had just been served from.
 
 What follows the caches, in the order the remaining work costs most:
 
@@ -804,8 +825,8 @@ fpga/
     cpu/arm9_cache_data.sv    the lines themselves: four ways of eight
                               words per set behind one byte-enabled write
                               port and one registered read port; the data
-                              cache's 4 KB is in the load path, the 8 KB
-                              of instruction cache is not wired yet
+                              cache's 4 KB serves loads and the 8 KB of
+                              instruction cache serves fetches
                                                           [SIM-VERIFIED]
     cpu/arm7_core.sv          ARM7TDMI: ARMv4T ARM + Thumb, CPSR/SPSR
                               banks, exceptions, HALT, bus master, one-word
@@ -900,6 +921,11 @@ fpga/
                           its fill, hits that cost no bus read, a store
                           the array keeps, byte and halfword lanes, a
                           second line into the same set, invalidate
+                                                          [SIM-VERIFIED]
+  tb/tb_arm9_icache.sv   the fetch path through the core: a line filled
+                          once and served without a bus read, ARM and
+                          Thumb words out of the array, an invalidate
+                          that makes the next fetch pay again
                                                           [SIM-VERIFIED]
   tb/tb_main_bus.sv       fabric: masters, RAM, cart, slot-2 pak, cheat, IO
                           [SIM-VERIFIED] (also built with -DPAK_REAL, which
@@ -1679,16 +1705,29 @@ vvp /tmp/tb_cache_tag
 
 # 3c-7. the data cache serving loads — a program through the core with c1
 #       bit 2 on, watched at the bus rather than only at the registers: the
-#       first load's own read plus its eight-word fill, then four loads that
-#       cost nothing, a store whose value comes back out of the array, a byte
-#       and a halfword taken out of a cached word, a second line in the same
-#       set filling the next way, invalidate-all, and the cache switched off
+#       first load's own read plus the other seven words of its line, then
+#       four loads that cost nothing, a store whose value comes back out of
+#       the array, a byte and a halfword taken out of a cached word, a second
+#       line in the same set filling the next way, invalidate-all, and the
+#       cache switched off
 iverilog -g2012 -o /tmp/tb_cache_path tb/tb_arm9_cache_path.sv \
          rtl/cpu/arm9_core.sv rtl/cpu/arm9_cache_tag.sv \
          rtl/cpu/arm9_cache_data.sv rtl/cpu/swi_hle.sv rtl/cpu/swi_share.sv
 vvp /tmp/tb_cache_path
 #   22 checks
 # TB ARM9 CACHE PATH PASS
+
+# 3c-8. the instruction cache serving fetches — the same through the core
+#       with c1 bit 12 on and the bus watched: three fetches before the
+#       cache comes on, one line fill, a loop that costs nothing, a second
+#       line served after one fill, an invalidate that makes the next fetch
+#       pay for the line again, and Thumb code taken out of the array
+iverilog -g2012 -o /tmp/tb_icache tb/tb_arm9_icache.sv \
+         rtl/cpu/arm9_core.sv rtl/cpu/arm9_cache_tag.sv \
+         rtl/cpu/arm9_cache_data.sv rtl/cpu/swi_hle.sv rtl/cpu/swi_share.sv
+vvp /tmp/tb_icache
+#   7 checks
+# TB ARM9 ICACHE PASS
 
 # 3c-6. the lines themselves — a word read back where it was written, the
 #       four ways of a set kept apart, the eight words of a line kept apart,

@@ -223,8 +223,22 @@ reg         d_is_cached;   // this access is one the cache may serve
 reg         d_serve;       // ... and it hit: the array answers, not the bus
 reg  [31:0] d_line;        // the line being filled
 reg  [1:0]  d_way;         // and the way the tags gave it
-reg  [2:0]  d_fl;          // which of its eight words is next
+reg  [2:0]  d_fl;          // which of its other seven words is next
+reg  [2:0]  d_wskip;       // the word the miss itself brought in
 wire [31:0] ar_rd_data;
+// the instruction cache's serving path, the same shape one address earlier:
+// the probe is combinational off the pc in S_FETCH, the array read registers
+// at the end of that cycle and S_IW takes the word. A miss goes to the bus as
+// it always did, and the fill behind it takes the other seven words.
+reg         i_fill;        // this fetch missed and is going to fill
+reg  [31:0] i_line;        // the line it will fill
+reg  [1:0]  i_way;         // the way the tags gave it
+reg  [2:0]  i_wskip;       // the word the miss itself brought in
+reg  [2:0]  i_fl;          // which of its other seven words is next
+wire [31:0] i_ar_data;
+wire        i_tag_hit;
+wire [1:0]  i_tag_way;
+wire        i_tag_alloc_ok;
 wire        tag_hit;
 wire [1:0]  tag_way;
 wire        tag_alloc_ok;  // the set has a way a line may be taken in
@@ -307,7 +321,10 @@ localparam S_RST  = 4'd0,
            S_ML1  = 4'd9,   // long multiply: the product
            S_ML2  = 4'd10,  // and the 64-bit accumulate and write
            S_DFILL= 4'd11,  // a cache line fill: one bus read
-           S_DFW  = 4'd12;  // ... and waiting for it
+           S_DFW  = 4'd12,  // ... and waiting for it
+           S_IW   = 4'd13,  // an instruction cache hit: the array's word
+           S_IFILL= 4'd14,  // an instruction line fill: one bus read
+           S_IFW  = 4'd15;  // ... and waiting for it
 reg [3:0] state;
 
 // BIOS SWI hand-off (see swi_hle and swi_share): the core traps the call,
@@ -1037,6 +1054,24 @@ wire        d_cached  = d_cache_on && (ea[31:24] == 8'h02) && !is_io_region;
 wire        d_probe   = d_cached && mload && !swap_en && !dw_run && !blk_run;
 wire        st_cached = d_cache_on && (bus_addr[31:24] == 8'h02);
 
+// The instruction cache's probe. A fetch it may serve is one from main RAM
+// with c1 bit 12 set, and the address is presented in the cycle the pc is
+// known, so the array's registered read lands in S_IW in place of a bus wait.
+// `i_take` is the rest of S_FETCH's own decision, repeated so that the probe
+// cannot count a fetch -- or take a line for one -- that an interrupt, a halt
+// or the fetch buffer answers instead. Interrupts are only sampled in S_FETCH,
+// which is what keeps the window between taking a line and filling it free of
+// anything that could read it.
+wire        i_cached = i_cache_on && (pc[31:24] == 8'h02);
+wire        i_take   = !(fiq && !f) && !(irq && !i) && !(halt || cp15_wait) &&
+                       !(t && f_hit);
+wire        i_probe  = (state == S_FETCH) && i_cached && i_take;
+// The fill walks the words the miss did not bring in. The demanded word is
+// written into the array from the bus read that answered it, so the fill does
+// not read it a second time: eight reads per miss, not nine.
+wire [2:0]  i_fword  = (i_fl >= i_wskip) ? (i_fl + 3'd1) : i_fl;
+wire [2:0]  d_fword  = (d_fl >= d_wskip) ? (d_fl + 3'd1) : d_fl;
+
 // The tags are read from the decode's address in S_MEM, where the hit has to
 // be known before the bus is asked, and from the bus address in S_MW, where
 // an access is being recorded. The two states never overlap, so one address
@@ -1053,7 +1088,6 @@ wire [2:0]  ar_rd_word = ea[4:2];
 
 wire        d_acc   = (state == S_MW) && bus_ready;
 wire        d_acc_w = bus_wr;                 // the store the bus saw
-wire        i_acc   = (state == S_FW) && bus_ready;
 
 wire  [7:0] c7v = cp15_c7;
 wire        d_mnt = c7v[7] && (c7v[6:3] == 4'd6 || c7v[6:3] == 4'd10 ||
@@ -1103,18 +1137,19 @@ wire       i_mnt_any = i_mnt && (i_mnt_cmd != 4'd9);
 	.misses(d_tag_misses)
 );
 
-arm9_cache_tag #(.SETS(64), .SETB(6), .TAGW(21), .DIRTY(0)) i_cache_tag (
+	arm9_cache_tag #(.SETS(64), .SETB(6), .TAGW(21), .DIRTY(0)) i_cache_tag (
 	.clk(clk),
 	.ce(ce),
 	.reset(reset),
 	.enable(i_cache_on),
-	// nothing allocates here yet: the instruction cache has no array in the
-	// fetch path, and a line taken now would be a valid line with nothing in
-	// it, waiting to serve garbage the day that path is wired up
-	.alloc(1'b0),
-	.alloc_ok(),
-	.acc(i_acc),
-	.acc_addr(bus_addr),
+	// the line is taken in the probe cycle, with the access that missed on
+	// it, and the fill follows from the same decision: i_probe is only
+	// asserted for a fetch the core is going to perform, so an interrupt
+	// taken in that cycle cannot leave a valid line with nothing in it
+	.alloc(i_probe && !i_tag_hit && i_tag_alloc_ok),
+	.alloc_ok(i_tag_alloc_ok),
+	.acc(i_probe),
+	.acc_addr(pc),
 	.acc_wr(1'b0),
 	.mnt(i_mnt_any),
 	.mnt_cmd(i_mnt_cmd),
@@ -1122,8 +1157,8 @@ arm9_cache_tag #(.SETS(64), .SETB(6), .TAGW(21), .DIRTY(0)) i_cache_tag (
 	.lock_way(c9_lock_i[1:0]),
 	.lock_en(c9_lock_i[31]),
 	.dirty_any(),
-	.hit_now(),
-	.way_now(),
+	.hit_now(i_tag_hit),
+	.way_now(i_tag_way),
 	.last_hit(),
 	.last_way(),
 	.last_valid(),
@@ -1139,12 +1174,19 @@ arm9_cache_tag #(.SETS(64), .SETB(6), .TAGW(21), .DIRTY(0)) i_cache_tag (
 wire        fill_wr   = (state == S_DFW) && bus_ready;
 wire        keep_wr   = (state == S_MW) && bus_ready && bus_wr &&
                         st_cached && tag_hit;
-wire        ar_wr     = fill_wr || keep_wr;
-wire [4:0]  ar_wr_set = fill_wr ? d_line[9:5] : bus_addr[9:5];
+// ... and the third user: the word a miss read on the bus is the line's own,
+// so it is written straight into the array from that read. The fill that
+// follows covers the other seven words only.
+wire        miss_wr   = (state == S_MW) && bus_ready && d_is_cached &&
+                        !d_serve && tag_alloc_ok;
+wire        ar_wr     = fill_wr || keep_wr || miss_wr;
+wire [31:0] ar_wr_addr= fill_wr ? (d_line + {27'd0, d_fword, 2'b00})
+                                : bus_addr;
+wire [4:0]  ar_wr_set = ar_wr_addr[9:5];
 wire [1:0]  ar_wr_way = fill_wr ? d_way : tag_way;
-wire [2:0]  ar_wr_word= fill_wr ? d_fl : bus_addr[4:2];
-wire [31:0] ar_wr_data= fill_wr ? bus_rdata : bus_wdata;
-wire [3:0]  ar_wr_be  = fill_wr ? 4'b1111 : bus_be;
+wire [2:0]  ar_wr_word= fill_wr ? d_fword : ar_wr_addr[4:2];
+wire [31:0] ar_wr_data= (fill_wr || miss_wr) ? bus_rdata : bus_wdata;
+wire [3:0]  ar_wr_be  = (fill_wr || miss_wr) ? 4'b1111 : bus_be;
 
 arm9_cache_data #(.SETS(32), .SETB(5)) d_cache_data (
 	.clk(clk),
@@ -1159,6 +1201,30 @@ arm9_cache_data #(.SETS(32), .SETB(5)) d_cache_data (
 	.wr_word(ar_wr_word),
 	.wr_data(ar_wr_data),
 	.wr_be(ar_wr_be)
+);
+
+// The instruction cache's lines: the same array at its own geometry, 64 sets
+// of four ways, 8 KB. The read port is the probe off the pc; the write port
+// has one user, the fill, and its first word is the one the miss read.
+wire        i_fill_wr = (state == S_IFW) && bus_ready;
+wire        i_dem_wr  = (state == S_FW) && bus_ready && i_fill;
+wire        ir_wr     = i_fill_wr || i_dem_wr;
+wire [31:0] ir_wr_addr= i_fill_wr ? (i_line + {27'd0, i_fword, 2'b00})
+                                  : bus_addr;
+
+arm9_cache_data #(.SETS(64), .SETB(6)) i_cache_data (
+	.clk(clk),
+	.ce(ce),
+	.rd_set(pc[10:5]),
+	.rd_way(i_tag_way),
+	.rd_word(pc[4:2]),
+	.rd_data(i_ar_data),
+	.wr(ir_wr),
+	.wr_set(ir_wr_addr[10:5]),
+	.wr_way(i_way),
+	.wr_word(i_fill_wr ? i_fword : ir_wr_addr[4:2]),
+	.wr_data(bus_rdata),
+	.wr_be(4'b1111)
 );
 
 
@@ -1212,6 +1278,12 @@ always @(posedge clk) begin
 		d_line   <= 32'd0;
 		d_way    <= 2'd0;
 		d_fl     <= 3'd0;
+		d_wskip  <= 3'd0;
+		i_fill   <= 1'b0;
+		i_line   <= 32'd0;
+		i_way    <= 2'd0;
+		i_wskip  <= 3'd0;
+		i_fl     <= 3'd0;
 	end else if (ce) begin
 		// the c7 strobe lasts the one cycle after the instruction that
 		// decoded it; a new command below overrides this clear
@@ -1260,6 +1332,12 @@ always @(posedge clk) begin
 				pc <= vbase + 32'h0000_0018;
 			end else if (halt || cp15_wait) begin
 				state <= S_HALT;
+			end else if (i_mnt_any) begin
+				// An instruction-side maintenance command is on the tags this
+				// cycle and lands on them at this edge. A fetch that probed
+				// now would compare against the line the command is dropping
+				// and be served from it, so the fetch waits the one cycle.
+				state <= S_FETCH;
 			end else if (t && f_hit) begin
 				// the word is already here: take the other halfword without a
 				// bus access (sequential Thumb code is the common case)
@@ -1267,12 +1345,25 @@ always @(posedge clk) begin
 				insn       <= pc[1] ? f_word[31:16] : f_word[15:0];
 				pc         <= pc + 32'd2;
 				state      <= S_EXEC;
+			end else if (i_probe && i_tag_hit) begin
+				// the line is here: the array read that started in this cycle
+				// lands at the end of it, and S_IW takes the word. No bus read,
+				// which is the whole point of the fetch path.
+				insn_thumb <= t;
+				i_fill     <= 1'b0;
+				state      <= S_IW;
 			end else begin
 				insn_thumb <= t;
 				bus_addr   <= pc;
 				bus_be     <= t ? (pc[1] ? 4'b1100 : 4'b0011) : 4'b1111;
 				bus_rd     <= 1'b1;
 				bus_wr     <= 1'b0;
+				// a miss the cache may fill: the line, the way and the word the
+				// bus read is about to bring in, captured where the decision was
+				i_fill     <= i_probe && i_tag_alloc_ok;
+				i_line     <= {pc[31:5], 5'd0};
+				i_way      <= i_tag_way;
+				i_wskip    <= pc[4:2];
 				state      <= S_FW;
 			end
 		end
@@ -1288,8 +1379,25 @@ always @(posedge clk) begin
 				else
 					insn <= bus_rdata;
 				pc    <= pc + (insn_thumb ? 32'd2 : 32'd4);
-				state <= S_EXEC;
+				state <= i_fill ? S_IFILL : S_EXEC;
+				i_fill <= 1'b0;
+				i_fl   <= 3'd0;
 			end
+		end
+
+		//--------------------------------------------------------
+		// an instruction the cache held: the array's word, one cycle
+		// after the read was asked for
+		//--------------------------------------------------------
+		S_IW: begin
+			insn    <= insn_thumb ? (pc[1] ? i_ar_data[31:16] : i_ar_data[15:0])
+			                      : i_ar_data;
+			// the same word a bus fetch would have left in the buffer
+			f_word  <= i_ar_data;
+			f_addr  <= {pc[31:2], 2'b00};
+			f_valid <= 1'b1;
+			pc      <= pc + (insn_thumb ? 32'd2 : 32'd4);
+			state   <= S_EXEC;
 		end
 
 		S_HALT: begin
@@ -2360,9 +2468,10 @@ always @(posedge clk) begin
 					// writing into one of them would corrupt a line the
 					// tags still call valid.
 					if (d_is_cached && !d_serve && tag_alloc_ok) begin
-						d_line <= {bus_addr[31:5], 5'd0};
-						d_way  <= tag_way;
-						d_fl   <= 3'd0;
+						d_line  <= {bus_addr[31:5], 5'd0};
+						d_way   <= tag_way;
+						d_fl    <= 3'd0;
+						d_wskip <= bus_addr[4:2];
 					end
 					state <= (d_is_cached && !d_serve && tag_alloc_ok)
 					         ? S_DFILL : S_FETCH;
@@ -2431,7 +2540,7 @@ always @(posedge clk) begin
 		// a line fill: the eight words of one line, into the array
 		//--------------------------------------------------------
 		S_DFILL: begin
-			bus_addr  <= d_line + {27'd0, d_fl, 2'b00};
+			bus_addr  <= d_line + {27'd0, d_fword, 2'b00};
 			bus_be    <= 4'b1111;
 			bus_wdata <= 32'd0;
 			bus_rd    <= 1'b1;
@@ -2442,11 +2551,36 @@ always @(posedge clk) begin
 		S_DFW: begin
 			if (bus_ready) begin
 				bus_rd <= 1'b0;
-				if (d_fl == 3'd7) begin
+				if (d_fl == 3'd6) begin
 					state <= S_FETCH;
 				end else begin
 					d_fl  <= d_fl + 3'd1;
 					state <= S_DFILL;
+				end
+			end
+		end
+
+		//--------------------------------------------------------
+		// an instruction line fill: the other seven words of the line, into
+		// the array, and back to the instruction the bus read fetched
+		//--------------------------------------------------------
+		S_IFILL: begin
+			bus_addr  <= i_line + {27'd0, i_fword, 2'b00};
+			bus_be    <= 4'b1111;
+			bus_wdata <= 32'd0;
+			bus_rd    <= 1'b1;
+			bus_wr    <= 1'b0;
+			state     <= S_IFW;
+		end
+
+		S_IFW: begin
+			if (bus_ready) begin
+				bus_rd <= 1'b0;
+				if (i_fl == 3'd6) begin
+					state <= S_EXEC;
+				end else begin
+					i_fl  <= i_fl + 3'd1;
+					state <= S_IFILL;
 				end
 			end
 		end

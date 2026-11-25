@@ -14,21 +14,23 @@
 // 32 bytes, and the program records the counter at ten points in its run, so
 // the bench says exactly what each step cost:
 //
-//   9   the first load: its own read, then the eight-word line fill
-//   9   the second load of the same word -- a hit, no bus read
-//   9   a third load, of the next word of the line -- a hit
-//   9   and a fourth, of the word after that -- a hit
-//   9   a store into the line, then a load of it: still a hit, and the value
+//   8   the first load: its own read, then the other seven words of the line
+//       -- the word it already holds is written into the array from that
+//       read, so the fill does not go back for it
+//   8   the second load of the same word -- a hit, no bus read
+//   8   a third load, of the next word of the line -- a hit
+//   8   and a fourth, of the word after that -- a hit
+//   8   a store into the line, then a load of it: still a hit, and the value
 //       is the one just stored, which is only true if the store updated the
 //       array as well as memory
-//   9   a byte load out of that line -- a hit, and the byte is the one the
+//   8   a byte load out of that line -- a hit, and the byte is the one the
 //       address picks out of the word, not the low byte of it
-//   9   a halfword load -- the same
-//   9   a second line, in the same set, fills into the next way and does not
+//   8   a halfword load -- the same
+//   8   a second line, in the same set, fills into the next way and does not
 //       disturb the first: reading the first again is still a hit and still
 //       returns its own word
-//   18  invalidate-all, then a load: a miss, so one read and a new fill
-//   19  c1 bit 2 off, then a load: no cache, so the bus answers
+//   16  invalidate-all, then a load: a miss, so one read and a new fill
+//   17  c1 bit 2 off, then a load: no cache, so the bus answers
 //
 // Values are checked too, but they cannot tell a hit from a miss on their
 // own: memory holds the same words. The count can, and the count is what
@@ -221,16 +223,16 @@ initial begin
 	//--------------------------------------------------------------
 	// what each step cost on the bus
 	//--------------------------------------------------------------
-	check_val(at[0], 32'd9,  "first load: one read and an eight-word fill");
-	check_val(at[1], 32'd9,  "second load of the word: a hit, no read");
-	check_val(at[2], 32'd9,  "next word of the line: a hit, no read");
-	check_val(at[3], 32'd9,  "store into the line, load it: still a hit");
-	check_val(at[4], 32'd9,  "a byte out of the cached word: a hit");
-	check_val(at[5], 32'd9,  "a halfword out of it: a hit");
-	check_val(at[6], 32'd9,  "a second line fills without reading the first");
-	check_val(at[7], 32'd9,  "and the first line is still a hit");
-	check_val(at[8], 32'd18, "invalidate, then load: a miss and a new fill");
-	check_val(at[9], 32'd19, "cache off: the bus answers, no fill");
+	check_val(at[0], 32'd8,  "first load: one read and the other seven words");
+	check_val(at[1], 32'd8,  "second load of the word: a hit, no read");
+	check_val(at[2], 32'd8,  "next word of the line: a hit, no read");
+	check_val(at[3], 32'd8,  "store into the line, load it: still a hit");
+	check_val(at[4], 32'd8,  "a byte out of the cached word: a hit");
+	check_val(at[5], 32'd8,  "a halfword out of it: a hit");
+	check_val(at[6], 32'd8,  "a second line fills without reading the first");
+	check_val(at[7], 32'd8,  "and the first line is still a hit");
+	check_val(at[8], 32'd16, "invalidate, then load: a miss and a new fill");
+	check_val(at[9], 32'd17, "cache off: the bus answers, no fill");
 
 	//--------------------------------------------------------------
 	// what came back

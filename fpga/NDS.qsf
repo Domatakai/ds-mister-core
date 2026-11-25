@@ -52,9 +52,12 @@ set_global_assignment -name ALM_REGISTER_PACKING_EFFORT HIGH
 # them fit. On the cache tree seed 1 is 4,107 LABs, -4.512 ns of emu setup
 # and -0.064 ns of pll_hdmi, which misses the video path; seed 2 of the
 # same tree is 4,130 LABs, -4.972 ns of emu setup and +0.081 ns of
-# pll_hdmi, so it closes. Moving to it is a release decision, because
-# changing this line retires the seed-1 rows in that table.
-set_global_assignment -name SEED 2
+# pll_hdmi, so it closes. On the tree with the instruction cache's array
+# wired in, seed 2 is 4,183 LABs and -0.010 ns of pll_hdmi, which misses
+# it, and seed 4 is 4,189 LABs, -5.177 ns of emu setup and +0.016 ns of
+# pll_hdmi with TNS 0.000, so it closes. Changing this line is a release
+# decision, because it retires the rows measured at the old seed.
+set_global_assignment -name SEED 4
 # The reduced NDS build is 99% LAB-full; routing it needs aggressive
 # routability and a seed that places well (AREA.md, "Decoupling the
 # core's clock"): default settings abandon it on congestion.
