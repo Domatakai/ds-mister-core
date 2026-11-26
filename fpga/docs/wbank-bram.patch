@@ -1,0 +1,289 @@
+diff --git a/fpga/rtl/video/renderer_2d.sv b/fpga/rtl/video/renderer_2d.sv
+index 7fe3d2b..9d806d4 100644
+--- a/fpga/rtl/video/renderer_2d.sv
++++ b/fpga/rtl/video/renderer_2d.sv
+@@ -192,9 +192,14 @@ endfunction
+ // let the backdrop fill write four pixels a clock (64 fill clocks instead of
+ // 128) with the same 10,752 bits of storage.
+ //
+-//   * `wbank` is the line being composited, held in registers: the composite
+-//     does a read-modify-write per pixel against the pixel already there, and
+-//     that read has to land in the same cycle as the write.
++//   * `wbank` is the line being composited, in block RAM like `lbuf`. The
++//     composite does a read-modify-write per pixel against the pixel already
++//     there, which a registered RAM read cannot do in one clock, so the quad
++//     under the pen sits in `wq_data` and the RAM copy is touched only on the
++//     way in and out of a quad: one read-ahead for the quad the walk is about
++//     to reach, and one write when it leaves. As registers this array was
++//     5,376 of the renderer's 7,800 flops, plus a 64:1 read mux on the pixel
++//     path.
+ //   * `lbuf` holds *both display banks* in block RAM, addressed {bank, quad}.
+ //     Every write to `wbank` is mirrored into the back bank, so when the swap
+ //     makes it the front bank it is already a finished line — the display
+@@ -207,7 +212,20 @@ endfunction
+ // address. The composer already holds its own decision for one CE, and
+ // NDS.sv delays the video timing chain by the same cycle to match.
+ //------------------------------------------------------------------
+-reg [83:0] wbank [0:63];               // line being composited (registers)
++reg [83:0] wbank [0:63];               // line being composited (block RAM)
++reg        wb_we = 1'b0;               // its single write port
++reg  [5:0] wb_wa = 6'd0;
++reg [83:0] wb_wd = 84'd0;
++// Quad cache in front of it: `wq_data` is the quad under the pen, `wq_nxt`
++// the quad the read port fetched, whose index is `wq_nxt_id`.
++reg  [5:0] wq_idx   = 6'd0;
++reg [83:0] wq_data  = 84'd0;
++reg        wq_valid = 1'b0;
++reg  [5:0] wq_pa    = 6'd0;            // read port address
++reg  [5:0] wq_nxt_id = 6'd63;
++reg [83:0] wq_nxt   = 84'd0;
++reg        wq_nxt_ok = 1'b0;
++reg  [4:0] wq_ret   = 5'd11;           // state to resume after a load
+ reg [83:0] lbuf  [0:127];              // two display banks (block RAM)
+ reg        front_is_a = 1'b1;          // which display bank holds the finished line
+ 
+@@ -307,6 +325,8 @@ localparam [4:0]
+ 	S_SHW_REQ   = 5'd16,  // sprite tile-row halfword fetch
+ 	S_SHW_WAIT  = 5'd17,
+ 	S_SPIXC     = 5'd18,  // composite one OBJ pixel
++	S_WQLD      = 5'd19,  // let the read address settle
++	S_WQLD2     = 5'd20,  // take the quad the read port returned
+ 	S_SPAL_REQ  = 5'd19,  // 8bpp OBJ per-pixel palette read
+ 	S_SPAL_WAIT = 5'd20,
+ 	S_SPB_WAIT  = 5'd22,
+@@ -616,13 +636,17 @@ wire [7:0]  s_idx = s_bpp8 ? (spx[0] ? sdata[15:8] : sdata[7:0])
+ wire [9:0]  oam_rd_addr = {1'b0, os_idx, 2'd0} + {8'd0, ostep};
+ 
+ //------------------------------------------------------------------
+-// Composite write: read-modify-write one pixel of the back bank
++// Composite write: read-modify-write one pixel of the back bank.
++// `src` is the quad the pixel is merged into -- `wq_data` normally, or
++// `wq_nxt` on the clock the pen enters a quad the read port had ready.
++// The result always lands in `wq_data`.
+ //------------------------------------------------------------------
+ task automatic write_px;
+ 	input signed [10:0] xs;
+ 	input [1:0]  nk;
+ 	input [1:0]  np;
+ 	input [15:0] colr;
++	input [83:0] src;
+ 	reg [83:0] e;
+ 	reg [20:0] cur;
+ 	begin
+@@ -633,7 +657,7 @@ task automatic write_px;
+ 		e   = 84'd0;
+ 		cur = 21'd0;
+ 		if (xs >= 0 && xs < 256) begin
+-			e = wbank[xs[8:2]];
++			e = src;
+ 			case (xs[1:0])
+ 			2'd0:    cur = e[20:0];
+ 			2'd1:    cur = e[41:21];
+@@ -647,7 +671,7 @@ task automatic write_px;
+ 				2'd2:    e[62:42] = {nk, np, 1'b1, colr};
+ 				default: e[83:63] = {nk, np, 1'b1, colr};
+ 				endcase
+-				wbank[xs[8:2]] <= e;
++				wq_data <= e;
+ 				// the mirror address is {bank, quad} -- 6 bits of quad, or the
+ 				// bank bit would shift the index past the end of the array
+ 				lb_we <= 1'b1;                        // the display's copy
+@@ -658,6 +682,50 @@ task automatic write_px;
+ 	end
+ endtask
+ 
++//------------------------------------------------------------------
++// Quad walk. A pixel may only be composited when its quad is the one in
++// `wq_data`; the pen enters a quad either from the read-ahead (`wq_nxt`,
++// free) or by asking for it (two clocks, once per jumped-to quad).
++//------------------------------------------------------------------
++function automatic wq_here;
++	input [5:0] q;
++	begin wq_here = wq_valid && (wq_idx == q); end
++endfunction
++
++function automatic wq_ready;
++	input [5:0] q;
++	begin wq_ready = wq_nxt_ok && (wq_nxt_id == q)
++	                 && !(wq_valid && (wq_idx == q)); end
++endfunction
++
++// leave the current quad: its final content goes back to the RAM copy
++task automatic wq_leave;
++	begin
++		if (wq_valid) begin
++			wb_we <= 1'b1;
++			wb_wa <= wq_idx;
++			wb_wd <= wq_data;
++		end
++	end
++endtask
++
++// point the read port at the quad the walk is about to reach
++task automatic wq_pref;
++	input [5:0] q;
++	begin wq_pa <= q; end
++endtask
++
++// a quad the walk jumped to: two clocks for the read to land
++task automatic wq_jump;
++	input [5:0] q;
++	input [4:0] ret;
++	begin
++		wq_leave;
++		wq_pa  <= q;
++		wq_ret <= ret;
++	end
++endtask
++
+ //------------------------------------------------------------------
+ // Next column. Called from the pixel state when the prefetch has already
+ // landed (the common case: the burst streams during the eight pixels) and
+@@ -718,9 +786,15 @@ always @(posedge clk) begin
+ 	// the display reads the front bank while the composite writes the
+ 	// back one -- but this is the order the RAM inferencer needs to see)
+ 	disp_q <= lbuf[{disp_bank, px[7:2]}];
++	// the composite's line buffer: one read port, pointing at the quad the
++	// walk is about to reach; the write port is driven by wb_* below
++	wq_nxt    <= wbank[wq_pa];
++	wq_nxt_id <= wq_pa;
+ 
+ 	// the display copy's write port: idle unless a site below drives it
+ 	lb_we <= 1'b0;
++	// the composite copy's write port, same rule
++	wb_we <= 1'b0;
+ 
+ 	//------------------------
+ 	// fetch FSM
+@@ -766,7 +840,13 @@ always @(posedge clk) begin
+ 		// (ALL FOUR pixels of it); pal_hold holds colour 0. Sixty-four
+ 		// clocks for the 256-pixel line, against 128 when an entry was a
+ 		// pair and the fill could only write two pixels a clock.
+-		wbank[fill_i] <= {4{{KIND_BD, 2'd3, 1'b1, pal_hold}}};
++		wb_we <= 1'b1;
++		wb_wa <= fill_i;
++		wb_wd <= {4{{KIND_BD, 2'd3, 1'b1, pal_hold}}};
++		if (fill_i == 6'd0) begin
++			wq_valid  <= 1'b0;   // the cache holds the previous line
++			wq_nxt_ok <= 1'b0;
++		end
+ 		lb_we <= 1'b1;                          // the display's copy
+ 		lb_wa <= {back_bank, fill_i};
+ 		lb_wd <= {4{{KIND_BD, 2'd3, 1'b1, pal_hold}}};
+@@ -915,7 +995,13 @@ always @(posedge clk) begin
+ 		// composite one BG pixel; 4bpp resolves through the cache,
+ 		// 8bpp goes through the palette port first (pal_ready set).
+ 		// Transparent pixels (index 0) advance without a write.
+-		if (bg_bpp8 && !pal_ready && bg_idx != 8'd0) begin
++		if (bg_xs_ok && (bg_bpp8 ? (bg_idx != 8'd0) : (bg_idx != 4'd0))
++		    && !wq_here(bg_xs[8:2])) begin
++			// the pixel's quad is not in the cache: ask for it, and this
++			// same state composites the pixel when it lands
++			wq_jump(bg_xs[8:2], S_PXC);
++			fstate <= S_WQLD;
++		end else if (bg_bpp8 && !pal_ready && bg_idx != 8'd0) begin
+ 			pal_addr <= {2'd0, bg_idx};          // BG palette space
+ 			port_wc  <= 2'd2;
+ 			pal_ret  <= S_PXC;
+@@ -936,7 +1022,7 @@ always @(posedge clk) begin
+ 			end
+ 			if (bg_xs_ok && (bg_bpp8 ? (bg_idx != 8'd0) : (bg_idx != 4'd0))) begin
+ 				write_px(bg_xs, KIND_BG, bg_prio,
+-				         bg_bpp8 ? pal_hold : pcache[bg_idx[3:0]]);
++				         bg_bpp8 ? pal_hold : pcache[bg_idx[3:0]], wq_data);
+ 			end
+ 			pal_ready <= 1'b0;
+ 			// advance one pixel
+@@ -1108,7 +1194,11 @@ always @(posedge clk) begin
+ 
+ 	S_SPIXC: begin
+ 		// composite one OBJ pixel; 8bpp resolves through the port
+-		if (s_bpp8 && !spal_ready) begin
++		if (s_xs_ok && (s_bpp8 ? (s_idx != 8'd0) : (s_idx != 4'd0))
++		    && !wq_here(s_xs[8:2])) begin
++			wq_jump(s_xs[8:2], S_SPIXC);
++			fstate <= S_WQLD;
++		end else if (s_bpp8 && !spal_ready) begin
+ 			if (s_idx != 8'd0) begin
+ 				pal_addr <= 10'd512 + {2'd0, s_idx};
+ 				port_wc  <= 2'd2;
+@@ -1135,7 +1225,7 @@ always @(posedge clk) begin
+ 		end else begin
+ 			if (s_xs_ok && (s_bpp8 ? (s_idx != 8'd0) : (s_idx != 4'd0))) begin
+ 				write_px(s_xs, KIND_OBJ, s_prio,
+-				         s_bpp8 ? spal_hold : pcache[s_idx[3:0]]);
++				         s_bpp8 ? spal_hold : pcache[s_idx[3:0]], wq_data);
+ 			end
+ 			spal_ready <= 1'b0;
+ 			if (spx == s_pph - 2'd1) begin
+@@ -1171,6 +1261,22 @@ always @(posedge clk) begin
+ 		end
+ 	end
+ 
++	S_WQLD: begin
++		// the read address was set last clock; the RAM read is issued on
++		// this edge
++		fstate <= S_WQLD2;
++	end
++
++	S_WQLD2: begin
++		// the quad is on the read port now: take it, and let the state that
++		// wanted it composite the pixel it had to leave alone
++		wq_data   <= wq_nxt;
++		wq_idx    <= wq_pa;
++		wq_valid  <= 1'b1;
++		wq_nxt_ok <= 1'b1;
++		fstate    <= wq_ret;
++	end
++
+ 	S_DONE: begin
+ 		// BG + OBJ are in the back bank; merge the 3D layer over them
+ 		if (d3_on) begin
+@@ -1178,6 +1284,8 @@ always @(posedge clk) begin
+ 			d3_col   <= 8'd0;
+ 			d3_req   <= 1'b1;
+ 			d3_len   <= D3_CHUNK;
++			wq_jump(6'd0, S_D3_RUN);   // the stream cannot stall: prime quad 0
++			wq_nxt_ok <= 1'b1;
+ 			d3_addr  <= {tgt, 9'd0};      // line*512 + column*stride
+ 			fstate   <= S_D3_RUN;
+ 		end else begin
+@@ -1192,9 +1300,20 @@ always @(posedge clk) begin
+ 		// line-buffer word
+ 		if (d3_bs_valid) begin
+ 			// bit 15 clear = no polygon covered this pixel
++			// the walk is monotonic and quad aligned, so the read-ahead has
++			// the quad; the pen takes it whether or not this pixel is
++			// covered, or the next entry would have nothing to merge into
++			if (!wq_here(d3_col[7:2])) begin
++				wq_leave;
++				wq_data  <= wq_nxt;
++				wq_idx   <= d3_col[7:2];
++				wq_valid <= 1'b1;
++			end
+ 			if (d3_bs_data[15])
+ 				write_px({3'd0, d3_col}, KIND_3D, d3_prio,
+-				         {1'b0, d3_bs_data[14:0]});   // strip the coverage bit
++				         {1'b0, d3_bs_data[14:0]},   // strip the coverage bit
++				         wq_here(d3_col[7:2]) ? wq_data : wq_nxt);
++			if (d3_col[1:0] <= 2'd1) wq_pref(d3_col[7:2] + 6'd1);
+ 			d3_col <= d3_col + 8'd1;
+ 		end
+ 		if (d3_ready) begin
+@@ -1267,10 +1386,16 @@ always @(posedge clk) begin
+ 	// drives it: last in the process, so a same-cycle read above sees the old
+ 	// word (block RAM with read-old-data, instead of 10,752 registers)
+ 	if (lb_we) lbuf[lb_wa] <= lb_wd;
++	// same for the composite's copy
++	if (wb_we) wbank[wb_wa] <= wb_wd;
+ 
+ 	if (reset) begin
+ 		fstate     <= S_IDLE;
+ 		lb_we      <= 1'b0;
++		wb_we      <= 1'b0;
++		wq_valid   <= 1'b0;
++		wq_nxt_ok  <= 1'b0;
++		wq_pa      <= 6'd0;
+ 		tgt        <= 8'hFF;
+ 		back_line  <= 8'hFF;
+ 		fetch_req  <= 1'b0;

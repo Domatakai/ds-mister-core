@@ -3642,3 +3642,51 @@ change should produce when the seed is unchanged.
 | the tidied header, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
 |---|---|---|---|---|---|---|---|---|
 | both bank writes captured | 4,191 | 40,283 | 38,144 | -5.300 | -37,641.902 | +0.244 | +0.038 | 4,037,796 |
+
+### The line buffer in block RAM: -4,689 ALMs, -120 LABs, -0.206 ns of
+### HDMI (2026-11-26)
+
+`renderer_2d`'s `wbank` -- the line being composited -- was 5,376 of the
+module's 7,800 registers, plus a 64:1 read mux on the composite path. It
+is the largest single block of flops in the design outside the CPU
+caches, and its neighbour `lbuf`, same width and twice the depth, costs
+nothing because it is block RAM.
+
+It cannot be an array swap. The composite read-modify-writes one pixel in
+the same clock it reads it, and a registered RAM read cannot do that, so
+the quad under the pen sits in a register and the RAM copy is touched
+only on the way in and out:
+
+  * the 3D merge walks `d3_col` monotonically over quad-aligned chunks,
+    so the read port fetches the next quad while the pen is still inside
+    this one -- no stall, and the burst keeps its one-beat-per-clock
+    contract, which matters because that stream has no back-pressure;
+  * the BG and sprite walks wrap, scroll backwards and revisit quads, so
+    they take an explicit two-clock load whenever the pen leaves a quad.
+
+The renderer benches pass: `tb_renderer_2d` at 1,199 clocks a line
+against the 1,280-clock period (1,039 before, the difference all in BG at
+585 versus 425; the 3D merge is unchanged at 284), `tb_3d_path` end to
+end, and the suite 59 of 59.
+
+The fit is where the idea stops.
+
+| the line buffer in RAM, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
+|---|---|---|---|---|---|---|---|---|
+| both bank writes captured, line buffer in RAM | 4,071 | 35,594 | 33,162 | -5.088 | -15,857.132 | +0.249 | -0.168 | 3,919,656 |
+
+ALMs fall by 4,689, registers by 4,982 and setup TNS by more than half.
+LABs -- the resource this device actually runs out of -- fall by 120, and
+`pll_hdmi` goes from +0.038 to -0.168. The loss is placement, not
+structure: synthesis reports `altsyncram:wbank_rtl_0` with block memory
+bits up 5,120, and the video domain's own path did not change -- `lbuf`'s
+read is already registered behind `disp_q`, and the composite only feeds
+its write port. But the release rule is slack >= 0, and 38 ps is not
+enough margin to absorb a 120-LAB reshuffle without hunting a seed.
+
+So this tree does not ship. The RTL is kept as `docs/wbank-bram.patch`,
+which applies to the row above, and the fit above is what it does. The
+useful result is negative and worth having: 5,376 flops of renderer
+register cost 120 LABs, so the renderer is not where the headroom for
+granted-line mode was assumed to be, and the next attempt at it should
+start from the video path's slack rather than from area.
