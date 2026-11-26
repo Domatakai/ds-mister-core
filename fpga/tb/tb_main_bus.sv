@@ -3,7 +3,7 @@
 //
 //   iverilog -g2012 -o /tmp/tb_bus tb/tb_main_bus.sv \
 //            rtl/bus/main_bus.sv rtl/mem/mem_arbiter.sv \
-//            rtl/cart/cheat_engine.sv && vvp /tmp/tb_bus
+//            rtl/cart/cheat_engine.sv rtl/audio/midi_port.sv //            rtl/bus/ipc.sv rtl/bus/nds_timers.sv rtl/bus/math_unit.sv //            rtl/bus/sys_io.sv rtl/bus/nds_rtc.sv rtl/bus/spi.sv //            rtl/bus/fw_default.sv && vvp /tmp/tb_bus
 //
 // Add -DPAK_REAL and rtl/mem/exp_ddr.sv to put the real DDR3 shim in the
 // 32 MB pak's place: the pak checks then have to survive its line cache,
@@ -119,6 +119,29 @@ end
 wire        spu_acc, spu_we;
 wire        snoop_wr;
 wire [31:0] snoop_addr;
+
+// VRAM: a 1K-word stand-in for the real arbiter, one cycle per access. It is
+// here so a VRAM transaction completes at all: with the port tied off a write
+// to 0x06 never returns vram_valid and the bench hangs, which is why the
+// region the 2D and 3D engines write went unchecked until now.
+wire        vram_req, vram_wr;
+wire [19:0] vram_addr;
+wire [15:0] vram_wdata;
+reg  [15:0] vram_mem [0:1023];
+reg         vram_valid_m = 0;
+reg  [15:0] vram_rdata_m = 0;
+reg         vram_any = 0;
+
+always @(posedge clk) begin
+	vram_valid_m <= vram_req;
+	if (vram_req) begin
+		if (vram_wr) begin
+			vram_mem[vram_addr[9:0]] <= vram_wdata;
+			vram_any <= 1;
+		end
+		vram_rdata_m <= vram_mem[vram_addr[9:0]];
+	end
+end
 wire [15:0] spu_addr, spu_wdata;
 reg  [15:0] spu_rdata = 16'h0000;
 reg         spu_hit = 0;
@@ -158,7 +181,9 @@ main_bus dut (
 	// M2 ports not exercised here: tie the DMA master and engine
 	// consumers off (DMA fabric traffic is covered by tb_dma_engine;
 	// VRAM by tb_vram_arbiter)
-	.vram_valid(1'b0), .vram_rdata(16'd0),
+	.vram_req(vram_req), .vram_wr(vram_wr), .vram_addr(vram_addr),
+	.vram_wdata(vram_wdata),
+	.vram_valid(vram_valid_m), .vram_rdata(vram_rdata_m),
 	.dma_reg_rdata(16'd0),
 	.d_addr(32'd0), .d_wdata(32'd0), .d_be(4'd0),
 	.d_rd(1'b0), .d_wr(1'b0),
@@ -1003,6 +1028,12 @@ initial begin
 	repeat (4) @(posedge clk);
 	check("a main-RAM write from the ARM7 snoops", snoop_n === 1);
 	check("the snoop carries the line's address", snoop_seen === 32'h0200_0100);
+
+	snoop_n = 0; vram_any = 0;
+	m7_write(32'h0600_0010, 32'h1234_5678, 4'hF);
+	repeat (4) @(posedge clk);
+	check("the VRAM write completed", vram_any === 1);
+	check("a VRAM write does not snoop", snoop_n === 0);
 
 	snoop_n = 0;
 	m7_write(32'h0400_0130, 32'h0000_0003, 4'hF);

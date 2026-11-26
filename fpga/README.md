@@ -988,8 +988,8 @@ fpga/
                           into an empty set costs no reads at all
                                                           [SIM-VERIFIED]
   tb/tb_main_bus.sv       fabric: masters, RAM, cart, slot-2 pak, cheat, IO,
-                          and what the snoop covers -- main RAM from another
-                          master, and nothing else
+                          a VRAM stand-in, and what the snoop covers -- main
+                          RAM from another master, and nothing else
                           [SIM-VERIFIED] (also built with -DPAK_REAL, which
                           puts the real DDR3 shim behind the pak checks)
   tb/tb_exp_ddr.sv        the 32 MB pak's DDR3 shim: lines, lanes,
