@@ -3690,3 +3690,72 @@ useful result is negative and worth having: 5,376 flops of renderer
 register cost 120 LABs, so the renderer is not where the headroom for
 granted-line mode was assumed to be, and the next attempt at it should
 start from the video path's slack rather than from area.
+
+### What binds the 144.93 MHz domain (2026-11-26)
+
+The shipped tree has 38 ps on `pll_hdmi`, and the fits in this file land
+anywhere from -0.625 to +0.384, so the question worth asking was not
+which path to shorten but which path the slack actually sits on. A
+TimeQuest report filtered to that clock answers it for the shipped tree,
+and the top of the list is a tie:
+
+| path | slack | what it is |
+|---|---|---|
+| `sm_d1` -> `vga_scaler_out` | +0.038 | our own shadowmask bypass, RAM to RAM |
+| `ascal` `o_hpixs[3]` -> `o_hpix2[3]` | +0.106 | ascal's own worst path |
+| `ascal` `o_acpt4[0]` -> `o_shift[51]` | +0.183 | the 144-bit rotate under it |
+
+The first one is this core's. `MISTER_DISABLE_SHADOWMASK`'s bypass is a
+five-deep, 24-bit `always` chain, and Quartus recognised it as an
+`altshift_taps`: 144 block-memory bits, a RAM-to-RAM hop of 5.9 ns with
+-0.59 ns of skew, and it is the worst path in the domain. 120 flops that
+look free are not free at all; they are a memory read and a memory write.
+
+The first attempt was aimed at the other end. `ascal` takes a `MASK`
+generic that decides, at elaboration, which interpolators are built. The
+core can only ever select two of them: `sys_top` ties
+`.mode({~lowlat, filter, 2'b00})` into a five-bit port, so `o_hmode` and
+`o_vmode` are "000" (nearest, which reads the polyphase output) or "100"
+(polyphase), and bilinear, sharp bilinear and bicubic are unreachable
+through any OSD setting. Masking those three (`8'h11`) mapped to counts
+*identical* to HEAD's in every column -- 37,931 ALMs needed, 34,814
+registers, 2,644,299 block-memory bits, 66 DSPs, byte-for-byte the same
+map summary apart from its timestamp. Quartus had already folded them.
+So there was nothing to win, the mask is not in the tree, and the
+experiment cost one synthesis and no fit.
+
+The fix went on the path that was ours: keep the bypass in logic.
+
+    (* ramstyle = "logic",
+       altera_attribute = "-name AUTO_SHIFT_REGISTER_RECOGNITION OFF" *)
+    reg [23:0] sm_d1, sm_d2, sm_d3, sm_d4, sm_d5;
+
+That removes the hop -- neither tree below puts `sm_d1` in its top twenty
+-- and it makes the design smaller, in LABs, which is the resource the
+device has none of:
+
+| the bypass in logic, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
+|---|---|---|---|---|---|---|---|---|
+| shadowmask bypass in logic | 4,135 | 38,800 | 37,587 | -5.408 | -40,631.079 | +0.249 | -0.135 | 3,982,824 |
+| that, plus the line buffer in RAM | 4,058 | 36,637 | 33,990 | -4.413 | -24,620.231 | +0.247 | -0.389 | 3,993,644 |
+
+`pll_hdmi` goes the wrong way in both, and the second row is the best CPU
+tree in this whole exercise -- 4.413 ns of setup, TNS a third of the
+shipped tree's, 133 of 4,191 LABs free -- carrying the worst video margin
+of any tree measured. What binds in both is ascal's counter:
+`o_hcpt[1] -> o_vcpt_pre[8]` at -0.135 with -0.494 ns of skew, and
+`o_hcpt[1] -> o_vcpt_pre[5]` at -0.389 with -0.478. That is
+`o_hcpt+1 < o_htotal`, a twelve-bit incrementer and compare whose result
+enables the vertical counter pipeline: one net, about forty flops. The
+shipped fit reports the same logical path with -0.133 ns of skew, and
+physical synthesis duplicates it, so where the copy lands is what the
+slack measures.
+
+So the answer to "attack the HDMI slack" is that this domain does not bind
+on a path the core can edit. It binds on ascal's counter enable and on how
+far apart the fitter puts that net's copies -- which is why the tree with
+every LAB used came out best, and two smaller trees came out worse. A
+0.5 ns skew is the whole budget here. Neither change is in the tree: the
+bypass fix is measured above and the `MASK` is a no-op. Any future change
+to the video domain should be judged by a fit, not by an argument about
+which path it shortens.
