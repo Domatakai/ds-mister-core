@@ -3746,15 +3746,19 @@ of any tree measured. What binds in both is ascal's counter:
 `o_hcpt[1] -> o_vcpt_pre[8]` at -0.135 with -0.494 ns of skew, and
 `o_hcpt[1] -> o_vcpt_pre[5]` at -0.389 with -0.478. That is
 `o_hcpt+1 < o_htotal`, a twelve-bit incrementer and compare whose result
-enables the vertical counter pipeline: one net, about forty flops. The
-shipped fit reports the same logical path with -0.133 ns of skew, and
-physical synthesis duplicates it, so where the copy lands is what the
-slack measures.
+enables the vertical counter pipeline. The path is six cells -- `Add177`,
+then `LessThan38` three times, one of them a physical-synthesis rewrite --
+and 3.9 ns of interconnect, 1.0 of which is the 48-fanout enable crossing
+eight LAB columns to `o_vcpt_pre[5]|ena`. The shipped fit reports the same
+logical path with -0.133 ns of skew, so it is the reach of that enable and
+the clock arrivals at its two ends that the slack measures, not the
+arithmetic.
 
 So the answer to "attack the HDMI slack" is that this domain does not bind
 on a path the core can edit. It binds on ascal's counter enable and on how
-far apart the fitter puts that net's copies -- which is why the tree with
-every LAB used came out best, and two smaller trees came out worse. A
+far the fitter spreads the flops that enable drives -- which is why the
+tree with every LAB used came out best, and two smaller trees came out
+worse. A
 0.5 ns skew is the whole budget here. Neither change is in the tree: the
 bypass fix is measured above and the `MASK` is a no-op. Any future change
 to the video domain should be judged by a fit, not by an argument about
