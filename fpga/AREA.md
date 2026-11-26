@@ -3482,3 +3482,50 @@ registered read of the four ways), so a snoop presented there would be
 exact and would cost the snoop a cycle of latency rather than an ALM.
 
 Nothing in this section changes the design: it is a bench and a number.
+
+### The maintenance-port snoop, built (2026-11-25)
+
+The section above left the exact drop as a design. It is built now, and it
+is still not what ships, but for a different reason than expected.
+
+The tag module's own snoop port is gone: no `snoop`/`snoop_addr`, no
+set-granular block, no per-way comparator anywhere. `arm9_core` builds the
+line (`{sn_addr[31:5], 5'd0}`) and presents it on the maintenance port of
+both caches, `mnt_cmd = M_INVLINE`, which already reads the four ways and
+compares `m_a_set`/`m_a_tag` for the c7 commands. The snoop rides the cycle
+the write completed in, so the write-to-drop window is the one cycle the
+set-granular hook had; a c7 command holding the port in that same cycle
+pushes the snoop back through `sn_pend`, and the tag ignores an access in a
+maintenance cycle, so a fill that would have taken a line then does not and
+the next access refills. The read/write race documented two sections up is
+unchanged: one cycle, not closed with a stall.
+
+`tb_arm9_snoop_cost` changed sides. Four lines of one set resident and one
+of them snooped now cost 40 bus reads -- four fills, and the snooped line
+refilling -- where the set-granular hook paid 64. The three ways beside it
+keep their words, and the empty-set snoop is still free. `tb_arm9_coherence`
+keeps its seven checks with the third back to its precise expectation: the
+line that was not written keeps its 8 reads, in the same set or not.
+
+What the port reuse costs, against the same seed-4 flow:
+
+| the maintenance-port snoop, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
+|---|---|---|---|---|---|---|---|---|
+| seed 4, does not ship | 4,190 | 39,414 | 37,722 | -5.245 | -21,911.082 | +0.250 | -0.219 | 4,033,308 |
+| seed 1, does not ship | 4,182 | 39,363 | 37,646 | -5.164 | -23,229.501 | +0.251 | -0.199 | 4,062,868 |
+| seed 6, does not ship | 4,187 | 39,388 | 37,685 | -5.655 | -28,105.487 | +0.249 | -0.161 | 4,040,732 |
+
+The estimate above was wrong. Reusing the maintenance port was supposed to
+be free; it is 1,072 ALMs more than the set-granular tree at seed 4, and
+the three seeds land -0.219, -0.199, -0.161 on `pll_hdmi` -- the same class
+of failure as the per-way comparator, for a different reason: with a c7
+argument the address comes from a register and c7 is rare, and with a live
+snoop address the same read is a second, dynamic port on four tag arrays,
+which Quartus maps and the seed cannot time at 4,190 LABs (one spare
+out of 4,191).
+
+So the release path does not move: the shipped row stays `both bank writes
+captured`, 4,152 LABs and `pll_hdmi` +0.027, and `NDS.qsf` stays at SEED 4
+with the set-granular hook. The maintenance-port version is the one to
+revisit after something else gives up ALMs, and its shape is recorded
+above; the measurement stands either way -- 40 reads against 64.

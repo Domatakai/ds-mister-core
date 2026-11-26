@@ -314,8 +314,12 @@ ways: the valid bits, and the dirty bits with them. Set-granular and not
 line-precise on purpose: comparing the line's tag against the four ways
 is a second asynchronous read of every tag array, some 520 ALMs, and at
 95% of this device's ALMs that is a tree that places and a tree that does
-not. The three ways given up are fetched again on their next access; a
-line kept that should have gone is a stale word. Not behind a cache's
+not. Sending the snoop through the tag's by-address invalidate instead
+was built and measured as well: it drops only the line, 40 bus reads
+where this pays 64, and it costs 1,072 ALMs -- three seeds, none of them
+with HDMI slack. So the wide drop is the one that fits. The three ways
+given up are fetched again on their next access; a line kept that should
+have gone is a stale word. Not behind a cache's
 enable bit either, because the valid bits outlive it: a set dropped while
 a cache is off must not be there again when it is switched on. The BIOS
 call's own memory writes are this core's, and travel the same path, since
