@@ -356,6 +356,13 @@ hit costs exactly the miss it replaces -- the probe and the registered
 read are two cycles themselves -- so a cache is worth nothing there; what
 it buys is bus slots, and this bench is the one that says so.
 
+`tb_arm9_snoop_cost` measures what the wider drop costs, and it is the
+number the next step turns on. Four lines of one set resident and one of
+them snooped: all four pay a fill, 32 bus reads where a line-precise drop
+costs 8, so a write into a full set throws away 24 words of work. A snoop
+into a set holding nothing -- what a DMA writing a buffer in address order
+does, consecutive lines being different sets -- costs nothing at all.
+
 What follows the caches, in the order the remaining work costs most:
 
 * a burst fill: one bus transaction for a whole line instead of seven,
@@ -970,6 +977,10 @@ fpga/
                           and a load loop against an eight-cycle bus, each
                           run with its cache off and on
                                                           [SIM-VERIFIED]
+  tb/tb_arm9_snoop_cost.sv what the set-granular snoop costs: four ways of
+                          one set filled, one snooped, and all four come
+                          back for another fill; a snoop into an empty set
+                          costs no reads at all         [SIM-VERIFIED]
   tb/tb_main_bus.sv       fabric: masters, RAM, cart, slot-2 pak, cheat, IO
                           [SIM-VERIFIED] (also built with -DPAK_REAL, which
                           puts the real DDR3 shim behind the pak checks)
@@ -1796,6 +1807,15 @@ iverilog -g2012 -o /tmp/tb_cycles tb/tb_arm9_cycles.sv \
 vvp /tmp/tb_cycles
 #   8 checks
 # TB ARM9 CYCLES PASS
+
+# 3c-11. what the wider drop costs: four ways of one set resident, one of
+#        them snooped, and all four refill -- 32 bus reads where a
+#        line-precise drop is 8 -- while a snoop into a set that holds
+#        nothing is free
+iverilog -g2012 -o /tmp/tb_snoop_cost tb/tb_arm9_snoop_cost.sv          rtl/cpu/arm9_core.sv rtl/cpu/arm9_cache_tag.sv          rtl/cpu/arm9_cache_data.sv rtl/cpu/swi_hle.sv          rtl/cpu/swi_share.sv
+vvp /tmp/tb_snoop_cost
+#   7 checks
+# TB ARM9 SNOOP COST PASS
 
 # 3c-6. the lines themselves — a word read back where it was written, the
 #       four ways of a set kept apart, the eight words of a line kept apart,

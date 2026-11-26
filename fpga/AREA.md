@@ -3451,3 +3451,34 @@ ever see it. That was the open question at the end of the previous section
 and it closes here. What is left on the bus side is a burst fill, one
 transaction for a whole line instead of seven, which is a question of bus
 slots rather than of correctness.
+### What the wider drop costs (2026-11-25)
+
+The hook drops a set and not a line, and that has a price. It is measured
+now rather than argued: `tb_arm9_snoop_cost` fills all four ways of one set
+with four different lines, snoops one of them, and reads all four again.
+
+Four lines of one set resident, one of them snooped:
+
+* every way refills -- 16 reads a line, 64 for the set, where the line that
+  was written needs 8 and the three that were not need nothing
+* so one snooped write costs 24 words of refill, the three ways that were
+  dropped for belonging to the same set as the word that changed
+* at the 8 cycles a word this bench's bus answers in, that is about 190
+  cycles of work thrown away per snooped write into a full set
+
+A snoop into a set holding nothing, which is what a DMA writing a buffer in
+address order does -- consecutive lines are consecutive sets -- costs no
+reads at all, and the bench's total says so: 64 reads for the whole program,
+which is the four fills and the four refills and nothing else.
+
+Both ends matter. The cost is bounded by how full the set is, and the case
+that hurts is a working set with several resident lines per set, which is
+what a four-way cache exists to keep. The number to beat is therefore 24
+words per snooped write into a full set, or 0 in the sequential case: a
+line-precise drop would pay 8 and 0. That is the whole argument for a
+deferred precise snoop -- the tag module already invalidates a line by
+address on its maintenance port (`M_INVLINE`, `m_a_set`/`m_a_tag`, a
+registered read of the four ways), so a snoop presented there would be
+exact and would cost the snoop a cycle of latency rather than an ALM.
+
+Nothing in this section changes the design: it is a bench and a number.
