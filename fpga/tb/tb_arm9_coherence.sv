@@ -19,12 +19,10 @@
 //     cache only because the line was dropped
 //   * the same for code: the subroutine's line is fetched twice, 16 reads
 //     rather than 8, because the second call comes after its snoop
-//   * a snoop drops the whole set it lands in, not just the line: the third
-//     snoop names an address nothing holds, in the set the line beside it
-//     is in, and that line is fetched twice -- 16 reads rather than 8 --
-//     though nothing wrote it
-//   * and the data line, which is in another set, is still at 16: the cost
-//     of a set-granular drop is bounded by the set
+//   * a snoop of an address nothing holds costs nothing -- the line beside
+//     it, in the same set, is read once and serves its second load out of
+//     the array: the drop is the line's, not the set's
+//   * and the data line, in another set, is still at 16
 //
 // A cache that ignored the snoop port returns the old word and 8 reads,
 // which is what this bench was written to be able to see.
@@ -227,8 +225,8 @@ initial begin
 	          "and paid for the line again: 16 reads, not 8");
 	check_val(ram[16'h0114], 32'h3333_3333,
 	          "the line beside it still serves its own word");
-	check_val(b_reads, 32'd16,
-	          "and paid for it again: the snoop dropped its whole set");
+	check_val(b_reads, 32'd8,
+	          "and was read once: a snoop elsewhere dropped nothing");
 
 	//--------------------------------------------------------------
 	// the code line

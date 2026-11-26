@@ -308,27 +308,28 @@ version is this one.
 
 Coherence is hooked for writes from other masters. `main_bus` offers the
 ARM9 a one-cycle strobe and the word for every completed write into main
-RAM by a master that is not the ARM9 -- the ARM7, the DMA -- the core
-hands it to both caches' tags, and the set it lands in goes, all four
-ways: the valid bits, and the dirty bits with them. Set-granular and not
-line-precise on purpose: comparing the line's tag against the four ways
-is a second asynchronous read of every tag array, some 520 ALMs, and at
-95% of this device's ALMs that is a tree that places and a tree that does
-not. Sending the snoop through the tag's by-address invalidate instead
-was built and measured as well: it drops only the line, 40 bus reads
-where this pays 64, and it costs 1,072 ALMs -- three seeds, none of them
-with HDMI slack. So the wide drop is the one that fits. The three ways
-given up are fetched again on their next access; a line kept that should
-have gone is a stale word. Not behind a cache's
-enable bit either, because the valid bits outlive it: a set dropped while
-a cache is off must not be there again when it is switched on. The BIOS
-call's own memory writes are this core's, and travel the same path, since
-they do not come the store way. It covers the fill window too: a line's
-valid bit is set when the line is taken, in the probe cycle, and the snoop
-block is the last one in the tag, so a write landing while a fill runs
-clears that bit and the fill finishes into a line nothing will read. What
-is left on the bus side is a burst fill -- one transaction for a whole
-line instead of seven -- and that is about bus slots, not correctness.
+RAM by a master that is not the ARM9 -- the ARM7, the DMA -- and the core
+presents it on both caches' maintenance port: `M_INVLINE` reads the four
+ways and compares the tag, so the line that was written goes and the
+three beside it stay. The drop is exact, and it does not pay for a read
+of its own -- a maintenance command and an access never come in the same
+cycle, so the tag array is indexed by whichever address is live and one
+read serves both. That is what makes it fit: 4,191 of 4,191 LABs with
+`pll_hdmi` +0.038, where a port of its own, and the same logic with a
+second read of the arrays, did not place at any of the seeds tried. The
+snoop rides the cycle the write completed in; a c7 command that holds the
+port in that same cycle pushes it back one through `sn_pend`, and a load
+issued inside that window is a race the hardware does not order either.
+Not behind a cache's enable bit either, because the valid bits outlive
+it: a line dropped while a cache is off must not be there again when it
+is switched on. The BIOS call's own memory writes are this core's, and
+travel the same path, since they do not come the store way. It covers the
+fill window too: a line's valid bit is set when the line is taken, in the
+probe cycle, and the invalidation is not gated on anything else, so a
+write landing while a fill runs clears that bit and the fill finishes
+into a line nothing will read. What is left on the bus side is a burst
+fill -- one transaction for a whole line instead of seven -- and that is
+about bus slots, not correctness.
 
 `tb_arm9_cache_path` runs a program through the core with the cache on and
 watches the bus rather than only the registers: 22 checks, ten of them by
@@ -360,12 +361,13 @@ hit costs exactly the miss it replaces -- the probe and the registered
 read are two cycles themselves -- so a cache is worth nothing there; what
 it buys is bus slots, and this bench is the one that says so.
 
-`tb_arm9_snoop_cost` measures what the wider drop costs, and it is the
-number the next step turns on. Four lines of one set resident and one of
-them snooped: all four pay a fill, 32 bus reads where a line-precise drop
-costs 8, so a write into a full set throws away 24 words of work. A snoop
-into a set holding nothing -- what a DMA writing a buffer in address order
-does, consecutive lines being different sets -- costs nothing at all.
+`tb_arm9_snoop_cost` holds the drop to one line. Four lines of one set
+resident and one of them snooped: the line that was written refills and
+the three beside it keep their words, 40 bus reads in all against the 64
+a set-granular drop paid -- the 24 words the wider drop used to throw
+away. A snoop into a set holding nothing -- what a DMA writing a buffer in
+address order does, consecutive lines being different sets -- costs
+nothing at all.
 
 What follows the caches, in the order the remaining work costs most:
 
@@ -981,10 +983,10 @@ fpga/
                           and a load loop against an eight-cycle bus, each
                           run with its cache off and on
                                                           [SIM-VERIFIED]
-  tb/tb_arm9_snoop_cost.sv what the set-granular snoop costs: four ways of
-                          one set filled, one snooped, and all four come
-                          back for another fill; a snoop into an empty set
-                          costs no reads at all         [SIM-VERIFIED]
+  tb/tb_arm9_snoop_cost.sv one snooped line, one refill: four ways of a set
+                          filled, one snooped, the other three kept; a snoop
+                          into an empty set costs no reads at all
+                                                          [SIM-VERIFIED]
   tb/tb_main_bus.sv       fabric: masters, RAM, cart, slot-2 pak, cheat, IO
                           [SIM-VERIFIED] (also built with -DPAK_REAL, which
                           puts the real DDR3 shim behind the pak checks)
@@ -1812,10 +1814,10 @@ vvp /tmp/tb_cycles
 #   8 checks
 # TB ARM9 CYCLES PASS
 
-# 3c-11. what the wider drop costs: four ways of one set resident, one of
-#        them snooped, and all four refill -- 32 bus reads where a
-#        line-precise drop is 8 -- while a snoop into a set that holds
-#        nothing is free
+# 3c-11. one snooped line costs one refill: four ways of one set resident,
+#        one of them snooped, and only that line pays again -- 40 reads in
+#        all where the set-granular drop paid 64 -- while a snoop into a set
+#        that holds nothing is free
 iverilog -g2012 -o /tmp/tb_snoop_cost tb/tb_arm9_snoop_cost.sv          rtl/cpu/arm9_core.sv rtl/cpu/arm9_cache_tag.sv          rtl/cpu/arm9_cache_data.sv rtl/cpu/swi_hle.sv          rtl/cpu/swi_share.sv
 vvp /tmp/tb_snoop_cost
 #   7 checks

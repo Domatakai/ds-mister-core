@@ -3433,11 +3433,12 @@ The cost, and the seeds it took:
 | line-precise hook, seed 6, does not ship | 4,189 | 40,080 | 37,842 | -4.617 | -24,348.136 | +0.243 | -0.127 | 4,046,832 |
 | line-precise hook, seed 1, does not ship | 4,175 | 39,933 | 37,809 | -4.819 | -19,642.609 | +0.253 | -0.270 | 4,054,580 |
 | line-precise hook, seed 5, does not ship | 4,189 | 40,006 | 38,273 | -4.825 | -18,008.745 | +0.245 | -0.204 | 4,039,052 |
-| both bank writes captured | 4,152 | 38,342 | 37,396 | -4.824 | -17,086.828 | +0.247 | +0.027 | 4,008,232 |
+| both bank writes captured, set-granular | 4,152 | 38,342 | 37,396 | -4.824 | -17,086.828 | +0.247 | +0.027 | 4,008,232 |
 
-The last row is the release path, and the cheaper hook is what made it
-one. The same tree at seed 4 with the exact hook was -0.151 ns; the
-set-granular one is +0.027 with TNS 0.000, at 1,600 ALMs less than the
+The last row was the release path, and the cheaper hook is what made it
+one -- until the maintenance read two sections below. The same tree at
+seed 4 with the exact hook was -0.151 ns; the set-granular one is +0.027
+with TNS 0.000, at 1,600 ALMs less than the
 exact version and 1,409 fewer than the cache tree this replaces -- so the
 seed that could not close the HDMI path with the compare closes it with
 room, and `NDS.qsf` stays at SEED 4.
@@ -3564,9 +3565,10 @@ instruction cache's tags are 1,086 ALMs more than the data cache's for no
 reason but geometry, 64 x 4 x 11 bits against 32 x 4 x 12 -- so the tag pair
 is not waste that a cleanup can recover.
 
-What the exact drop wants is 1,072 ALMs, which is the gap between 4,152 and
-4,190 LABs on a device with one LAB spare. Nothing in the table gives that
-up for free. In the order this section would try them:
+What the exact drop wants is the 1,072 ALMs between 38,342 and 39,414, or
+the 38 LABs between 4,152 and 4,190 -- a device with one LAB spare.
+Nothing in the table gives that up for free. In the order this section
+would try them:
 
 * the by-address maintenance read (`b0..b3`, `m0..m3`) is a second
   32:1 or 64:1 mux per way, on top of the access's own read. Serving a
@@ -3587,3 +3589,38 @@ The RTL for the exact drop is kept as a patch rather than in the tree:
 touches five files (both tags, the core, and the two benches). It is the
 tree the three rows above measure -- 40 bus reads against 64, and three
 seeds short of the release path.
+
+### One read per way, and the exact drop places (2026-11-25)
+
+The gap was 1,072 ALMs, and the by-address maintenance read was most of
+it: `b0..b3` was a second, TAGW-wide read of every tag array, and it had
+to be live in every cycle because a snoop can arrive in any of them. It
+does not have to be. A maintenance command and an access never come in the
+same cycle -- the core guarantees it, and the command wins if they ever do
+-- so the array is indexed by whichever address is live:
+
+    wire            mnt_on = mnt && (mnt_cmd != M_NONE);
+    wire [SETB-1:0] rd_set = mnt_on ? m_a_set : set_of;
+
+That is one SETB-wide mux in front of each array instead of a second
+TAGW-wide read of it. The valid bits read once too, serving the probe and
+the command from the same bit, and `b0..b3` are now `a0..a3`.
+
+The ALM count went *up*, 39,414 to 40,283, and the tree places anyway:
+4,191 of 4,191 LABs, every LAB and no spare, `pll_hdmi` +0.038 with TNS
+0.000, where the same logic with the second read was -0.219 at this seed.
+So the change is a shorter path rather than a smaller one -- the second
+read's fan-in leaves the compare that drives the write enables, and the
+fitter no longer has to buy that path back somewhere else. Measured, not
+argued: this is the first tree in the whole exercise that ships the exact
+drop, and it needs no seed hunt to do it.
+
+| the maintenance read shared, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
+|---|---|---|---|---|---|---|---|---|
+| both bank writes captured | 4,191 | 40,283 | 38,144 | -5.300 | -37,641.902 | +0.244 | +0.038 | 4,037,796 |
+
+`NDS.qsf` does not move: SEED 4, TDS off, effort 8.0. `tb_arm9_snoop_cost`
+keeps its precise numbers (16/8/8/8, 40 reads in all) and `tb_arm9_coherence`
+its seven checks with the same-set line keeping its reads; the full suite
+passes on this tree. `docs/precise-snoop.patch` still applies to the row
+above it, not to this one.

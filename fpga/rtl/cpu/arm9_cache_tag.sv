@@ -24,15 +24,15 @@
 // one line rather than four. A wider tag holds a line per mirror, and a
 // store through one of them leaves the others serving the old word.
 //
-// A write from another master does not compare tags. It drops the set its
-// address falls in, all four ways, because the tag compare it would take to
-// keep the other three is a second asynchronous read of every tag array --
-// about 520 ALMs, which on a tree at 95% of the device's ALMs is the
-// difference between placing and not. The three ways given up belong to
-// lines that are fetched again on their next access; a way kept that should
-// have gone is a stale word. Four seeds of the precise version closed the
-// HDMI path at -0.127 to -0.270 ns (AREA.md); this one has to earn the
-// slack back.
+// A write from another master reaches this module through the maintenance
+// port and not through a port of its own: `M_INVLINE` already compares the
+// line's tag against the four ways through the read `b0..b3`, which the c7
+// commands pay for, so a precise drop costs the snoop nothing the cache was
+// not already spending. A port of its own would need a second asynchronous
+// read of every tag array, and that is the version that did not place
+// (AREA.md: 520 ALMs, four seeds, no HDMI slack). The core muxes the snoop
+// onto the port and gives a c7 command priority, so a snoop that arrives in
+// a command's cycle waits one.
 //
 // Valid and dirty are one bit per set and way, in flops, and the tags are
 // the only thing in an array. That split is what makes a whole-cache
@@ -97,10 +97,6 @@ module arm9_cache_tag #(
 	// locked and none free, a fill must not write into a way that this
 	// module is still calling valid
 	output             alloc_ok,
-	// a write from another master into this address: the set it lands in has
-	// to go, since this cache's copy of the line in it is now wrong
-	input              snoop,
-	input      [31:0]  snoop_addr,
 	output reg         last_hit,   // the access just compared
 	output reg  [1:0]  last_way,
 	output reg  [3:0]  last_valid,
@@ -141,28 +137,35 @@ module arm9_cache_tag #(
 	wire [SETB-1:0] m_a_set = mnt_arg[5 +: SETB];       // by address
 	wire [TAGW-1:0] m_a_tag = mnt_arg[5 + SETB +: TAGW];
 
-	// the line an external write lands on
-	wire [SETB-1:0] s_set   = snoop_addr[5 +: SETB];
-
 	//------------------------------------------------------------------
 	// the compare, in the access's own cycle
 	//------------------------------------------------------------------
-	wire [TAGW-1:0] a0 = t0[set_of], a1 = t1[set_of];
-	wire [TAGW-1:0] a2 = t2[set_of], a3 = t3[set_of];
-	wire [TAGW-1:0] b0 = t0[m_a_set], b1 = t1[m_a_set];
-	wire [TAGW-1:0] b2 = t2[m_a_set], b3 = t3[m_a_set];
+	// One read per way, not two. A maintenance command and an access never
+	// come in the same cycle -- the core guarantees it, and the command wins
+	// if they ever do -- so the array is indexed by whichever address is
+	// live this cycle: the command's while it is asserted, the access's
+	// otherwise. That is one SETB-wide mux in front of each array instead of
+	// a second TAGW-wide read of it, which is the ALM the by-address compare
+	// used to cost.
+	wire            mnt_on = mnt && (mnt_cmd != M_NONE);
+	wire [SETB-1:0] rd_set = mnt_on ? m_a_set : set_of;
 
-	wire h0 = v0[set_of] && (a0 == tag_of);
-	wire h1 = v1[set_of] && (a1 == tag_of);
-	wire h2 = v2[set_of] && (a2 == tag_of);
-	wire h3 = v3[set_of] && (a3 == tag_of);
+	wire [TAGW-1:0] a0 = t0[rd_set], a1 = t1[rd_set];
+	wire [TAGW-1:0] a2 = t2[rd_set], a3 = t3[rd_set];
+	wire [TAGW-1:0] b0 = a0, b1 = a1, b2 = a2, b3 = a3;
+	wire            vv0 = v0[rd_set], vv1 = v1[rd_set];
+	wire            vv2 = v2[rd_set], vv3 = v3[rd_set];
+
+	wire h0 = vv0 && (a0 == tag_of);
+	wire h1 = vv1 && (a1 == tag_of);
+	wire h2 = vv2 && (a2 == tag_of);
+	wire h3 = vv3 && (a3 == tag_of);
 	wire [3:0] hit_vec = {h3, h2, h1, h0};
 
 	// a way is not available to allocate into if it is locked
 	wire [3:0] allow = lock_en ? (4'b1111 << (lock_way + 2'd1)) : 4'b1111;
 
-	wire [3:0] free_vec = {(~v3[set_of]), (~v2[set_of]),
-	                       (~v1[set_of]), (~v0[set_of])} & allow;
+	wire [3:0] free_vec = {(~vv3), (~vv2), (~vv1), (~vv0)} & allow;
 
 	reg [1:0] rr_way;      // round robin among the ways that are not locked
 	reg [1:0] rr0, rr1, rr2, rr3;
@@ -186,10 +189,10 @@ module arm9_cache_tag #(
 	end
 
 	// the line a by-address command acts on
-	wire m0 = v0[m_a_set] && (b0 == m_a_tag);
-	wire m1 = v1[m_a_set] && (b1 == m_a_tag);
-	wire m2 = v2[m_a_set] && (b2 == m_a_tag);
-	wire m3 = v3[m_a_set] && (b3 == m_a_tag);
+	wire m0 = vv0 && (b0 == m_a_tag);
+	wire m1 = vv1 && (b1 == m_a_tag);
+	wire m2 = vv2 && (b2 == m_a_tag);
+	wire m3 = vv3 && (b3 == m_a_tag);
 
 	integer k;
 	always @(posedge clk) begin
@@ -312,31 +315,6 @@ module arm9_cache_tag #(
 				end
 			end
 
-			//------------------------------------------------------
-			// a write from another master
-			//------------------------------------------------------
-			// Deliberately not behind `enable`: the valid bits survive a
-			// cache being switched off, and a set dropped while it is off
-			// must not be there again when it is switched back on. This
-			// block comes last so it wins over an allocation in the same
-			// cycle -- a line taken in the cycle its word is overwritten is
-			// dropped and its fill writes into an invalid line, which is a
-			// word nobody will read.
-			//
-			// Every way of the set, not only the way holding the line: the
-			// tags are not read here, which is the point -- see the header.
-			if (snoop) begin
-				v0[s_set] <= 1'b0;
-				v1[s_set] <= 1'b0;
-				v2[s_set] <= 1'b0;
-				v3[s_set] <= 1'b0;
-				if (DIRTY) begin
-					dw0[s_set] <= 1'b0;
-					dw1[s_set] <= 1'b0;
-					dw2[s_set] <= 1'b0;
-					dw3[s_set] <= 1'b0;
-				end
-			end
 		end
 	end
 

@@ -1,19 +1,21 @@
 //============================================================================
-// tb_arm9_snoop_cost — what a set-granular drop costs over a line-precise one
+// tb_arm9_snoop_cost — one snooped line costs one refill, not four
 //
-// The coherence hook drops the whole set a snooped write lands in, not only
-// the line holding the word (rtl/cpu/arm9_cache_tag.sv says why: the tag
-// compare would be a second asynchronous read of every tag array). This
-// bench measures what that costs, in bus reads, at both ends of the range:
+// The coherence hook drops exactly the line a snooped write lands on: the
+// core presents the snoop on the maintenance port, whose by-address
+// invalidate already reads the four ways and compares the tag, so no line
+// beside it is lost (rtl/cpu/arm9_cache_tag.sv says why it is done that
+// way). This bench holds the hook to that, in bus reads:
 //
-//   * four lines of one set resident and one of them snooped: the three
-//     nothing wrote are dropped as well and each pays a fill to come back.
-//     That is 32 bus reads to get back to where the set was, against 8 for
-//     a line-precise drop -- 4x the work, and the number that says what the
-//     wider drop buys and costs.
+//   * four lines of one set resident and one of them snooped: the line that
+//     was written refills -- 16 reads over the run, 8 to fill and 8 to come
+//     back -- and the three ways nothing wrote keep their 8. The whole run
+//     is 40 reads. The set-granular hook it replaces cost 64 here, every
+//     way refilling, which is the 24-word over-drop this bench was written
+//     to be able to see.
 //   * a snoop into a set holding nothing, which is what a DMA writing a
 //     buffer in address order does (consecutive lines are different sets):
-//     nothing is dropped, nothing refills, no extra reads at all.
+//     no line matches, nothing refills, no extra reads at all.
 //
 // The four lines are 0x02000400, 0x02000800, 0x02000C00 and 0x02001000:
 // tags a[21:10] = 1..4, one set (a[9:5] = 0), which is the shape a four-way
@@ -205,20 +207,20 @@ initial begin
 	repeat (8) @(posedge clk);
 
 	//--------------------------------------------------------------
-	// what one set-granular snoop cost four resident lines
+	// what one precise snoop cost the four resident lines
 	//--------------------------------------------------------------
 	$display("  set 0: tag1 %0d reads, tag2 %0d, tag3 %0d, tag4 %0d, all four %0d",
 	         l1_reads, l2_reads, l3_reads, l4_reads, rows_seen);
 	check_val(l1_reads, 32'd16, "the snooped line filled, then filled again");
-	check_val(l2_reads, 32'd16, "a way nothing wrote filled again too");
-	check_val(l3_reads, 32'd16, "and the third");
-	check_val(l4_reads, 32'd16, "and the fourth: one snoop, four fills");
+	check_val(l2_reads, 32'd8, "a way nothing wrote kept its line: 8 reads");
+	check_val(l3_reads, 32'd8, "and the third: 8");
+	check_val(l4_reads, 32'd8, "and the fourth: one snoop, one refill");
 	check_val(ram[16'h0412], 32'hAAAA_5555,
 	          "the load after the snoop returned the new word");
-	// 32 reads for the refill of the set against 8 for the line alone
-	$display("  over-drop: %0d reads to refill the set, 8 for the line alone",
-	         rows_seen - rows_seen / 2);
-	check_val(rows_seen, 32'd64, "eight reads a line, four fills, twice");
+	// 40 = four fills and one refill; the set-granular hook paid 64 here
+	$display("  precise: %0d reads in all, 8 for the refill alone",
+	         rows_seen - 32'd0);
+	check_val(rows_seen, 32'd40, "four fills and one refill, nothing else");
 
 	$display("  %0d checks", checks);
 	if (fails == 0) $display("TB ARM9 SNOOP COST PASS");

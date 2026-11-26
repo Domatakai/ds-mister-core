@@ -1122,6 +1122,24 @@ wire [3:0] i_mnt_cmd =
 	c7v[6:3] == 4'd5 && c7v[2:0] == 3'd0 ? 4'd1 : 4'd9;
 wire       i_mnt_any = i_mnt && (i_mnt_cmd != 4'd9);
 
+// The coherence hook's line, presented on the maintenance port rather than
+// through a compare of its own: the by-address invalidate already reads the
+// four ways and matches the tag, and that read is paid for by c7 anyway. It
+// goes out in the cycle the write completed in, so the window between a
+// write and the line going is no wider than it was with the set-granular
+// drop. A c7 command holds the port only if software happened to issue one
+// in that same cycle; the snoop then waits for the next one, and a load
+// issued in between is a race the hardware does not order either.
+wire [31:0] sn_line = {sn_addr[31:5], 5'd0};
+wire        sn_busy = d_mnt || cp15_tc[1] || i_mnt_any;
+reg         sn_pend;                // a snoop a c7 command pushed back
+wire        sn_now  = (sn_wr || sn_pend) && !sn_busy;
+always @(posedge clk) begin
+	if (reset)       sn_pend <= 1'b0;
+	else if (sn_now) sn_pend <= 1'b0;   // this edge's snoop was presented
+	else if (sn_wr)  sn_pend <= 1'b1;   // a c7 command had the port
+end
+
 	arm9_cache_tag #(.SETS(32), .SETB(5), .TAGW(12), .DIRTY(1)) d_cache_tag (
 	.clk(clk),
 	.ce(ce),
@@ -1133,14 +1151,12 @@ wire       i_mnt_any = i_mnt && (i_mnt_cmd != 4'd9);
 	.alloc(d_acc && !d_acc_w && d_is_cached && tag_alloc_ok && !blk_run &&
 	       !dw_run && !swap_en),
 	.alloc_ok(tag_alloc_ok),
-	.snoop(sn_wr),
-	.snoop_addr(sn_addr),
 	.acc(d_acc),
 	.acc_addr(tag_addr),
 	.acc_wr(d_acc_w),
-	.mnt(d_mnt || cp15_tc[1]),
-	.mnt_cmd(d_mnt_cmd),
-	.mnt_arg(cp15_c7_arg),
+	.mnt(d_mnt || cp15_tc[1] || sn_now),
+	.mnt_cmd(sn_now ? 4'd2 : d_mnt_cmd),
+	.mnt_arg(sn_now ? sn_line : cp15_c7_arg),
 	.lock_way(c9_lock_d[1:0]),
 	.lock_en(c9_lock_d[31]),
 	.dirty_any(d_tag_dirty),
@@ -1164,14 +1180,12 @@ wire       i_mnt_any = i_mnt && (i_mnt_cmd != 4'd9);
 	// taken in that cycle cannot leave a valid line with nothing in it
 	.alloc(i_probe && !i_tag_hit && i_tag_alloc_ok),
 	.alloc_ok(i_tag_alloc_ok),
-	.snoop(sn_wr),
-	.snoop_addr(sn_addr),
 	.acc(i_probe),
 	.acc_addr(pc),
 	.acc_wr(1'b0),
-	.mnt(i_mnt_any),
-	.mnt_cmd(i_mnt_cmd),
-	.mnt_arg(cp15_c7_arg),
+	.mnt(i_mnt_any || sn_now),
+	.mnt_cmd(sn_now ? 4'd2 : i_mnt_cmd),
+	.mnt_arg(sn_now ? sn_line : cp15_c7_arg),
 	.lock_way(c9_lock_i[1:0]),
 	.lock_en(c9_lock_i[31]),
 	.dirty_any(),
