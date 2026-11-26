@@ -3617,10 +3617,28 @@ drop, and it needs no seed hunt to do it.
 
 | the maintenance read shared, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
 |---|---|---|---|---|---|---|---|---|
-| both bank writes captured | 4,191 | 40,283 | 38,144 | -5.300 | -37,641.902 | +0.244 | +0.038 | 4,037,796 |
+| both bank writes captured, shared read | 4,191 | 40,283 | 38,144 | -5.300 | -37,641.902 | +0.244 | +0.038 | 4,037,796 |
 
 `NDS.qsf` does not move: SEED 4, TDS off, effort 8.0. `tb_arm9_snoop_cost`
 keeps its precise numbers (16/8/8/8, 40 reads in all) and `tb_arm9_coherence`
 its seven checks with the same-set line keeping its reads; the full suite
 passes on this tree. `docs/precise-snoop.patch` still applies to the row
 above it, not to this one.
+
+### A tidied header, and the same tree (2026-11-25)
+
+`rtl/cpu/arm9_cache_tag.sv`'s header still described the version that read
+an array twice: it said the snoop went through `b0..b3`, "which the c7
+commands pay for", and it priced the tag pair at 3,157 flops and 2,413
+ALMs from a 90% tree. Both are now wrong in the shipped design, so the
+header says what the module does -- one read per way, `rd_set` picking the
+command's set or the access's -- and prices the pair at 4,258 ALMs from
+the per-entity table.
+
+The fit is the proof that this was comments and nothing else: every
+column below is identical to the row above it, which is what a comment
+change should produce when the seed is unchanged.
+
+| the tidied header, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
+|---|---|---|---|---|---|---|---|---|
+| both bank writes captured | 4,191 | 40,283 | 38,144 | -5.300 | -37,641.902 | +0.244 | +0.038 | 4,037,796 |

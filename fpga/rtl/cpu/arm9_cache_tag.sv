@@ -25,14 +25,16 @@
 // store through one of them leaves the others serving the old word.
 //
 // A write from another master reaches this module through the maintenance
-// port and not through a port of its own: `M_INVLINE` already compares the
-// line's tag against the four ways through the read `b0..b3`, which the c7
-// commands pay for, so a precise drop costs the snoop nothing the cache was
-// not already spending. A port of its own would need a second asynchronous
-// read of every tag array, and that is the version that did not place
-// (AREA.md: 520 ALMs, four seeds, no HDMI slack). The core muxes the snoop
-// onto the port and gives a c7 command priority, so a snoop that arrives in
-// a command's cycle waits one.
+// port, as `M_INVLINE`, and never through a port of its own: the by-address
+// invalidate already compares the line's tag against the four ways, so the
+// drop is exact and the snoop adds no read. The read matters more than it
+// looks. One array read serves both users -- `rd_set` picks the command's
+// set or the access's, and they can never need different ones in the same
+// cycle, because a command and an access do not coincide. A second read,
+// which is what a snoop port or a command-only path would need, is what
+// kept the exact drop out of the device for four seeds (AREA.md). The core
+// muxes the snoop onto the port and gives a c7 command priority, so a snoop
+// that arrives in a command's cycle waits one.
 //
 // Valid and dirty are one bit per set and way, in flops, and the tags are
 // the only thing in an array. That split is what makes a whole-cache
@@ -46,10 +48,11 @@
 // writeback does exactly that), so a maintenance command has to see the
 // store that preceded it. A registered read would put the dirty bit one
 // cycle behind the store and that clean would find nothing to do. The price
-// is that the tag arrays cannot go to block RAM: Quartus put them in
-// registers, 3,157 flops and 2,413 ALMs that take the design to 90% of its
-// ALMs (AREA.md). The data arrays, when they land, are where the block RAM
-// goes.
+// is that the tag arrays cannot go to block RAM: Quartus puts them in
+// registers, and the pair costs 4,258 ALMs between them -- 2,672 for the
+// instruction cache's 64 sets, 1,586 for the data cache's 32 (AREA.md's
+// per-entity table, on a tree at 96% of the device's ALMs). This module no
+// longer reads an array twice, which is what bought the slack back.
 //
 // Maintenance commands (one per pulse on `mnt`, in `mnt_cmd`):
 //

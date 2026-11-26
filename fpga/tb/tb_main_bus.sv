@@ -117,6 +117,8 @@ end
 // forwards halfword beats; the model holds the last one written so a read
 // round-trips through the real decode.
 wire        spu_acc, spu_we;
+wire        snoop_wr;
+wire [31:0] snoop_addr;
 wire [15:0] spu_addr, spu_wdata;
 reg  [15:0] spu_rdata = 16'h0000;
 reg         spu_hit = 0;
@@ -172,6 +174,7 @@ main_bus dut (
 	.midi_addr(midi_addr), .midi_wdata(midi_wdata), .midi_rdata(midi_rdata),
 	.spu_acc(spu_acc), .spu_we(spu_we), .spu_addr(spu_addr),
 	.spu_wdata(spu_wdata), .spu_rdata(spu_rdata),
+	.snoop_wr(snoop_wr), .snoop_addr(snoop_addr),
 	.dispcnt_a(), .dispcnt_b(), .irq_master_enable(),
 	.irq_enable(), .irq_flags()
 );
@@ -437,6 +440,8 @@ cheat_engine cheat (
 // tasks
 //------------------------------------------------------------------
 integer errors = 0;
+integer snoop_n = 0;
+reg [31:0] snoop_seen = 32'd0;
 task check;
 	input [8*44:1] name;
 	input cond;
@@ -539,6 +544,14 @@ task m7_read;
 		@(posedge clk);
 	end
 endtask
+
+// the strobe is one cycle wide and lands inside the transaction, so it is
+// counted as it goes by, not sampled after the task returns
+always @(posedge clk)
+	if (snoop_wr) begin
+		snoop_n    = snoop_n + 1;
+		snoop_seen = snoop_addr;
+	end
 
 task send_byte;
 	input [7:0] b;
@@ -975,6 +988,41 @@ initial begin
 	motion_pak = 1'b0;
 	repeat (2) @(posedge clk);
 	check("row off resets the sequence", dut.mot_cnt === 5'd0);
+
+	//--------------------------------------------------------------
+	// what the snoop covers
+	//--------------------------------------------------------------
+	// The strobe exists so the ARM9's caches drop a line another master has
+	// written. Main RAM from anyone but the ARM9 has to fire; nothing else
+	// may -- the gate is `is_ram`, so the 2D and 3D engines' writes into
+	// VRAM cannot perturb the caches at all. VRAM is tied off in this bench
+	// (tb_vram_arbiter owns it), so the not-main-RAM case is checked with an
+	// IO write, which is the same gate.
+	snoop_n = 0; snoop_seen = 32'd0;
+	m7_write(32'h0200_0100, 32'hA5A5_5A5A, 4'hF);
+	repeat (4) @(posedge clk);
+	check("a main-RAM write from the ARM7 snoops", snoop_n === 1);
+	check("the snoop carries the line's address", snoop_seen === 32'h0200_0100);
+
+	snoop_n = 0;
+	m7_write(32'h0400_0130, 32'h0000_0003, 4'hF);
+	repeat (4) @(posedge clk);
+	check("a write outside main RAM does not snoop", snoop_n === 0);
+
+	snoop_n = 0;
+	m7_read(32'h0200_0100, r1);
+	repeat (4) @(posedge clk);
+	check("a read of main RAM does not snoop", snoop_n === 0);
+
+	snoop_n = 0;
+	m9_write(32'h0200_0140, 32'hDEAD_BEEF, 4'hF);
+	repeat (4) @(posedge clk);
+	check("the ARM9's own store does not snoop", snoop_n === 0);
+
+	snoop_n = 0;
+	m7_write(32'h0200_0180, 32'h0BAD_F00D, 4'hF);
+	repeat (4) @(posedge clk);
+	check("a second ARM7 write snoops again", snoop_n === 1);
 
 	if (errors == 0) $display("tb_main_bus: PASS");
 	else             $display("tb_main_bus: FAIL (%0d errors)", errors);
