@@ -3529,3 +3529,61 @@ captured`, 4,152 LABs and `pll_hdmi` +0.027, and `NDS.qsf` stays at SEED 4
 with the set-granular hook. The maintenance-port version is the one to
 revisit after something else gives up ALMs, and its shape is recorded
 above; the measurement stands either way -- 40 reads against 64.
+
+### Where the ALMs are, and what the exact drop would cost to fit (2026-11-25)
+
+The fitter's own per-entity table from the seed-4 fit that does not ship
+(`NDS.fit.rpt`, "Fitter Resource Utilization by Entity"), which is the map
+the next attempt has to work from:
+
+| entity | ALMs | what it is |
+|---|---|---|
+| `emu` | 33,927 | the core under `sys_top` |
+| `arm9_core` | 13,944 | ARM9, its caches, TCM, cp15 |
+| `renderer_2d` | 6,488 | the 2D engine |
+| `arm7_core` | 6,196 | ARM7, the other CPU |
+| `i_cache_tag` | 2,672 | 64 sets x 4 ways x 11-bit tags |
+| `main_bus` | 2,527 | arbitration, the RAM ports |
+| `ascal` | 1,968 | framework scaler |
+| `sys_io` | 1,856 | the IO window |
+| `d_cache_tag` | 1,586 | 32 sets x 4 ways x 12-bit tags |
+| `cart_slot` | 1,195 | |
+| `audio_out` | 908 | |
+| `hps_io` | 791 | framework |
+| `math_unit` | 767 | |
+| `dma_engine` | 700 | |
+| `osd` | 526 | framework |
+| `pll_hdmi_adj` | 471 | |
+| whole design | 39,414 | 94%, 4,190 of 4,191 LABs |
+
+The table says two things. The two tag modules are 4,258 ALMs between them,
+a tenth of the device, and almost all of it is flops: that is the same-cycle
+compare the header argues for, and the arrays cannot go to block RAM without
+putting a cycle between a store and the clean that follows it. And the
+instruction cache's tags are 1,086 ALMs more than the data cache's for no
+reason but geometry, 64 x 4 x 11 bits against 32 x 4 x 12 -- so the tag pair
+is not waste that a cleanup can recover.
+
+What the exact drop wants is 1,072 ALMs, which is the gap between 4,152 and
+4,190 LABs on a device with one LAB spare. Nothing in the table gives that
+up for free. In the order this section would try them:
+
+* the by-address maintenance read (`b0..b3`, `m0..m3`) is a second
+  32:1 or 64:1 mux per way, on top of the access's own read. Serving a
+  maintenance command one way per cycle over four cycles removes those
+  muxes and the four compares, and costs c7 latency, 1 cycle to 4. That is
+  the one candidate with a measured shape and no new state.
+* the tag's `last_hit`/`last_way`/`last_valid`/`hits`/`misses` are
+  diagnostics; they are read by the status path today, and are ~100 flops
+  across both tags -- worth taking only if the status path stops needing
+  them.
+* `arm7_core` and `renderer_2d` are the largest pools outside the ARM9, and
+  the report gives no hot spot inside either yet: finding one is work, not
+  a knob.
+* `ascal`, `hps_io` and `osd` are framework and not this core's to trim.
+
+The RTL for the exact drop is kept as a patch rather than in the tree:
+`docs/precise-snoop.patch` applies to the shipped tree with `git apply` and
+touches five files (both tags, the core, and the two benches). It is the
+tree the three rows above measure -- 40 bus reads against 64, and three
+seeds short of the release path.
