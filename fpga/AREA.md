@@ -3957,3 +3957,59 @@ got smaller; a seed sweep, which the numbers above say cannot cover
 line. The reading of this fit is the one the section above reached and
 this one confirms: on this device, area is not what binds, and a change
 that wins area can still lose the only margin there is.
+
+### Contended: the collector's two fits and the engines' wait (2026-11-27)
+
+The collector was built twice. The first shape held a whole 32-byte line and
+turned a miss into one 16-beat burst; it fitted at **-0.302** on `pll_hdmi`.
+The second holds 16 bytes -- half a line -- and bursts 8 beats at a time,
+two per fill: 128 flops instead of 256 and **-0.074** on the same seed.
+Neither ships, and the second is still the right shape: it costs the video
+domain a quarter of what the first did, and the measurements below say it is
+kinder to the engines as well.
+
+The bench grew a second requester: a 2D engine's stand-in on the arbiter's
+VRAM port, four-beat read bursts with eight idle cycles between them. The
+arbiter serves VRAM before the bus window, so the fill now has to share the
+controller. The same eight-word fill, three shapes, one bench:
+
+| shape | grants | clocks, idle | clocks, contended | engine's worst wait |
+|---|---|---|---|---|
+| no collector | 16 | 128 | 152 | 11 |
+| 16-byte collector | 4 | 91 | 102 | 12 |
+| 32-byte collector | 3 | 86 | 92 | 20 |
+
+That is the number the last round could not state. With the port free the
+collector is worth 34 clocks of a 128-clock fill, and the grant count alone
+says little; with an engine on the port it is worth a third of the fill
+(152 -> 102), and grants stop growing with contention. The table also names
+the price of the wide burst: a granted burst holds the controller for every
+beat and `sdram_ctrl` has no back-pressure, so 16 beats double the engine's
+worst wait (11 -> 20) where 8 beats leave it at 12.
+
+The fits, both at the shipped seed:
+
+| the collector in `main_bus` | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
+|---|---|---|---|---|---|---|---|---|
+| 16-byte, 8-beat bursts | 4,186 | 39,977 | 38,428 | -5.503 | -30,514.801 | +0.247 | **-0.074** | 4,046,464 |
+| 32-byte, 16-beat bursts | 4,171 | 39,045 | 38,449 | -5.332 | -31,343.690 | +0.249 | **-0.302** | 4,038,268 |
+
+The shipped tree is 4,191 LABs, 40,283 ALMs, 38,144 registers and +0.038.
+Both collector trees are *smaller* in ALMs and both lose the one number
+that decides: measured in ALMs this change is a win, measured in the video
+domain it is a loss, and the loss is what the bitstream pays.
+
+-0.074 is inside the 0.145 ns a seed sweep spans on this device, so a fit at
+another seed might come back green -- which is exactly the trap the earlier
+section named. A passing seed is placement, not a better design, and three
+fits on one tree already showed the spread is the fitter's freedom rather
+than the logic's. The tree is restored: the shipped row still speaks for
+dca8d3291a78 at +0.038, and both shapes live as
+`fpga/docs/line-collector.patch` with `nds-col-s4` and `nds-c4-s4` in
+`fits.csv`.
+
+What the work leaves behind is the bench, in that patch: the grant counter,
+the burst device model, the engine stand-in, and the checks that a fill
+completes, that its words survive the engine's traffic, and that the engine
+is never left waiting longer than a burst. Whoever fits a bus change next
+gets the contended number without building the harness again.

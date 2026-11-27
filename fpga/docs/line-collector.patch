@@ -1,0 +1,635 @@
+diff --git a/fpga/NDS.sv b/fpga/NDS.sv
+index 8f9c08c..9bbf146 100644
+--- a/fpga/NDS.sv
++++ b/fpga/NDS.sv
+@@ -839,6 +839,10 @@ wire [23:0] bus_exp_ddr_hw;
+ wire [24:0] bus_ram_addr;
+ wire [15:0] bus_ram_wdata;
+ wire  [1:0] bus_ram_be;
++// the fill collector's read burst: main_bus asks, the arbiter grants it once
++wire        bus_ram_bst, bus_bs_valid;
++wire  [7:0] bus_ram_len;
++wire [15:0] bus_bs_data;
+ 
+ wire        save_req, save_wr, save_done;
+ wire [24:0] save_addr;
+@@ -870,7 +874,11 @@ mem_arbiter mem_arbiter (
+ 	.bus_addr(bus_ram_addr),
+ 	.bus_wdata(bus_ram_wdata),
+ 	.bus_be(bus_ram_be),
++	.bus_bst(bus_ram_bst && !bus_exp_ddr_sel),
++	.bus_len(bus_ram_len),
+ 	.bus_ready(mem_bus_done),
++	.bus_bs_valid(bus_bs_valid),
++	.bus_bs_data(bus_bs_data),
+ 	.save_req(save_req),
+ 	.save_wr(save_wr),
+ 	.save_addr(save_addr),
+@@ -1316,6 +1324,10 @@ main_bus main_bus (
+ 	.ram_be(bus_ram_be),
+ 	.ram_done(bus_exp_ddr_sel ? exp_ddr_done : mem_bus_done),
+ 	.ram_rdata(bus_exp_ddr_sel ? exp_ddr_rdata : arb_rdata),
++	.ram_bst(bus_ram_bst),
++	.ram_len(bus_ram_len),
++	.ram_bs_valid(bus_bs_valid),
++	.ram_bs_data(bus_bs_data),
+ 	.exp_ddr_sel(bus_exp_ddr_sel),
+ 	.exp_ddr_hw(bus_exp_ddr_hw),
+ 	.vramcnt_we(bus_vramcnt_we),
+diff --git a/fpga/rtl/bus/main_bus.sv b/fpga/rtl/bus/main_bus.sv
+index 41e7c18..721cd6d 100644
+--- a/fpga/rtl/bus/main_bus.sv
++++ b/fpga/rtl/bus/main_bus.sv
+@@ -115,6 +115,12 @@ module main_bus (
+ 	output reg [1:0] ram_be,
+ 	input            ram_done,
+ 	input     [15:0] ram_rdata,
++	// a read burst of one cache line, asked for by the fill collector below:
++	// 16 halfwords, linear, granted once and streamed back on ram_bs_valid
++	output reg       ram_bst,
++	output reg  [7:0] ram_len,
++	input            ram_bs_valid,
++	input     [15:0] ram_bs_data,
+ 
+ 	// ---- the 32 MB pak answers from DDR3, not from mem_arbiter ----
+ 	output           exp_ddr_sel,
+@@ -275,16 +281,19 @@ reg        dma_reg_we_r = 0;
+ // FSM state and the master mux live here, ahead of every helper that
+ // indexes them: iverilog 14 rejects a forward reference to a wire or
+ // reg from a continuous assign (Quartus tolerates it).
+-localparam S_IDLE  = 3'd0,
+-           S_PRIV  = 3'd1,
+-           S_REQ_A = 3'd2,
+-           S_WAIT_A= 3'd3,
+-           S_REQ_B = 3'd4,
+-           S_WAIT_B= 3'd5,
+-           S_RESP  = 3'd6,
+-           S_CPATCH= 3'd7;
+-
+-reg [2:0]  state = S_IDLE;
++localparam S_IDLE  = 4'd0,
++           S_PRIV  = 4'd1,
++           S_REQ_A = 4'd2,
++           S_WAIT_A= 4'd3,
++           S_REQ_B = 4'd4,
++           S_WAIT_B= 4'd5,
++           S_RESP  = 4'd6,
++           S_CPATCH= 4'd7,
++           S_BSTREQ= 4'd8,   // ask for a whole line as one read burst
++           S_BST   = 4'd9,   // ... and pair its beats into words
++           S_BSTD  = 4'd10;  // the line is the collector's, answer from it
++
++reg [3:0]  state = S_IDLE;
+ reg [1:0]  rr = 0;         // fairness: rotates among the three masters
+ reg        m9_active = 0;
+ reg        m7_active = 0;
+@@ -297,6 +306,39 @@ reg        need_b = 0;
+ reg [15:0] lo_half = 0;
+ reg [15:0] hi_half = 0;
+ 
++//------------------------------------------------------------------
++// The fill collector
++//------------------------------------------------------------------
++// A cache line fill asks main_bus for the eight words of one 32-byte line,
++// one word at a time. Each word is two halfword beats, so the fill costs 16
++// arbiter grants and 16 single SDRAM accesses; one 16-beat burst of the same
++// line costs one grant. So the second read that lands in the line the
++// previous read landed in turns into a burst for that whole line, and the
++// fill's remaining reads are answered out of what it brought back. A lone
++// read costs exactly what it did before -- nothing is fetched ahead of a
++// read that has no follower.
++//
++// This is 16 bytes of memory data -- one half of a line -- not a cache, and
++// four words is enough for both halves of the same fill: the first read of
++// each half becomes an 8-beat burst, every read after it is a hit. A whole
++// line would cost three grants as well, so the two halves are bought with
++// 128 flops instead of 256 and the same transaction count.
++//
++// It is only ever read back by an access to the same 16 bytes, and any
++// completed write into main RAM from any master drops it. That is sound
++// because main_bus is the only path a main-RAM write can take. The burst is
++// atomic, which is stronger than the four separate reads it replaces: a
++// snooped write can no longer leave a half-line that is part old, part new.
++reg [31:0] col_word [0:3];
++reg        col_valid = 0;
++reg [17:0] col_tag   = 0;   // {line, which 16-byte half}
++reg [17:0] bst_tag   = 0;   // ... of the burst in flight
++reg [16:0] last_tag  = 0;   // the line the previous gated read used
++reg        last_rd   = 0;   // ... and whether it was an ARM9 main-RAM read
++reg  [3:0] bst_cnt   = 0;
++reg [15:0] bst_lo    = 0;
++
++
+ wire m9_req = m9_rd | m9_wr;
+ wire m7_req = m7_rd | m7_wr;
+ wire d_req  = d_rd  | d_wr;
+@@ -307,6 +349,14 @@ wire [31:0] a     = m9_active ? m9_addr : m7_active ? m7_addr : d_addr;
+ wire [31:0] wdata = m9_active ? m9_wdata: m7_active ? m7_wdata: d_wdata;
+ wire  [3:0] be    = m9_active ? m9_be   : m7_active ? m7_be   : d_be;
+ 
++// the collector's view of the granted address. Declared here and not with
++// the collector's own registers: iverilog 14 refuses a forward reference to
++// a wire from a continuous assign, and `a` is the forward one.
++wire [16:0] line_tag  = a[21:5];
++wire [17:0] grp_tag   = {line_tag, a[4]};  // the 16-byte half of the line
++wire        bst_hit   = col_valid && (col_tag == grp_tag);
++wire [31:0] col_rdata = col_word[a[3:2]];
++
+ //------------------------------------------------------------------
+ // Address / word helpers
+ //------------------------------------------------------------------
+@@ -759,6 +809,10 @@ always @(posedge clk) begin
+ 		              is_pal || is_oam || is_io || is_vram);
+ 		lo_half  <= 16'h0000;
+ 		hi_half  <= 16'h0000;
++		// what the collector's next request is compared against: only a
++		// read that follows another read of its own line is worth a burst
++		last_rd  <= is_ram && m_rd && !m_wr && m9_active;
++		last_tag <= line_tag;
+ 
+ 		if (is_vram && (m_rd || m_wr)) begin
+ 			// 16-bit beats through the vram_arbiter (held until valid)
+@@ -767,8 +821,24 @@ always @(posedge clk) begin
+ 			vram_off  <= a[19:0];
+ 			vram_hi_beat <= beat_hi;   // odd halfword: lanes in [31:16]
+ 			state     <= S_WAIT_A;
++		end else if (is_ram && m_rd && !m_wr && m9_active && bst_hit) begin
++			// a fill's later words: the line is already in the collector
++			lo_half <= col_rdata[15:0];
++			hi_half <= col_rdata[31:16];
++			state   <= S_RESP;
++		end else if (is_ram && m_rd && !m_wr && m9_active &&
++		             last_rd && (last_tag == line_tag)) begin
++			// the second read of a line: fetch the whole line as one burst
++			ram_req  <= 1;
++			ram_bst  <= 1;
++			ram_len  <= 8'd8;
++			ram_addr <= {3'd0, 1'b1, line_tag, a[4], 3'd0};
++			bst_tag  <= grp_tag;
++			bst_cnt  <= 4'd0;
++			state    <= S_BSTREQ;
+ 		end else if ((is_ram || is_exp) && (m_rd || m_wr)) begin
+ 			ram_req   <= 1;
++			ram_bst   <= 0;
+ 			ram_wr    <= m_wr;
+ 			ram_addr  <= is_exp ? exp_word_lo : ram_word_lo;
+ 			ram_wdata <= beat_hi ? w_lane_hi : w_lane_lo;
+@@ -941,6 +1011,9 @@ always @(posedge clk) begin
+ 		// halfword beats or not.
+ 		snoop_wr   <= is_ram && !is_read && !m9_active;
+ 		snoop_addr <= {a[31:2], 2'b00};
++		// any write into main RAM may change what the collector holds, and
++		// every one of them comes through here
++		if (is_ram && !is_read) col_valid <= 1'b0;
+ 		cheat_chk_addr <= a;
+ 		// a read of the AUX receive register pops the byte (0x15A only; the
+ 		// CNT readback at 0x150 must not consume anything)
+@@ -994,6 +1067,51 @@ always @(posedge clk) begin
+ 		end
+ 	end
+ 
++	//--------------------------------------------------------------
++	// the line burst: one grant, 16 halfwords, eight words
++	//--------------------------------------------------------------
++	S_BSTREQ: begin
++		// the request is held, not pulsed: the arbiter may be busy with the
++		// engines or a save, and it latches the burst on the cycle it grants.
++		// The direction has to be cleared here: `ram_wr` still holds the last
++		// access's value, and a burst that went out as a write would write the
++		// first halfword of the line over itself -- tb_cpu_clk caught exactly
++		// that, as a program that finished in 153 cycles having stored nothing.
++		ram_req   <= 1;
++		ram_bst   <= 1;
++		ram_wr    <= 1'b0;
++		ram_wdata <= 32'd0;
++		ram_be    <= 2'b11;
++		state     <= S_BST;
++	end
++
++	S_BST: begin
++		ram_req <= 1;
++		ram_bst <= 1;
++		ram_wr  <= 1'b0;
++		if (ram_bs_valid) begin
++			if (bst_cnt[0]) col_word[bst_cnt[3:1]] <= {ram_bs_data, bst_lo};
++			else            bst_lo                 <= ram_bs_data;
++			bst_cnt <= bst_cnt + 4'd1;
++		end
++		if (ram_done) begin
++			ram_req <= 0;
++			ram_bst <= 0;
++			state   <= S_BSTD;
++		end
++	end
++
++	S_BSTD: begin
++		// the last word was written on the edge into this state, so the
++		// array reads clean here. The tag is the burst's own, latched when
++		// it was asked for: the master's address is live, not guaranteed.
++		col_tag   <= bst_tag;
++		col_valid <= 1'b1;
++		lo_half   <= col_rdata[15:0];
++		hi_half   <= col_rdata[31:16];
++		state     <= S_RESP;
++	end
++
+ 	default: state <= S_IDLE;
+ 	endcase
+ 
+@@ -1004,7 +1122,7 @@ always @(posedge clk) begin
+ 		vram_req <= 0; vram_wr <= 0; vram_off <= 0; vram_hi_beat <= 0;
+ 		dma_reg_we_r <= 0; ea_we <= 0; eb_we <= 0; gx_we <= 0;
+ 		m9_ready  <= 0; m7_ready  <= 0;
+-		vramcnt_we_r <= 0; cheat_chk_en <= 0;
++		vramcnt_we_r <= 0; cheat_chk_en <= 0; col_valid <= 0;
+ 		cart_req <= 0; ram_req <= 0; ram_wr <= 0;
+ 		midi_wr <= 0; midi_rd <= 0;
+ 		pal_we <= 0; oam_we <= 0; pal2_we <= 0; oam2_we <= 0;
+diff --git a/fpga/rtl/mem/mem_arbiter.sv b/fpga/rtl/mem/mem_arbiter.sv
+index 8f8ffc1..71d43d0 100644
+--- a/fpga/rtl/mem/mem_arbiter.sv
++++ b/fpga/rtl/mem/mem_arbiter.sv
+@@ -37,7 +37,11 @@ module mem_arbiter (
+ 	input     [24:0] bus_addr,
+ 	input     [15:0] bus_wdata,
+ 	input      [1:0] bus_be,
++	input            bus_bst,      // the request is a read burst of bus_len
++	input      [7:0] bus_len,
+ 	output reg       bus_ready,
++	output           bus_bs_valid, // burst beats, in address order
++	output    [15:0] bus_bs_data,
+ 
+ 	// master B: cart save path
+ 	input            save_req,
+@@ -96,6 +100,12 @@ reg        last_wr = 0;
+ assign vram_bs_valid = sdram_bs_valid && pending && (owner == OWN_VRAM);
+ assign vram_bs_data  = sdram_bs_data;
+ 
++// ... and to the bus window when that is what holds the port. The bus
++// master's burst is always linear (step 1): a cache line is 16 consecutive
++// halfwords in a row that 32-byte alignment keeps it inside.
++assign bus_bs_valid = sdram_bs_valid && pending && (owner == OWN_BUS);
++assign bus_bs_data  = sdram_bs_data;
++
+ // the SPU's fetched word is simply the controller's read data, valid on its
+ // spu_ready pulse
+ assign spu_rdata = sdram_rdata;
+@@ -137,7 +147,9 @@ always @(posedge clk) begin
+ 		end else if (bus_req) begin
+ 			owner      <= OWN_BUS;
+ 			sdram_req  <= 1;
+-			sdram_bst  <= 0;
++			sdram_bst  <= bus_bst;
++			sdram_len  <= bus_len;
++			sdram_step <= 2'd1;
+ 			sdram_wr   <= bus_wr;
+ 			sdram_addr <= bus_addr;
+ 			sdram_wdata<= bus_wdata;
+diff --git a/fpga/tb/tb_cpu_clk.sv b/fpga/tb/tb_cpu_clk.sv
+index a3975a7..ec9806f 100644
+--- a/fpga/tb/tb_cpu_clk.sv
++++ b/fpga/tb/tb_cpu_clk.sv
+@@ -184,10 +184,18 @@ wire        bus_ram_req, bus_ram_wr, bus_ram_done;
+ wire [24:0] bus_ram_addr;
+ wire [15:0] bus_ram_wdata;
+ wire  [1:0] bus_ram_be;
++wire        bus_ram_bst;
++wire  [7:0] bus_ram_len;
++wire        bus_bs_valid;
++wire [15:0] bus_bs_data;
+ wire        arb_req, arb_wr;
+ wire [24:0] arb_addr;
+ wire [15:0] arb_wdata;
+ wire  [1:0] arb_be;
++wire        arb_bst, arb_bst_done, arb_bs_valid;
++wire  [7:0] arb_len;
++wire  [1:0] arb_step;
++wire [15:0] arb_bs_data;
+ wire        arb_rd_done, arb_wr_done;
+ wire [15:0] arb_rdata;
+ 
+@@ -204,6 +212,8 @@ main_bus dut (
+ 	.cart_req(), .cart_addr(), .cart_valid(1'b0), .cart_rdata(16'd0),
+ 	.ram_req(bus_ram_req), .ram_wr(bus_ram_wr), .ram_addr(bus_ram_addr),
+ 	.ram_wdata(bus_ram_wdata), .ram_be(bus_ram_be),
++	.ram_bst(bus_ram_bst), .ram_len(bus_ram_len),
++	.ram_bs_valid(bus_bs_valid), .ram_bs_data(bus_bs_data),
+ 	.ram_done(bus_ram_done), .ram_rdata(arb_rdata),
+ 	.exp_ddr_sel(), .exp_ddr_hw(),
+ 	.vramcnt_we(), .vramcnt_addr(), .vramcnt_data(),
+@@ -228,25 +238,58 @@ mem_arbiter arbiter (
+ 	.clk(clk), .reset(bus_reset),
+ 	.bus_req(bus_ram_req), .bus_wr(bus_ram_wr), .bus_addr(bus_ram_addr),
+ 	.bus_wdata(bus_ram_wdata), .bus_be(bus_ram_be), .bus_ready(bus_ram_done),
++	.bus_bst(bus_ram_bst), .bus_len(bus_ram_len),
++	.bus_bs_valid(bus_bs_valid), .bus_bs_data(bus_bs_data),
+ 	.save_req(1'b0), .save_wr(1'b0), .save_addr(25'd0),
+ 	.save_wdata(16'd0), .save_be(2'b00), .save_ready(),
+ 	.vram_req(1'b0), .vram_wr(1'b0), .vram_addr(25'd0),
+-	.vram_wdata(16'd0), .vram_be(2'b00), .vram_ready(),
++	.vram_wdata(16'd0), .vram_be(2'b00),
++	.vram_bst(1'b0), .vram_len(8'd0), .vram_step(2'd1), .vram_ready(),
+ 	.sdram_req(arb_req), .sdram_wr(arb_wr), .sdram_addr(arb_addr),
+ 	.sdram_wdata(arb_wdata), .sdram_be(arb_be),
++	.sdram_bst(arb_bst), .sdram_len(arb_len), .sdram_step(arb_step),
+ 	.sdram_rd_done(arb_rd_done), .sdram_wr_done(arb_wr_done),
++	.sdram_bst_done(arb_bst_done),
++	.sdram_bs_valid(arb_bs_valid), .sdram_bs_data(arb_bs_data),
+ 	.sdram_rdata(arb_rdata)
+ );
+ 
+ // behavioural SDRAM device: one-cycle accept, byte-masked writes
+ reg [15:0] sd_dout = 16'd0;
+ reg        sd_rd_done = 0, sd_wr_done = 0;
++// the burst channel a cache fill now uses: one grant, a halfword per cycle,
++// bst_done after the last beat
++reg        bs_on = 0, bs_valid_r = 0, bs_done_r = 0;
++reg  [7:0] bs_left = 0;
++reg [24:0] bs_addr = 0;
++reg  [1:0] bs_step = 0;
++reg [15:0] bs_data_r = 0;
++assign arb_bs_valid = bs_valid_r;
++assign arb_bs_data  = bs_data_r;
++assign arb_bst_done = bs_done_r;
+ 
+ always @(posedge clk) begin : sdram_device
+ 	reg [15:0] t;
+ 	sd_rd_done <= 0;
+ 	sd_wr_done <= 0;
+-	if (arb_req && !arb_wr) begin
++	bs_done_r  <= 0;
++	bs_valid_r <= 0;
++	if (arb_req && arb_bst && !arb_wr) begin
++		bs_on   <= 1;
++		bs_left <= arb_len;
++		bs_addr <= arb_addr;
++		bs_step <= arb_step;
++	end else if (bs_on) begin
++		bs_valid_r <= 1;
++		bs_data_r  <= ram[bs_addr[14:0]];
++		// one address unit is one halfword (bit 0 is the halfword selector)
++		bs_addr    <= bs_addr + {23'd0, bs_step};
++		if (bs_left == 8'd1) begin
++			bs_on     <= 0;
++			bs_done_r <= 1;
++		end else
++			bs_left <= bs_left - 8'd1;
++	end else if (arb_req && !arb_wr) begin
+ 		sd_dout    <= ram[arb_addr[14:0]];
+ 		sd_rd_done <= 1;
+ 	end else if (arb_req && arb_wr) begin
+@@ -431,13 +474,18 @@ initial begin
+ 	// (a 32-bit main-RAM data access is 10 units, i.e. 10 ARM7 cycles or 20
+ 	// ARM9 cycles, for the same 298 ns). A gate that doubled the ARM7's memory
+ 	// latency as well would show up here as ~2x.
+-	check(c7 < r9 + r9 / 4, "the ARM7's memory access is not slowed, only its clock");
+-	// The same shared work, counted on a clock that is twice as long: what the
+-	// ARM7 waits for costs it half as many of its own cycles as the ARM9
+-	// spends clk_sys cycles waiting, and only its *own* execution is at half
+-	// rate. That is the shape the DS's timing table has.
+-	check(q7 > q9 / 3 && q7 < q9 * 2 / 3,
+-	      "the ARM7 spends about half as many of its own cycles on the same work");
++	//
++	// This used to be checked against the ARM9's runtime, a proxy that only
++	// held while both cores paid the same memory time. The fill collector
++	// ended that: it bursts main-RAM reads for the ARM9 (m9_active only) and
++	// leaves the ARM7 alone, so the ARM9 got about twice as fast and the
++	// comparison measures the collector instead of the clock. The ARM7's own
++	// numbers are the invariant, and they are this bench's recorded ones:
++	// 4,780 clk_sys and 2,390 enabled, 8.95 own cycles per instruction.
++	check(c7 >= 4770 && c7 <= 4790,
++	      "the ARM7's memory cost is the number it was before");
++	check(e7 * 100 / CLK_STEPS >= 850 && e7 * 100 / CLK_STEPS <= 950,
++	      "the ARM7 still spends ~8.95 own cycles per instruction");
+ 	check_word(CLK_DATA7, CLK_SUM, "ARM7 store reached main RAM");
+ 	check_word(CLK_DATA7 + 4, CLK_SUM + 1, "ARM7 load/store round trip");
+ 	$display("  Normal   : ARM7/ARM9 end to end = %.2fx on this program",
+diff --git a/fpga/tb/tb_main_bus.sv b/fpga/tb/tb_main_bus.sv
+index 7796951..1d83493 100644
+--- a/fpga/tb/tb_main_bus.sv
++++ b/fpga/tb/tb_main_bus.sv
+@@ -80,6 +80,32 @@ reg        pk_served = 0;
+ wire [24:0] bus_ram_addr;
+ wire [15:0] bus_ram_wdata;
+ wire  [1:0] bus_ram_be;
++wire        bus_ram_bst;
++wire  [7:0] bus_ram_len;
++wire        bus_bs_valid;
++wire [15:0] bus_bs_data;
++// the arbiter's SDRAM side: the burst channel the VRAM path already had,
++// now shared with the bus window
++wire        arb_bst, arb_bst_done, arb_bs_valid;
++wire  [7:0] arb_len;
++wire  [1:0] arb_step;
++wire [15:0] arb_bs_data;
++
++// ---- a 2D engine's stand-in on the arbiter's VRAM port: four-beat read
++// bursts with eight idle cycles between them, so a fill and a scanline
++// fetch actually meet at the arbiter
++reg         eng_on = 0;
++reg         eng_req = 0;
++reg   [7:0] eng_len = 8'd4;
++reg  [24:0] eng_addr = 25'h0180_0000;  // the 0x06 page, clear of main RAM
++reg   [3:0] eng_gap = 0;
++wire        eng_ready;
++integer     eng_grants = 0;
++integer     eng_wait = 0, eng_worst = 0;
++
++// arbiter transactions this bench has watched complete, and of those, the
++// ones that carried a burst: the currency a fill is actually paid in
++integer     grants = 0, bursts = 0, cyc = 0;
+ wire        arb_req, arb_wr;
+ wire [24:0] arb_addr;
+ wire [15:0] arb_wdata;
+@@ -174,6 +200,8 @@ main_bus dut (
+ 	.cart_valid(win_valid), .cart_rdata(win_data),
+ 	.ram_req(bus_ram_req), .ram_wr(bus_ram_wr), .ram_addr(bus_ram_addr),
+ 	.ram_wdata(bus_ram_wdata), .ram_be(bus_ram_be),
++	.ram_bst(bus_ram_bst), .ram_len(bus_ram_len),
++	.ram_bs_valid(bus_bs_valid), .ram_bs_data(bus_bs_data),
+ 	.ram_done(exp_ddr_sel ? exp_done : bus_ram_done),
+ 	.ram_rdata(exp_ddr_sel ? exp_rdata : arb_rdata),
+ 	.exp_ddr_sel(exp_ddr_sel), .exp_ddr_hw(exp_ddr_hw),
+@@ -237,13 +265,20 @@ mem_arbiter arbiter (
+ 	.clk(clk), .reset(reset),
+ 	.bus_req(bus_ram_req), .bus_wr(bus_ram_wr), .bus_addr(bus_ram_addr),
+ 	.bus_wdata(bus_ram_wdata), .bus_be(bus_ram_be), .bus_ready(bus_ram_done),
++	.bus_bst(bus_ram_bst && !exp_ddr_sel), .bus_len(bus_ram_len),
++	.bus_bs_valid(bus_bs_valid), .bus_bs_data(bus_bs_data),
+ 	.save_req(1'b0), .save_wr(1'b0), .save_addr(25'd0),
+ 	.save_wdata(16'd0),	.save_be(2'b00), .save_ready(),
+-	.vram_req(1'b0), .vram_wr(1'b0), .vram_addr(25'd0),
+-	.vram_wdata(16'd0), .vram_be(2'b00), .vram_ready(),
++	.vram_req(eng_req), .vram_wr(1'b0), .vram_addr(eng_addr),
++	.vram_wdata(16'd0), .vram_be(2'b11),
++	.vram_bst(1'b1), .vram_len(eng_len), .vram_step(2'd1),
++	.vram_ready(eng_ready),
+ 	.sdram_req(arb_req), .sdram_wr(arb_wr), .sdram_addr(arb_addr),
+ 	.sdram_wdata(arb_wdata), .sdram_be(arb_be),
++	.sdram_bst(arb_bst), .sdram_len(arb_len), .sdram_step(arb_step),
+ 	.sdram_rd_done(arb_rd_done), .sdram_wr_done(arb_wr_done),
++	.sdram_bst_done(arb_bst_done),
++	.sdram_bs_valid(arb_bs_valid), .sdram_bs_data(arb_bs_data),
+ 	.sdram_rdata(arb_rdata)
+ );
+ 
+@@ -256,11 +291,44 @@ wire [11:0] m_idx = {arb_addr[23], arb_addr[22], arb_addr[9:0]};
+ reg [15:0] ram [0:4095];
+ reg [15:0] sd_dout = 0;
+ reg sd_rd_done = 0, sd_wr_done = 0;
++// the burst channel: one grant, then a halfword per cycle in address order,
++// then bst_done on the cycle after the last beat. No back-pressure, which is
++// the controller's own rule for a burst.
++reg        bs_on = 0;
++reg  [7:0] bs_left = 0;
++reg [24:0] bs_addr = 0;
++reg  [1:0] bs_step = 0;
++reg        bs_valid_r = 0, bs_done_r = 0;
++reg [15:0] bs_data_r = 0;
++assign arb_bs_valid = bs_valid_r;
++assign arb_bs_data  = bs_data_r;
++assign arb_bst_done = bs_done_r;
++
+ always @(posedge clk) begin : sdram_model
+ 	reg [15:0] t;
+-	sd_rd_done <= 0;
+-	sd_wr_done <= 0;
+-	if (arb_req && !arb_wr) begin
++	sd_rd_done   <= 0;
++	sd_wr_done   <= 0;
++	bs_done_r    <= 0;
++	bs_valid_r   <= 0;
++	if (arb_req && arb_bst && !arb_wr) begin
++		bs_on   <= 1;
++		bs_left <= arb_len;
++		bs_addr <= arb_addr;
++		bs_step <= arb_step;
++	end else if (bs_on) begin
++		bs_valid_r <= 1;
++		bs_data_r  <= ram[{bs_addr[23], bs_addr[22], bs_addr[9:0]}];
++		// one address unit is one halfword: bit 0 of the arbiter address is
++		// the halfword selector inside a 32-bit word, so a bus burst (step 1)
++		// walks the line one halfword at a time and a VRAM 16-bit interleave
++		// (step 2) skips every other one.
++		bs_addr    <= bs_addr + {23'd0, bs_step};
++		if (bs_left == 8'd1) begin
++			bs_on     <= 0;
++			bs_done_r <= 1;
++		end else
++			bs_left <= bs_left - 8'd1;
++	end else if (arb_req && !arb_wr) begin
+ 		sd_dout   <= ram[m_idx];
+ 		sd_rd_done <= 1;
+ 	end else if (arb_req && arb_wr) begin
+@@ -271,6 +339,37 @@ always @(posedge clk) begin : sdram_model
+ 		sd_wr_done <= 1;
+ 	end
+ end
++
++// the engine: ask for a four-beat burst, take the grant, idle eight cycles,
++// ask again. Its worst wait is what a line fill does to the picture.
++always @(posedge clk) begin
++	if (!eng_on) begin
++		eng_req <= 0;
++		eng_gap <= 0;
++	end else if (!eng_req) begin
++		if (eng_gap == 0) begin
++			eng_req <= 1;
++			eng_wait <= 0;
++		end else
++			eng_gap <= eng_gap - 4'd1;
++	end else begin
++		eng_wait <= eng_wait + 1;
++		if (eng_ready) begin
++			eng_req    <= 0;
++			eng_gap    <= 4'd8;
++			eng_grants <= eng_grants + 1;
++			if (eng_wait > eng_worst) eng_worst <= eng_wait;
++		end
++	end
++end
++
++// arbiter transactions, and of those the ones that carried a burst
++always @(posedge clk) begin
++	if (bus_ram_done) begin
++		grants = grants + 1;
++		if (bus_ram_bst) bursts = bursts + 1;
++	end
++end
+ assign arb_rdata = sd_dout;
+ assign arb_rd_done = sd_rd_done;
+ assign arb_wr_done = sd_wr_done;
+@@ -1055,6 +1154,73 @@ initial begin
+ 	repeat (4) @(posedge clk);
+ 	check("a second ARM7 write snoops again", snoop_n === 1);
+ 
++	//--------------------------------------------------------------
++	// what a line fill costs, in arbiter transactions
++	//--------------------------------------------------------------
++	// Eight words of one 32-byte line in address order, the way a cache
++	// fills. `grants` counts `bus_ram_done` pulses, so a burst-sevenths
++	// saving shows up as one number and not as a bench's idea of memory
++	// speed: the model answers an access in a clock, the controller does
++	// not, and only the transaction count means anything both ways.
++	begin : fillcost
++		integer w;
++		integer t0;
++		reg [31:0] got [0:7];
++		for (w = 0; w < 8; w = w + 1)
++			m9_write(32'h0200_0800 + w * 4, 32'h1000 + w, 4'hF);
++		grants = 0; bursts = 0;
++		t0 = $time;
++		for (w = 0; w < 8; w = w + 1)
++			m9_read(32'h0200_0800 + w * 4, got[w]);
++		cyc = ($time - t0) / 20;
++		$display("  fill: %0d grants, %0d bursts, %0d clocks for 8 words",
++		         grants, bursts, cyc);
++		// four, not three: a 32-bit read is two halfword transactions, so the
++		// first word of each 16-byte half is a plain read (two grants) before
++		// the burst behind it exists. A whole-line collector would burst once
++		// and pay three, for 128 more flops -- the trade the fit decides.
++		check("a line fill is four arbiter grants", grants === 4);
++		check("a line fill is two bursts", bursts === 2);
++		check("the first word is a plain read", got[0] === 32'h1000);
++		check("the last word came out of the collector", got[7] === 32'h1007);
++		check("every word of the fill is right",
++		      got[1] === 32'h1001 && got[3] === 32'h1003 &&
++		      got[4] === 32'h1004 && got[6] === 32'h1006);
++	end
++
++	//--------------------------------------------------------------
++	// the same fill with an engine's bursts on the VRAM port
++	//--------------------------------------------------------------
++	// The arbiter serves VRAM before the bus window, so a fill shares the
++	// controller with a scanline fetch instead of owning it. What the
++	// collector buys here is transactions; what it costs is the engine's
++	// wait, because a granted burst holds the port for all of its beats.
++	// Both are printed, and the bound says what the bench expects of the
++	// design rather than what it happened to measure.
++	begin : contended
++		integer w;
++		integer t0, e0;
++		reg [31:0] got [0:7];
++		eng_on = 1; eng_grants = 0; eng_worst = 0;
++		repeat (60) @(posedge clk);
++		check("the engine is served while the CPUs idle", eng_grants > 0);
++		m9_write(32'h0200_0800, 32'h1000, 4'hF);   // drop the collector
++		grants = 0; bursts = 0; eng_worst = 0;
++		e0 = eng_grants;
++		t0 = $time;
++		for (w = 0; w < 8; w = w + 1)
++			m9_read(32'h0200_0800 + w * 4, got[w]);
++		cyc = ($time - t0) / 20;
++		$display("  contended fill: %0d grants, %0d bursts, %0d clocks; engine %0d grants, worst wait %0d",
++		         grants, bursts, cyc, eng_grants - e0, eng_worst);
++		check("the fill still takes four grants beside it", grants === 4);
++		check("the fill's words survive engine traffic", got[7] === 32'h1007);
++		check("the engine is still served during a fill", eng_grants > e0);
++		check("the engine never waits longer than a burst", eng_worst <= 40);
++		eng_on = 0;
++		repeat (20) @(posedge clk);
++	end
++
+ 	if (errors == 0) $display("tb_main_bus: PASS");
+ 	else             $display("tb_main_bus: FAIL (%0d errors)", errors);
+ 	$finish;
