@@ -3823,3 +3823,68 @@ fit that was started for it was stopped once the region had been removed,
 since what it was fitting was already the seed 4 row above. Closing this
 domain has to come from the logic or from a licensed fitter, not from a
 constraint.
+### The shipped tree's own seeds, and the enable's worth (2026-11-27)
+
+The margin that matters belongs to the tree that closes, so the seed
+sweep was repeated on the shipped tree instead of on the bypass tree.
+Seed 1 produced no bitstream: `quartus_map` ended with `Error (293007)`,
+out of memory, after `Error (125085)` complained that the QSF had been
+changed outside Quartus. Seed 2 fitted:
+
+| shipped tree, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
+|---|---|---|---|---|---|---|---|---|
+| as shipped, seed 4 | 4,191 | 40,283 | 38,144 | -5.300 | -37,641.902 | +0.244 | +0.038 | 4,037,796 |
+| `nds-sh2`, seed 2 | 4,191 | 40,325 | 38,185 | -4.969 | -34,313.716 | +0.251 | -0.526 | 4,079,660 |
+
+That is 0.56 ns worse than the seeded baseline, and the path dump says
+the violation changed identity rather than getting longer. At seed 4 the
+worst path is ascal's counter enable, `o_hcpt -> o_vcpt_pre`, with
+-0.133 ns of skew. At seed 2 it is `o_poly_phase1.t1[0] ->
+o_h_poly_phase.t1[0]`: one logic level, 0.337 ns of cell delay and
+6.269 ns of interconnect, a single net from `FF_X19_Y45_N40` to
+`FF_X29_Y67_N19`, ten columns and twenty-two rows apart, against -0.452
+ns of skew. No logic changed between the two fits; the fitter put two
+flops that talk to each other at opposite corners of the device.
+
+So the seed lottery here is not a different critical logic but the length
+of one direct hop. The shipped seed is the best of the three samples
+taken -- seed 4 +0.038, seed 2 -0.526, adaptive off -0.150 -- and there
+is nothing left to win in it.
+
+Locking the counter enable is ruled out by the toolchain, so the
+remaining question is what shortening it would buy. The experiment
+removes the last-pixel term from `ascal`'s vertical-counter enable, so
+`o_hcpt` feeds only the twelve counter flops and the 48-fanout enable
+disappears from the design. This tree is not functional and is not
+offered for shipping; it is a bound. Same seed, same settings:
+
+| shipped tree, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
+|---|---|---|---|---|---|---|---|---|
+| as shipped, seed 4 | 4,191 | 40,283 | 38,144 | -5.300 | -37,641.902 | +0.244 | +0.038 | 4,037,796 |
+| `nds-ena`, enable cut | 4,172 | 38,728 | 37,863 | -5.290 | -36,306.828 | +0.252 | -0.097 | 4,013,988 |
+
+The counter-enable path leaves the report's top three, so the cut did what
+it was meant to do to that net -- and the domain still misses. The new
+binding path is a third ascal path, `o_v_poly_t.b1[15]` through
+`Add235`'s carry chain to `o_v_poly_pix.b[2]`, and skew decides it again:
+the launch clock reaches `DSP_X32_Y79_N0` 0.813 ns later than it reaches
+the receiving flop in row 75. The run is 0.135 ns worse than the uncut
+tree at the same seed, which is inside the seed noise measured above, so
+the measured worth of the enable's fanout is zero to within a tenth of a
+nanosecond. Removing it does not find the 0.43 ns; it moves the miss to
+whichever skew-bound path is next.
+
+There is no knob to reach for either. In 17.0 Lite the synthesis and
+fitting options expose `ALLOW_REGISTER_DUPLICATION` and
+`ROUTER_LCELL_INSERTION_AND_LOGIC_DUPLICATION`, both already on, and
+nothing else that acts on fanout: no `MAX_FANOUT`, no physical-synthesis
+effort setting, no region, as the LogicLock probe showed.
+
+Three fits, three different paths, one recurring term: -0.452, -0.133 and
+-0.813 ns of skew against 6.732 ns of period, on a device whose LABs are
+100% used. The video domain's last four tenths are clock arrival
+differences that the core can neither name nor place. That closes the
+line from the RTL side: `ascal` is framework, the fitter that could place
+those flops is not in this licence, and every core-side change measured
+here lands at zero or worse. Anything that spends the domain's remaining
++0.038 ns has to be judged by a fit from now on.
