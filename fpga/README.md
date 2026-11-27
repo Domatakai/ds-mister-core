@@ -327,9 +327,19 @@ travel the same path, since they do not come the store way. It covers the
 fill window too: a line's valid bit is set when the line is taken, in the
 probe cycle, and the invalidation is not gated on anything else, so a
 write landing while a fill runs clears that bit and the fill finishes
-into a line nothing will read. What is left on the bus side is a burst
-fill -- one transaction for a whole line instead of seven -- and that is
-about bus slots, not correctness.
+into a line nothing will read. What was left on the bus side was a burst
+fill, and it was built and measured: the second read that lands in a line
+the previous read landed in has `main_bus` fetch the whole line as one
+16-halfword burst, and the fill's remaining words are answered out of the
+collector that catches the beats. `tb_main_bus`, with a grant counter in
+it, counts eight word reads of a line at **16 arbiter grants before, 3
+after**, and `tb_cpu_clk` has the ARM9's cached program at 4,253 ->
+1,964 cycles. It does not ship: the fit is 1,238 ALMs and 20 LABs
+*smaller* than the shipped tree and still -0.302 ns on `pll_hdmi`, so the
+change lives in AREA.md and `fits.csv` rather than in the bitstream. The
+bench's clocks count bus slots, not time -- 86 against 128 is not a
+hardware ratio -- and AREA.md says what can and cannot be claimed from
+either number.
 
 `tb_arm9_cache_path` runs a program through the core with the cache on and
 watches the bus rather than only the registers: 22 checks, ten of them by
@@ -371,8 +381,12 @@ nothing at all.
 
 What follows the caches, in the order the remaining work costs most:
 
-* a burst fill: one bus transaction for a whole line instead of seven,
-  for the bus slots rather than for a gap in correctness
+* a burst fill that ships: built and measured (16 grants to 3, the ARM9
+  4,253 to 1,964 cycles) and fitted at -0.302 ns on `pll_hdmi`, so it
+  waits for the domain's margin rather than for the design's area
+* a write burst for the clean path: a dirty line cleaned to memory is the
+  same 16 grants in the other direction, and `sdram_ctrl` has no write
+  burst to give it
 * the DMA channels' edge cases against cached memory -- source and
   destination in the same line, a channel started while a line is dirty
 * the 3D path behind the current single-engine pipeline, including the

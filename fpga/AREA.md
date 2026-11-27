@@ -3888,3 +3888,72 @@ line from the RTL side: `ascal` is framework, the fitter that could place
 those flops is not in this licence, and every core-side change measured
 here lands at zero or worse. Anything that spends the domain's remaining
 +0.038 ns has to be judged by a fit from now on.
+
+### The line collector: 16 grants to 3, and 0.34 ns of HDMI lost
+### (2026-11-27)
+
+A cache miss fetched its line one word per transaction: eight reads, eight
+arbiter requests, and eight times the ARM9 waited for a grant. The burst
+itself was already in `mem_arbiter` -- `sdram_bst`/`sdram_len`, built for
+the 2D engines' VRAM reads -- so the missing halves were a requester on the
+master A side and somewhere to put the beats. Both went into `main_bus`,
+which is the point of that shape: the core's fill states do not change,
+`arm9_core.sv` is untouched, and every cache bench measured the handshake
+it already measured.
+
+The policy is one line wide on purpose. The second read that lands in the
+same 32-byte line as the previous read becomes a 16-halfword burst: one
+grant, sixteen beats, the first two answered at once and the other
+fourteen caught in a 256-flop collector (eight words, a 17-bit tag, the
+beat counter). Read nine of the fill is a collector hit and never reaches
+the arbiter. A lone read triggers nothing, and any completed main-RAM
+write from any master drops the collector.
+
+It was measured before it was claimed, in `tb_main_bus` with a grant
+counter added, because the bench's old `bus_rd && bus_ready` count says
+nothing about a 16-beat transaction:
+
+| eight word reads of one line | arbiter grants | bench clocks |
+|---|---|---|
+| collector defeated (`last_rd <= 1'b0`) | 16 | 128 |
+| collector on | 3 | 86 |
+
+Those clocks are the bench's SDRAM model, which answers an access in one
+clock: they count slots, not time. `sdram_ctrl`'s header puts a single
+access at ~9 clocks, so 86 against 128 is not a hardware ratio and is not
+quoted as one. In `tb_cpu_clk`, whose program walks fresh main RAM, the
+ARM9 alone goes 4,253 -> 1,964 cycles; the ARM7, which the collector does
+not serve (`m9_active` only), stays at 4,781 and its 8.95 own cycles per
+instruction do not move.
+
+Two bugs on the way, both caught by a bench number that made no sense
+rather than by reading: the burst request kept the previous access's
+`ram_wr`, so a fill following a store went out as a write burst and wrote
+the line's first halfword over itself (`tb_cpu_clk`: "ARM9 alone: 153
+cycles", the program's stores never landing); and `tb_cpu_clk` tied the
+burst ports low, which left `tb_main_bus` as the only bench exercising
+them, and the debug dump showed `BSTREQ`/`BSTD` with `w0 = xxxxxxxx`.
+
+The fit is where it stops:
+
+| the collector in `main_bus` | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
+|---|---|---|---|---|---|---|---|---|
+| burst read from master A | 4,171 | 39,045 | 38,449 | -5.332 | -31,343.690 | +0.249 | **-0.302** | 4,038,268 |
+
+It is a *smaller* design than the tree it came from -- 1,238 fewer ALMs,
+20 fewer LABs, TNS 6,298 ps better -- and it still loses 0.34 ns in a
+domain it does not touch. The collector is on `clk_sys`; the binding path
+is the renderer skew the section above describes. At 4,171 of 4,191 LABs
+there is no room for the fitter to keep that placement while moving
+anything else, and -0.302 against +0.038 is more than the 0.145 ns a seed
+sweep spans. So it does not ship and the tree is restored: the collector
+exists in this section and as `nds-col-s4` in `fits.csv`, not in the rbf.
+
+What would make it shippable, in the order worth trying: a four-word
+collector (128 flops), a fill as two bursts and six hits, four grants
+instead of three -- except the flops are not the term, since the design
+got smaller; a seed sweep, which the numbers above say cannot cover
+0.34 ns; or the licensed placement this domain has needed since the wmask
+line. The reading of this fit is the one the section above reached and
+this one confirms: on this device, area is not what binds, and a change
+that wins area can still lose the only margin there is.
