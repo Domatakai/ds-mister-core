@@ -4034,6 +4034,16 @@ the ones at nine.)
 | no collector | 16 | 128 | 272 | 632 | 1,472 |
 | 16-byte collector | 4 | 91 | 127 | 265 | 406 |
 
+**The baseline build.** Every "no collector" column above is one bench
+built twice, and the recipe sits in `tb_main_bus`'s header so it does not
+have to be reconstructed from memory: force the lone-read trigger off
+(`last_rd <= 1'b0;` in `main_bus.sv`) and compile the same testbench with
+`-DNO_COLLECTOR`. That define only changes what the bench expects -- sixteen
+grants, no bursts -- and skips the save-against-the-bus's-burst row, because
+without the trigger there is no bus burst to contend with. The traffic is
+otherwise identical, which is what makes 128/91 and 272/127 a comparison
+rather than two anecdotes.
+
 Latency cannot change the grant count, and the clock count is where the
 shape pays: sixteen latencies on a fill against four, so the fill goes from
 128/91 to 272/127. The ARM9's cached program in `tb_cpu_clk` says the same in
@@ -4076,6 +4086,23 @@ advantage over DMA is the same 4x it has over the current bus, and the
 coherence bill is one snoop per word rather than per line. The DMA's slots
 are the largest single consumer this bench has measured, and unlike the fill
 it has no burst path at all.
+
+**What a DMA burst would be worth.** A DMA transfer pays one handshake per
+32-bit word: 512 grants and 8,704 clocks for 1 KB. The arbiter already
+carries a read burst and answers main RAM addresses, so the same channel for
+the DMA can be priced without new RTL -- 1 KB as 32 sixteen-beat bursts on
+the burst port: **32 grants and 961 clocks**, sixteen times fewer
+transactions and nine times less time. Only the read half can be priced:
+`sdram_ctrl` has no write burst, so a copy is those 32 read grants plus the
+512 write grants it pays today, 544 against 1,024. The asymmetry is the
+finding -- the read side of a DMA is where a burst is nearly free, the write
+side is where the controller has nothing to give.
+
+**A save against DMA.** The DMA holds the port one grant at a time, so a
+save arriving mid-transfer waits **12 clocks**, the same as an idle port,
+where an engine's 64-beat burst costs it 76. The save path's worst case is
+the engines' bursts, not the DMA, and that is now measured rather than
+argued from the handshake.
 
 Verdict unchanged: the bench is the deliverable, the shipped tree is the
 one at dca8d3291a78, and both shapes stay in the patch.

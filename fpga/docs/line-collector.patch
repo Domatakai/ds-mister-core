@@ -484,10 +484,31 @@ index a3975a7..2ff3d50 100644
  	$display("  %0d checks, %0d failure(s)", checks, errors);
  	if (errors == 0) $display("TB CPUCLK PASS");
 diff --git a/fpga/tb/tb_main_bus.sv b/fpga/tb/tb_main_bus.sv
-index 7796951..3e753cb 100644
+index 7796951..b399cfe 100644
 --- a/fpga/tb/tb_main_bus.sv
 +++ b/fpga/tb/tb_main_bus.sv
-@@ -80,6 +80,62 @@ reg        pk_served = 0;
+@@ -5,6 +5,20 @@
+ //            rtl/bus/main_bus.sv rtl/mem/mem_arbiter.sv \
+ //            rtl/cart/cheat_engine.sv rtl/audio/midi_port.sv //            rtl/bus/ipc.sv rtl/bus/nds_timers.sv rtl/bus/math_unit.sv //            rtl/bus/sys_io.sv rtl/bus/nds_rtc.sv rtl/bus/spi.sv //            rtl/bus/fw_default.sv && vvp /tmp/tb_bus
+ //
++// The collector tables in AREA.md come from two builds of this file. This one
++// is the patch's tree, with main_bus's burst port wired. The baseline is the
++// same tree with the lone-read trigger forced off, and the bench told there
++// will be no collector:
++//
++//   sed -i "s/last_rd  <= is_ram && m_rd && !m_wr && m9_active;/last_rd  <= 1'b0;/" \
++//       rtl/bus/main_bus.sv
++//   iverilog -g2012 -DNO_COLLECTOR -o /tmp/tb_bus_nc ... (the same file list)
++//
++// -DNO_COLLECTOR only changes what this bench expects -- sixteen grants and no
++// bursts -- and skips the save-against-the-bus's-burst row, because without
++// the trigger there is no bus burst to contend with. Everything else is the
++// same traffic, which is what makes the two columns comparable.
++//
+ // Add -DPAK_REAL and rtl/mem/exp_ddr.sv to put the real DDR3 shim in the
+ // 32 MB pak's place: the pak checks then have to survive its line cache,
+ // write buffer and port handshake instead of a mock answering directly.
+@@ -80,6 +94,65 @@ reg        pk_served = 0;
  wire [24:0] bus_ram_addr;
  wire [15:0] bus_ram_wdata;
  wire  [1:0] bus_ram_be;
@@ -547,10 +568,13 @@ index 7796951..3e753cb 100644
 +// arbiter transactions this bench has watched complete, and of those, the
 +// ones that carried a burst: the currency a fill is actually paid in
 +integer     grants = 0, bursts = 0, cyc = 0;
++// arbiter transactions and, of those, the ones with a burst behind them:
++// `grants` above counts only the bus window's, these count every master's
++integer     arb_grants = 0, arb_bursts = 0;
  wire        arb_req, arb_wr;
  wire [24:0] arb_addr;
  wire [15:0] arb_wdata;
-@@ -174,6 +230,8 @@ main_bus dut (
+@@ -174,6 +247,8 @@ main_bus dut (
  	.cart_valid(win_valid), .cart_rdata(win_data),
  	.ram_req(bus_ram_req), .ram_wr(bus_ram_wr), .ram_addr(bus_ram_addr),
  	.ram_wdata(bus_ram_wdata), .ram_be(bus_ram_be),
@@ -559,7 +583,7 @@ index 7796951..3e753cb 100644
  	.ram_done(exp_ddr_sel ? exp_done : bus_ram_done),
  	.ram_rdata(exp_ddr_sel ? exp_rdata : arb_rdata),
  	.exp_ddr_sel(exp_ddr_sel), .exp_ddr_hw(exp_ddr_hw),
-@@ -185,8 +243,8 @@ main_bus dut (
+@@ -185,8 +260,8 @@ main_bus dut (
  	.vram_wdata(vram_wdata),
  	.vram_valid(vram_valid_m), .vram_rdata(vram_rdata_m),
  	.dma_reg_rdata(16'd0),
@@ -570,7 +594,7 @@ index 7796951..3e753cb 100644
  	.dma_irq(4'd0),
  	.pal_ra_a(10'd0), .pal_ra_b(10'd0),
  	.oam_ra_a(10'd0), .oam_ra_b(10'd0),
-@@ -237,18 +295,25 @@ mem_arbiter arbiter (
+@@ -237,18 +312,25 @@ mem_arbiter arbiter (
  	.clk(clk), .reset(reset),
  	.bus_req(bus_ram_req), .bus_wr(bus_ram_wr), .bus_addr(bus_ram_addr),
  	.bus_wdata(bus_ram_wdata), .bus_be(bus_ram_be), .bus_ready(bus_ram_done),
@@ -601,7 +625,7 @@ index 7796951..3e753cb 100644
  //------------------------------------------------------------------
  // The index carries SDRAM bits 23:22, so the expansion pak region
  // (0xA00000) and main RAM (0x200000) cannot alias inside this small model.
-@@ -256,19 +321,150 @@ wire [11:0] m_idx = {arb_addr[23], arb_addr[22], arb_addr[9:0]};
+@@ -256,19 +338,156 @@ wire [11:0] m_idx = {arb_addr[23], arb_addr[22], arb_addr[9:0]};
  reg [15:0] ram [0:4095];
  reg [15:0] sd_dout = 0;
  reg sd_rd_done = 0, sd_wr_done = 0;
@@ -748,6 +772,12 @@ index 7796951..3e753cb 100644
 +	end
 +end
 +
++always @(posedge clk)
++	if (arb_req) begin
++		arb_grants = arb_grants + 1;
++		if (arb_bst) arb_bursts = arb_bursts + 1;
++	end
++
 +// how long each bus-window request waited: a word's second halfword is a new
 +// address and so a new wait, while a burst's whole stream counts as one
 +always @(posedge clk) begin
@@ -763,7 +793,7 @@ index 7796951..3e753cb 100644
  	end
  end
  assign arb_rdata = sd_dout;
-@@ -589,6 +785,142 @@ task send_byte;
+@@ -589,6 +808,142 @@ task send_byte;
  	end
  endtask
  
@@ -906,7 +936,7 @@ index 7796951..3e753cb 100644
  reg [31:0] r1, r2;
  reg  [7:0] b1;
  reg [15:0] h1;
-@@ -1055,6 +1387,185 @@ initial begin
+@@ -1055,6 +1410,248 @@ initial begin
  	repeat (4) @(posedge clk);
  	check("a second ARM7 write snoops again", snoop_n === 1);
  
@@ -1087,6 +1117,69 @@ index 7796951..3e753cb 100644
 +		// 256 words is 1 KB: the last one is at base + 0x3FC
 +		m9_read(32'h0200_33FC, r1);
 +		check("the last DMA word reads back", r1 === 32'hD000_00FF);
++	end
++
++	//--------------------------------------------------------------
++	// what giving the DMA the burst channel would be worth
++	//--------------------------------------------------------------
++	// A DMA transfer is one handshake per 32-bit word, two halfword grants:
++	// 512 grants and 8,704 clocks for 1 KB. The arbiter already carries a
++	// read burst and it answers main RAM addresses, so the price of handing
++	// the DMA that channel is measurable without new RTL: the same 1 KB as 32
++	// sixteen-beat bursts, back to back. Reads only -- sdram_ctrl has no write
++	// burst, so a copy's write half stays at 512 grants and a copy comes to
++	// 544 against 1,024.
++	begin : dmaburst
++		integer t0;
++		sd_lat = 9;
++		eng_on = 0;
++		repeat (30) @(posedge clk);
++		eng_addr = 25'h018_0000;
++		eng_len = 8'd16; eng_gap_len = 8'd0; eng_left = 8'd32;
++		arb_grants = 0; arb_bursts = 0; eng_grants = 0;
++		t0 = $time;
++		eng_on = 1;
++		while (eng_on) @(posedge clk);
++		$display("  DMA burst, 1 KB read as 32 x 16 beats: %0d grants, %0d bursts, %0d clocks",
++		         arb_grants, arb_bursts, ($time - t0) / 20);
++		check("1 KB as 16-beat bursts is 32 arbiter grants",
++		      arb_grants === 32);
++		check("every one of them is a burst", arb_bursts === 32);
++		check("the burst channel reads 1 KB in under 1,000 clocks",
++		      ($time - t0) / 20 <= 1000);
++		eng_on = 0;
++		repeat (20) @(posedge clk);
++	end
++
++	//--------------------------------------------------------------
++	// a save against a DMA transfer
++	//--------------------------------------------------------------
++	// The DMA holds the port one grant at a time and has no burst, so a save
++	// arriving mid-transfer waits the grant in flight, not the transfer --
++	// the opposite of an engine's 64 beats.
++	begin : savedma
++		integer w;
++		sd_lat = 9;
++		eng_on = 0;
++		repeat (20) @(posedge clk);
++		save_worst = 0;
++		fork
++			begin
++				for (w = 0; w < 64; w = w + 1)
++					dma_wr(32'h0200_4000 + w * 4, 32'hE000_0000 + w, 4'hF);
++			end
++			begin
++				wait (d_wr === 1'b1);
++				@(posedge clk);
++				save_beat(25'h0C0_0030, 16'h5678);
++			end
++		join
++		$display("  save inside a DMA transfer: %0d clocks", save_worst);
++		check("a save waits one DMA grant, not the transfer",
++		      save_worst <= 30);
++		check("the save's halfword landed",
++		      ram[{save_addr[23], save_addr[22], save_addr[9:0]}]
++		      === 16'h5678);
 +	end
 +
  	if (errors == 0) $display("tb_main_bus: PASS");

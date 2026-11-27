@@ -344,9 +344,13 @@ collector and 127 with it, and the ARM9's cached program at 9,041 against
 inside back-to-back 64-beat bursts waits 133 clocks in a two-burst fetch
 and 279 in a four-burst one, so the wait is the fetch and scales with it.
 A save arriving mid-burst waits 76 clocks with the collector against 24
-without, and 33 against the bus's own 8-beat burst. And a 1 KB DMA write
-is 512 grants and 256 snoops: two grants a word, four times a collected
-fill, with no burst path at all. Both shapes are in
+without, 33 against the bus's own 8-beat burst, and 12 against a DMA
+transfer, which holds one grant and not a burst. A 1 KB DMA write is 512
+grants and 256 snoops -- two grants a word, four times a collected fill --
+and the read half of the same 1 KB as 32 sixteen-beat bursts is 32 grants
+and 961 clocks, so a copy would come to 544 grants against 1,024. The
+no-collector columns are one bench built twice, and that recipe is in the
+bench's header. Both shapes are in
 `fpga/docs/line-collector.patch`, with `nds-col-s4` and `nds-c4-s4` in
 `fits.csv`; AREA.md says what the numbers do and do not support.
 
