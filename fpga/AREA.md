@@ -4014,52 +4014,68 @@ completes, that its words survive the engine's traffic, and that the engine
 is never left waiting longer than a burst. Whoever fits a bus change next
 gets the contended number without building the harness again.
 
-### The bench at 64 beats, with a latency and a save (2026-11-27)
+### The bench at 64 beats, with a latency, a save and a DMA (2026-11-27)
 
-Three follow-ups from the contended round, measured in the same bench and
+Four follow-ups from the contended round, measured in the same bench and
 kept with the collector in `fpga/docs/line-collector.patch`.
 
 **The controller has a price per transaction now.** The stand-in answered in
 the cycle after the request, which is why every clock count before this was
 called a floor. It takes `sd_lat`: a granted request costs that many clocks
-before its commit or its first burst beat. Twelve is the bench's reading of
-the arbiter's own figure -- 64 beats hold the port for ~73 clocks, so nine
-are overhead -- with a margin for tRCD and CAS. The same eight-word fill:
+before its commit or its first burst beat. The number is `sdram_ctrl`'s own
+and not a guess: its header puts a single access at **~9 clocks** from the
+request edge to done, and a burst at N beats plus the row and CL overhead,
+so nine is what both shapes pay once per transaction. (The first cut of this
+section used 12; the controller's figure is nine, and the numbers here are
+the ones at nine.)
 
-| shape | grants | 1-clock | 12-clock | 64-beat engine, 1-clock | 64-beat engine, 12-clock |
+| shape | grants | 1-clock | 9-clock | 64-beat engine, 1-clock | 64-beat engine, 9-clock |
 |---|---|---|---|---|---|
-| no collector | 16 | 128 | 320 | 632 | 1,568 |
-| 16-byte collector | 4 | 91 | 139 | 265 | 430 |
+| no collector | 16 | 128 | 272 | 632 | 1,472 |
+| 16-byte collector | 4 | 91 | 127 | 265 | 406 |
 
 Latency cannot change the grant count, and the clock count is where the
-shape pays: sixteen latencies on a fill against four. The ARM9's cached
-program in `tb_cpu_clk` says the same in whole-program terms -- **4,253 ->
-3,599 cycles on the one-clock model, 10,637 -> 5,315 with twelve** -- so
-the collector's value doubles once the controller is paid for, and the
-4,253/3,599 pairing quoted so far was the conservative one.
+shape pays: sixteen latencies on a fill against four, so the fill goes from
+128/91 to 272/127. The ARM9's cached program in `tb_cpu_clk` says the same in
+whole-program terms -- **4,253 -> 3,599 cycles on the one-clock model, 9,041
+-> 4,886 at nine** -- so the collector is worth 1.85x once the controller
+is paid for, where the one-clock model put it at 1.18x. The 4,253/3,599
+pairing quoted before is the conservative one; the realistic model makes the
+shape look better, not worse.
 
-**The 64-beat engine.** The engine's burst length is a setting, and the row
-that matters is the boundary: 64 beats with its idle cycles at zero, so
-the port is re-requested on the cycle after each burst retires. The bus
-window then gets no grant at all between bursts -- the store that drops the
-line waits 186 clocks, three remaining bursts, in both shapes -- and the
-fill runs only once the fetch ends. A real scanline is four bursts, so the
-wait is bounded by the fetch rather than by the burst: that is the
-contract the priority order assumes, and it is now written down. With
-eight idle cycles the wait is one burst (73 clocks with a collector, 65
-without), and the engine's own worst wait moves 69 -> 72 without latency
-and 88 -> 96 with it: an 8-beat bus burst costs the engines 3 to 8
-clocks here, where the four-beat engine row put the whole-line shape's 16
-beats at 20.
+**The zero-gap row, tightened.** The earlier row started the fill with a
+store and then ran its reads after the engine had stopped, so only the store
+saw the starvation. The bench now issues a read *inside* a burst and lets
+the fetch run: a read arriving in a two-burst fetch waits **133 clocks**, and
+in a four-burst fetch **279**, so the wait is the rest of the fetch and it
+scales with the fetch, not with the burst. With eight idle cycles the wait
+is one burst -- 73 clocks with a collector, 65 without, at zero latency;
+91/90 at nine -- and the engine's own wait moves 69 -> 72 at zero latency
+and 82 -> 90 at nine. An 8-beat bus burst costs the engines 3 to 8 clocks,
+where the four-beat engine row put the whole-line shape's 16 beats at 20.
+The boundary is a property of the priority order, not of the collector: the
+no-collector build measures the same 133/271. What the collector changes is
+what a bus request does when it *does* get in.
 
-**The save path.** The save port was tied off; it is driven now. A save
-arriving two cycles into a streaming 64-beat burst waits **79 clocks**
-with the collector against **30** without, because a granted burst holds
-the port for every beat and the save wins the next free one. With the port
-idle a save lands in 15 clocks either way. The save's bound is therefore
-the rest of a burst, not the arbiter's priority order -- up to ~50 clocks
-of extra worst-case save latency, which belongs in the cart's budget if
-the shape ever ships.
+**The save path.** The save port was tied off; it is driven now. A save two
+cycles into a streaming 64-beat burst waits **76 clocks** with the collector
+against **24** without, because a granted burst holds the port for every
+beat and the save wins the next free one; with the port idle, 12 either way.
+Against the bus's own 8-beat burst -- the shape the save path actually shares
+a requester with -- the wait is **33 clocks**. The save's bound is therefore
+the rest of a granted burst, not the arbiter's priority order: ~50 clocks of
+added worst-case save latency, which belongs in the cart's budget if the
+shape ever ships.
+
+**What a DMA transfer costs.** The DMA master's port is driven too, with
+`dma_engine`'s own handshake, and a 1 KB write (256 words) is **512 arbiter
+grants, 8,704 clocks at nine, and 256 snoops** -- one maintenance command
+per word. That is two grants a 32-bit word, the rate the *shipped* fill runs
+at and four times a collected one (0.5 grant a word), so the collector's
+advantage over DMA is the same 4x it has over the current bus, and the
+coherence bill is one snoop per word rather than per line. The DMA's slots
+are the largest single consumer this bench has measured, and unlike the fill
+it has no burst path at all.
 
 Verdict unchanged: the bench is the deliverable, the shipped tree is the
 one at dca8d3291a78, and both shapes stay in the patch.

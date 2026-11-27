@@ -286,7 +286,7 @@ index 8f8ffc1..71d43d0 100644
  			sdram_addr <= bus_addr;
  			sdram_wdata<= bus_wdata;
 diff --git a/fpga/tb/tb_cpu_clk.sv b/fpga/tb/tb_cpu_clk.sv
-index a3975a7..4c2162f 100644
+index a3975a7..2ff3d50 100644
 --- a/fpga/tb/tb_cpu_clk.sv
 +++ b/fpga/tb/tb_cpu_clk.sv
 @@ -184,10 +184,18 @@ wire        bus_ram_req, bus_ram_wr, bus_ram_done;
@@ -473,10 +473,10 @@ index a3975a7..4c2162f 100644
 +	// survives a real controller, and it is timed, not asserted, because the
 +	// point is the size of the difference.
 +	$display("");
-+	sd_lat = 12;
++	sd_lat = 9;
 +	wipe;
 +	run(2'd0, 1'b1, 1'b0);
-+	$display("  Normal   : ARM9 alone, 12-clock latency: %0d cycles, %0d enabled (%.2f clk_sys per instruction)",
++	$display("  Normal   : ARM9 alone, 9-clock latency: %0d cycles, %0d enabled (%.2f clk_sys per instruction)",
 +	         c9, e9, c9 * 1.0 / CLK_STEPS);
 +	check_word(CLK_DATA9, CLK_SUM, "the ARM9 result survives the latency model");
 +
@@ -484,10 +484,10 @@ index a3975a7..4c2162f 100644
  	$display("  %0d checks, %0d failure(s)", checks, errors);
  	if (errors == 0) $display("TB CPUCLK PASS");
 diff --git a/fpga/tb/tb_main_bus.sv b/fpga/tb/tb_main_bus.sv
-index 7796951..f81090d 100644
+index 7796951..3e753cb 100644
 --- a/fpga/tb/tb_main_bus.sv
 +++ b/fpga/tb/tb_main_bus.sv
-@@ -80,6 +80,54 @@ reg        pk_served = 0;
+@@ -80,6 +80,62 @@ reg        pk_served = 0;
  wire [24:0] bus_ram_addr;
  wire [15:0] bus_ram_wdata;
  wire  [1:0] bus_ram_be;
@@ -525,6 +525,14 @@ index 7796951..f81090d 100644
 +wire        save_ready;
 +integer     save_worst = 0, save_n = 0;
 +
++// ---- the DMA master's stand-in: the engine's own protocol on the bus's DMA
++// port, one 32-bit word per handshake
++reg  [31:0] d_addr = 0, d_wdata = 0;
++reg   [3:0] d_be = 0;
++reg         d_rd = 0, d_wr = 0;
++wire        d_ready;
++wire [31:0] d_rdata;
++
 +// the controller's fixed cost: sd_lat clocks from a grant to its first beat
 +// or its commit. Zero is the one-clock stand-in the earlier tables used.
 +reg   [7:0] sd_lat = 0;
@@ -542,7 +550,7 @@ index 7796951..f81090d 100644
  wire        arb_req, arb_wr;
  wire [24:0] arb_addr;
  wire [15:0] arb_wdata;
-@@ -174,6 +222,8 @@ main_bus dut (
+@@ -174,6 +230,8 @@ main_bus dut (
  	.cart_valid(win_valid), .cart_rdata(win_data),
  	.ram_req(bus_ram_req), .ram_wr(bus_ram_wr), .ram_addr(bus_ram_addr),
  	.ram_wdata(bus_ram_wdata), .ram_be(bus_ram_be),
@@ -551,7 +559,18 @@ index 7796951..f81090d 100644
  	.ram_done(exp_ddr_sel ? exp_done : bus_ram_done),
  	.ram_rdata(exp_ddr_sel ? exp_rdata : arb_rdata),
  	.exp_ddr_sel(exp_ddr_sel), .exp_ddr_hw(exp_ddr_hw),
-@@ -237,18 +287,25 @@ mem_arbiter arbiter (
+@@ -185,8 +243,8 @@ main_bus dut (
+ 	.vram_wdata(vram_wdata),
+ 	.vram_valid(vram_valid_m), .vram_rdata(vram_rdata_m),
+ 	.dma_reg_rdata(16'd0),
+-	.d_addr(32'd0), .d_wdata(32'd0), .d_be(4'd0),
+-	.d_rd(1'b0), .d_wr(1'b0),
++	.d_addr(d_addr), .d_wdata(d_wdata), .d_be(d_be),
++	.d_rd(d_rd), .d_wr(d_wr), .d_ready(d_ready), .d_rdata(d_rdata),
+ 	.dma_irq(4'd0),
+ 	.pal_ra_a(10'd0), .pal_ra_b(10'd0),
+ 	.oam_ra_a(10'd0), .oam_ra_b(10'd0),
+@@ -237,18 +295,25 @@ mem_arbiter arbiter (
  	.clk(clk), .reset(reset),
  	.bus_req(bus_ram_req), .bus_wr(bus_ram_wr), .bus_addr(bus_ram_addr),
  	.bus_wdata(bus_ram_wdata), .bus_be(bus_ram_be), .bus_ready(bus_ram_done),
@@ -582,7 +601,7 @@ index 7796951..f81090d 100644
  //------------------------------------------------------------------
  // The index carries SDRAM bits 23:22, so the expansion pak region
  // (0xA00000) and main RAM (0x200000) cannot alias inside this small model.
-@@ -256,19 +313,150 @@ wire [11:0] m_idx = {arb_addr[23], arb_addr[22], arb_addr[9:0]};
+@@ -256,19 +321,150 @@ wire [11:0] m_idx = {arb_addr[23], arb_addr[22], arb_addr[9:0]};
  reg [15:0] ram [0:4095];
  reg [15:0] sd_dout = 0;
  reg sd_rd_done = 0, sd_wr_done = 0;
@@ -744,7 +763,7 @@ index 7796951..f81090d 100644
  	end
  end
  assign arb_rdata = sd_dout;
-@@ -589,6 +777,101 @@ task send_byte;
+@@ -589,6 +785,142 @@ task send_byte;
  	end
  endtask
  
@@ -812,6 +831,47 @@ index 7796951..f81090d 100644
 +	end
 +endtask
 +
++// a DMA write beat: request held, ready pulse, request dropped before the
++// next one -- the handshake dma_engine drives
++task dma_wr;
++	input [31:0] a;
++	input [31:0] d;
++	input  [3:0] be;
++	begin
++		@(posedge clk);
++		d_addr <= a; d_wdata <= d; d_be <= be; d_wr <= 1;
++		@(posedge clk);
++		while (!d_ready) @(posedge clk);
++		d_wr <= 0;
++		@(posedge clk);
++	end
++endtask
++
++// a single bus read against 64-beat bursts that leave no idle cycle: the
++// wait is either one burst or the rest of the fetch, and only the second
++// says anything about starvation
++ task zero_gap_probe;
++	input [7:0] bursts;
++	begin
++		sd_lat = 0;
++		eng_len = 8'd64; eng_gap_len = 8'd0; eng_left = bursts;
++		eng_on = 1; eng_grants = 0; eng_worst = 0;
++		wait (bs_on === 1'b1);
++		repeat (2) @(posedge clk);
++		bus_worst = 0;
++		m9_read(32'h0200_1000, r1);
++		$display("  %0d back-to-back 64-beat bursts: read waited %0d clocks, %0d engine grants",
++		         bursts, bus_worst, eng_grants);
++		check("the read waits more than one burst",
++		      bus_worst >= (bursts - 1) * 60);
++		check("the read waits at most the whole fetch",
++		      bus_worst <= bursts * 70);
++		check("the starved read still returns right", r1 === 32'h55AA_1234);
++		eng_on = 0;
++		repeat (20) @(posedge clk);
++	end
++endtask
++
 +// a save beat: hold the request until the arbiter answers, counting clocks.
 +// The save path has the first priority, but a granted burst holds the port.
 +task save_beat;
@@ -846,7 +906,7 @@ index 7796951..f81090d 100644
  reg [31:0] r1, r2;
  reg  [7:0] b1;
  reg [15:0] h1;
-@@ -1055,6 +1338,119 @@ initial begin
+@@ -1055,6 +1387,185 @@ initial begin
  	repeat (4) @(posedge clk);
  	check("a second ARM7 write snoops again", snoop_n === 1);
  
@@ -886,10 +946,10 @@ index 7796951..f81090d 100644
 +	// A burst pays it once for eight beats; a plain read pays it per
 +	// halfword. That is the trade the grant count only hints at.
 +	begin : latency
-+		sd_lat = 12;
++		sd_lat = 9;
 +		fill_line(32'h0200_0800, 32'h1000,
 +		          "every word of the latency fill is right");
-+		$display("  fill, 12-clock latency: %0d grants, %0d bursts, %0d clocks",
++		$display("  fill, 9-clock latency: %0d grants, %0d bursts, %0d clocks",
 +		         fill_grants, fill_bursts, fill_cyc);
 +		check("latency does not change the grant count",
 +		      fill_grants === EXP_GRANTS);
@@ -899,7 +959,7 @@ index 7796951..f81090d 100644
 +		check("sixteen latencies, sixteen fixed costs",
 +		      fill_cyc >= 150);
 +`else
-+		check("four latencies are all a burst fill pays", fill_cyc <= 150);
++		check("four latencies are all a burst fill pays", fill_cyc <= 140);
 +`endif
 +	end
 +
@@ -919,11 +979,13 @@ index 7796951..f81090d 100644
 +	contended_fill(8'd64, 8'd8, 8'd0, 8'd0, 84,
 +	               "every word of the 64-beat fill is right");
 +	// one scanline is 256 halfwords: four 64-beat bursts. Asked for back to
-+	// back, the bus window only gets the cycle the handshake leaves between
-+	// them, so the fill's wait is the fetch, not the burst -- four spans.
-+	contended_fill(8'd64, 8'd0, 8'd0, 8'd4, 340,
-+	               "all words right across a scanline's fetch");
-+	contended_fill(8'd64, 8'd8, 8'd12, 8'd0, 100,
++	// back, the bus window gets no grant between them at all, so the wait is
++	// the rest of the fetch and not one burst. Two fetch lengths show that it
++	// scales with the fetch rather than sitting at the burst.
++	m9_write(32'h0200_1000, 32'h55AA_1234, 4'hF);
++	zero_gap_probe(8'd2);
++	zero_gap_probe(8'd4);
++	contended_fill(8'd64, 8'd8, 8'd9, 8'd0, 100,
 +	               "all words right, latency and 64 beats");
 +
 +	//--------------------------------------------------------------
@@ -935,7 +997,7 @@ index 7796951..f81090d 100644
 +	// rest of it, and that -- not the priority order -- is the number a
 +	// save's own timing has to survive.
 +	begin : saveburst
-+		sd_lat = 12;
++		sd_lat = 9;
 +		eng_len = 8'd64; eng_gap_len = 8'd4; eng_left = 0;
 +		eng_on = 1;
 +		repeat (40) @(posedge clk);
@@ -946,7 +1008,7 @@ index 7796951..f81090d 100644
 +		save_beat(25'h0C0_0010, 16'hBEEF);
 +		$display("  save inside a 64-beat burst: %0d clocks", save_worst);
 +		check("a save lands inside one burst's span",
-+		      save_worst <= 64 + 12 + 12);
++		      save_worst <= 64 + 9 + 12);
 +		check("the save's halfword reached the controller",
 +		      ram[{save_addr[23], save_addr[22], save_addr[9:0]}]
 +		      === 16'hBEEF);
@@ -961,6 +1023,70 @@ index 7796951..f81090d 100644
 +		check("the second save landed",
 +		      ram[{save_addr[23], save_addr[22], save_addr[9:0]}]
 +		      === 16'hCAFE);
++	end
++
++`ifndef NO_COLLECTOR
++	//--------------------------------------------------------------
++	// a save against the bus's own burst
++	//--------------------------------------------------------------
++	// The engine's 64 beats are one contender. The other is the bus's own
++	// collector: an 8-beat fill burst holds the port the same way, and the
++	// save path sits behind the same arbiter, so its wait is the rest of
++	// that burst plus the controller's fixed cost.
++	begin : savebus
++		integer w;
++		sd_lat = 9;
++		eng_on = 0;
++		// this model only holds 4 KB, so a second line at a 1 KB offset aliases
++		// the first: seed all eight words, and the fill's own check reads back
++		// what it should
++		for (w = 0; w < 8; w = w + 1)
++			m9_write(32'h0200_0C00 + w * 4, 32'h2000 + w, 4'hF);
++		repeat (30) @(posedge clk);
++		save_worst = 0;
++		fork
++			fill_line(32'h0200_0C00, 32'h2000,
++			          "the fill beside a save is right");
++			begin
++				wait (bus_ram_bst === 1'b1);
++				save_beat(25'h0C0_0020, 16'h1234);
++			end
++		join
++		$display("  save inside the bus's own 8-beat burst: %0d clocks",
++		         save_worst);
++		check("a save waits out the bus's burst, not more",
++		      save_worst <= 40);
++		check("the save's halfword landed",
++		      ram[{save_addr[23], save_addr[22], save_addr[9:0]}]
++		      === 16'h1234);
++	end
++
++`endif
++
++	//--------------------------------------------------------------
++	// what a DMA transfer costs the bus
++	//--------------------------------------------------------------
++	// The DMA engine moves one 32-bit word per handshake, and the bus splits
++	// every 32-bit access into two halfword grants, so a 1 KB channel is 512
++	// arbiter transactions -- the rate the shipped fill runs at, and four
++	// times a collected one. The write also snoops once per word, which is
++	// the coherence half of the bill.
++	begin : dmaslots
++		integer w;
++		integer t0;
++		sd_lat = 9;
++		grants = 0; bursts = 0; bus_worst = 0; snoop_n = 0;
++		t0 = $time;
++		for (w = 0; w < 256; w = w + 1)
++			dma_wr(32'h0200_3000 + w * 4, 32'hD000_0000 + w, 4'hF);
++		$display("  DMA 1 KB write: 256 words, %0d grants, %0d bursts, %0d clocks, %0d snoops",
++		         grants, bursts, ($time - t0) / 20, snoop_n);
++		check("a DMA word is two halfword grants", grants === 512);
++		check("a DMA transfer carries no burst", bursts === 0);
++		check("a DMA write snoops once per word", snoop_n === 256);
++		// 256 words is 1 KB: the last one is at base + 0x3FC
++		m9_read(32'h0200_33FC, r1);
++		check("the last DMA word reads back", r1 === 32'hD000_00FF);
 +	end
 +
  	if (errors == 0) $display("tb_main_bus: PASS");
