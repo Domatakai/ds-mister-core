@@ -3763,3 +3763,63 @@ worse. A
 bypass fix is measured above and the `MASK` is a no-op. Any future change
 to the video domain should be judged by a fit, not by an argument about
 which path it shortens.
+
+### Seeds, the adaptive filter, and the counter lock (2026-11-27)
+
+The fit above leaves `pll_hdmi` 0.43 ns short of the shipped tree, and the
+cheapest lever in the ledger is the seed: the same logic closes at -0.082
+in `nds-ml-s5` and at +0.331 in `nds-ml-s4`, 0.413 ns apart, and
+`nds-tds-s2` sits at -0.259 against +0.150 for `nds-tds-s3`. Refitting one
+seed moves it too, but only 0.05 (`nds-tds-s2` -0.259 against
+`nds-tds-s2b` -0.207). So the seed is where a placement lottery would be
+won.
+
+The bypass-in-logic plus line-buffer tree was fitted at two more seeds:
+
+| same tree, TDS off, effort 8.0 | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
+|---|---|---|---|---|---|---|---|---|
+| `nds-sw1` | 4,060 | 36,672 | 33,925 | -5.749 | -29,402.507 | +0.255 | -0.467 | 3,947,584 |
+| `nds-sw2` | 4,032 | 36,599 | 34,004 | -4.919 | -26,867.241 | +0.246 | -0.322 | 3,965,656 |
+| `nds-smwb`, seed 4 | 4,058 | 36,637 | 33,990 | -4.413 | -24,620.231 | +0.247 | -0.389 | 3,993,644 |
+
+All three land within 0.145 ns of each other, a third of the 0.413 ns the
+same exercise finds elsewhere. That is the answer to the seed question: on
+this tree the margin is not a placement lottery, because the worst path is
+ascal's counter enable whichever way the fitter lands the flops. Seeds 5
+and 6 were not run -- at 50 minutes each they were buying a different
+sample of the same 0.15 ns.
+
+The adaptive filter has a supported off switch: the framework's
+`MISTER_DISABLE_ADAPTIVE`, which sets `video_freak`'s `.ADAPTIVE` generic
+false and clears the low bit of the menu's 0x2B read. On the shipped tree:
+
+| shipped tree | LABs | ALMs | regs | `emu` setup | TNS | hold | `pll_hdmi` | rbf |
+|---|---|---|---|---|---|---|---|---|
+| as shipped | 4,191 | 40,283 | 38,144 | -5.300 | -37,641.902 | +0.244 | +0.038 | 4,037,796 |
+| `nds-adap`, adaptive off | 4,114 | 38,186 | 37,462 | -5.428 | -35,362.618 | +0.250 | -0.150 | 4,069,116 |
+
+2,097 ALMs leave the design and only 77 LABs, because that pipeline was
+packed into LABs the rest of the core already needed. Video margin gets
+0.188 ns worse, the CPU tree 0.128 ns worse, and the core loses its
+adaptive filters. Not shipped, and not a direction: it costs behaviour and
+buys no margin.
+
+Locking the counters, the one idea that would attack the enable's reach
+directly, is not available in this toolchain. Quartus 17.0 Lite accepts a
+LogicLock region and then removes it -- `Critical Warning (140003):
+Current license file does not support LogicLock regions. The Quartus
+Prime software removes all the LogicLock regions in your design
+automatically` -- and the per-register form fares no better. On a
+four-flop probe project:
+
+    set_location_assignment LABCELL_X10_Y10_N0 -to "r[4]"
+
+gives `Error (171011): Can't assign node "r[4]" to location
+LABCELL_X10_Y10_N0 -- node is type Register cell`, with `Warning
+(292013): Feature LogicLock is only available with a valid subscription
+license` above it. Pins place in Lite; registers and regions do not. The
+0.48 ns of skew on `o_vcpt_pre[5]` is therefore out of reach here: the
+fit that was started for it was stopped once the region had been removed,
+since what it was fitting was already the seed 4 row above. Closing this
+domain has to come from the logic or from a licensed fitter, not from a
+constraint.
