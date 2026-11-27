@@ -336,7 +336,16 @@ to 3**, the ARM9's cached program 4,253 -> 1,964 cycles, -0.302 ns on
 also contends the port with an engine, which is where grants turn into
 time: the fill goes 152 -> 102 clocks (16-byte) or 152 -> 92 (whole line),
 and the engine's worst wait goes 11 -> 12 or 11 -> 20 -- the argument for
-the narrow burst that area alone did not make. Both shapes are in
+the narrow burst that area alone did not make. Three follow-ups closed the
+rest of it. A controller that charges 12 clocks per transaction -- the
+arbiter's own ~73 clocks for 64 beats, less a beat -- puts the fill at 320
+clocks without the collector and 139 with it, and the ARM9's cached
+program at 10,637 against 5,315, where the one-clock model had 4,253
+against 3,599. A 64-beat engine with no idle cycles shuts the bus window
+out for the whole fetch (186 clocks, three bursts), which is the boundary
+the priority order assumes. And a save arriving mid-burst waits 79 clocks
+with the collector against 30 without, because the granted burst holds
+the port. Both shapes are in
 `fpga/docs/line-collector.patch`, with `nds-col-s4` and `nds-c4-s4` in
 `fits.csv`; AREA.md says what the numbers do and do not support.
 
