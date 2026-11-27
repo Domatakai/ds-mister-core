@@ -347,10 +347,16 @@ A save arriving mid-burst waits 76 clocks with the collector against 24
 without, 33 against the bus's own 8-beat burst, and 12 against a DMA
 transfer, which holds one grant and not a burst. A 1 KB DMA write is 512
 grants and 256 snoops -- two grants a word, four times a collected fill --
-and the read half of the same 1 KB as 32 sixteen-beat bursts is 32 grants
-and 961 clocks, so a copy would come to 544 grants against 1,024. The
-no-collector columns are one bench built twice, and that recipe is in the
-bench's header. Both shapes are in
+and the same 1 KB as 16-beat bursts is 32 grants and 961 clocks in either
+direction -- the bench's device model carries the write burst `sdram_ctrl`
+lacks -- so a copy at that length is 64 grants and 1,922 clocks against
+1,024 and 17,408, with a write-data stream into the arbiter the one piece
+left to build. Capping the engine at 16 beats with one idle cycle between
+bursts puts the bus's worst wait at 42 clocks for a fetch 1.7x longer; the
+cap without that hole helps neither side, because the arbiter has to see a
+dropped request before it will pick the bus at all. The no-collector
+columns are one bench built twice, and that recipe is in the bench's
+header. Both shapes are in
 `fpga/docs/line-collector.patch`, with `nds-col-s4` and `nds-c4-s4` in
 `fits.csv`; AREA.md says what the numbers do and do not support.
 

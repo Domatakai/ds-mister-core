@@ -4087,22 +4087,68 @@ coherence bill is one snoop per word rather than per line. The DMA's slots
 are the largest single consumer this bench has measured, and unlike the fill
 it has no burst path at all.
 
-**What a DMA burst would be worth.** A DMA transfer pays one handshake per
+**What a burst channel is worth.** A DMA transfer pays one handshake per
 32-bit word: 512 grants and 8,704 clocks for 1 KB. The arbiter already
-carries a read burst and answers main RAM addresses, so the same channel for
-the DMA can be priced without new RTL -- 1 KB as 32 sixteen-beat bursts on
-the burst port: **32 grants and 961 clocks**, sixteen times fewer
-transactions and nine times less time. Only the read half can be priced:
-`sdram_ctrl` has no write burst, so a copy is those 32 read grants plus the
-512 write grants it pays today, 544 against 1,024. The asymmetry is the
-finding -- the read side of a DMA is where a burst is nearly free, the write
-side is where the controller has nothing to give.
+carries a burst and answers main RAM addresses, so the same traffic on that
+channel is measurable at every length the burst port takes. For 1 KB:
+
+| beats a burst | grants | clocks |
+|---|---|---|
+| 8 | 64 | 1,409 |
+| 16 | 32 | 961 |
+| 32 | 16 | 737 |
+| 64 | 8 | 625 |
+
+Eight times fewer grants from 8 to 64 beats and 2.3x less time: what a burst
+saves is the arbitration, which is charged once, and the beats inside a grant
+are nearly free.
+
+**What a write burst would be worth.** `sdram_ctrl` has no `wr_bst`, so the
+write half of a DMA is 512 grants and 8,704 clocks today. The bench's device
+model now stands in for the controller that would have one -- a halfword a
+beat, the same cadence, and the write checked against the array -- and 1 KB
+of burst writes through the arbiter is **32 grants and 961 clocks**, exactly
+the read at that length. So a copy at 16 beats is 64 grants and 1,922 clocks
+against 1,024 and 17,408: sixteen times fewer transactions, nine times less
+time, and the 4x a burst buys over a single read turns out to be
+direction-blind at the arbiter. What is *not* measured is the interface a
+write burst would need: `sdram_wdata` carries one halfword at grant, so the
+arbiter would grow a write-data stream and the controller a `wr_bst`. That
+is the RTL this bench cannot price, and it is all that stands between 961
+and 8,704.
 
 **A save against DMA.** The DMA holds the port one grant at a time, so a
 save arriving mid-transfer waits **12 clocks**, the same as an idle port,
 where an engine's 64-beat burst costs it 76. The save path's worst case is
 the engines' bursts, not the DMA, and that is now measured rather than
 argued from the handshake.
+
+**Capping an engine's grant.** The starvation row's remedy is a cap: the
+engine asks for fewer beats per grant, so the bus window's longest exclusion
+is one capped burst. The engine's stand-in is split at three lengths, with a
+CPU read issued inside a 256-halfword fetch -- one 256-pixel scanline:
+
+| cap | idle cycles | fetch clocks | CPU read waited |
+|---|---|---|---|
+| 64 | 0 | 299 | 307 |
+| 16 | 0 | 467 | 475 |
+| 64 | 1 | 328 | 90 |
+| 16 | 1 | 508 | 42 |
+| 8 | 1 | 748 | 34 |
+
+The cap alone makes both sides worse, and that is the part worth keeping: a
+shorter burst does drop the request for a cycle, but the arbiter only
+re-arbitrates on a cycle where the request is *still* low, and a zero-gap
+engine never gives it one -- so the read waits out the whole fetch (475
+against 307) while the fetch pays sixteen arbitration overheads instead of
+four (467 against 299). With one idle cycle between bursts the arbiter sees
+the dropped request, and then the cap is exactly the bound: the read's wait
+falls to 90, 42 and 34 clocks at 64, 16 and 8 beats, for fetches of 328, 508
+and 748. A 16-beat cap with one hole is the shape -- **42 clocks of
+worst-case bus wait for 1.7x the engine's fetch**, against 279 with nothing
+capped -- and the 8-beat version spends a third more fetch again to save 8
+clocks of wait.
+
 
 Verdict unchanged: the bench is the deliverable, the shipped tree is the
 one at dca8d3291a78, and both shapes stay in the patch.

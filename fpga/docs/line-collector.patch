@@ -484,7 +484,7 @@ index a3975a7..2ff3d50 100644
  	$display("  %0d checks, %0d failure(s)", checks, errors);
  	if (errors == 0) $display("TB CPUCLK PASS");
 diff --git a/fpga/tb/tb_main_bus.sv b/fpga/tb/tb_main_bus.sv
-index 7796951..b399cfe 100644
+index 7796951..5271755 100644
 --- a/fpga/tb/tb_main_bus.sv
 +++ b/fpga/tb/tb_main_bus.sv
 @@ -5,6 +5,20 @@
@@ -508,7 +508,7 @@ index 7796951..b399cfe 100644
  // Add -DPAK_REAL and rtl/mem/exp_ddr.sv to put the real DDR3 shim in the
  // 32 MB pak's place: the pak checks then have to survive its line cache,
  // write buffer and port handshake instead of a mock answering directly.
-@@ -80,6 +94,65 @@ reg        pk_served = 0;
+@@ -80,6 +94,69 @@ reg        pk_served = 0;
  wire [24:0] bus_ram_addr;
  wire [15:0] bus_ram_wdata;
  wire  [1:0] bus_ram_be;
@@ -532,6 +532,8 @@ index 7796951..b399cfe 100644
 +reg  [24:0] eng_addr = 25'h018_0000;  // the 0x06 page, clear of main RAM
 +reg   [7:0] eng_gap = 0, eng_gap_len = 8'd8;
 +reg   [7:0] eng_left = 0;   // bursts still to run; 0 leaves it running
++reg         eng_wr = 0;     // the engine asks for a burst write
++reg  [15:0] eng_wdata = 16'hA5C3;
 +wire        eng_ready;
 +integer     eng_grants = 0;
 +integer     eng_wait = 0, eng_worst = 0;
@@ -563,6 +565,8 @@ index 7796951..b399cfe 100644
 +// one timed fill, in the currency both shapes are paid in
 +integer     fill_t0, fill_cyc, fill_grants, fill_bursts, fill_bworst, fill_w;
 +integer     fill_seedwait;
++// capped_fetch's two results: the engine's fetch and the CPU read's wait
++integer     fetchcyc = 0, readwait = 0;
 +reg  [31:0] fill_got [0:7];
 +
 +// arbiter transactions this bench has watched complete, and of those, the
@@ -574,7 +578,7 @@ index 7796951..b399cfe 100644
  wire        arb_req, arb_wr;
  wire [24:0] arb_addr;
  wire [15:0] arb_wdata;
-@@ -174,6 +247,8 @@ main_bus dut (
+@@ -174,6 +251,8 @@ main_bus dut (
  	.cart_valid(win_valid), .cart_rdata(win_data),
  	.ram_req(bus_ram_req), .ram_wr(bus_ram_wr), .ram_addr(bus_ram_addr),
  	.ram_wdata(bus_ram_wdata), .ram_be(bus_ram_be),
@@ -583,7 +587,7 @@ index 7796951..b399cfe 100644
  	.ram_done(exp_ddr_sel ? exp_done : bus_ram_done),
  	.ram_rdata(exp_ddr_sel ? exp_rdata : arb_rdata),
  	.exp_ddr_sel(exp_ddr_sel), .exp_ddr_hw(exp_ddr_hw),
-@@ -185,8 +260,8 @@ main_bus dut (
+@@ -185,8 +264,8 @@ main_bus dut (
  	.vram_wdata(vram_wdata),
  	.vram_valid(vram_valid_m), .vram_rdata(vram_rdata_m),
  	.dma_reg_rdata(16'd0),
@@ -594,7 +598,7 @@ index 7796951..b399cfe 100644
  	.dma_irq(4'd0),
  	.pal_ra_a(10'd0), .pal_ra_b(10'd0),
  	.oam_ra_a(10'd0), .oam_ra_b(10'd0),
-@@ -237,18 +312,25 @@ mem_arbiter arbiter (
+@@ -237,18 +316,25 @@ mem_arbiter arbiter (
  	.clk(clk), .reset(reset),
  	.bus_req(bus_ram_req), .bus_wr(bus_ram_wr), .bus_addr(bus_ram_addr),
  	.bus_wdata(bus_ram_wdata), .bus_be(bus_ram_be), .bus_ready(bus_ram_done),
@@ -606,8 +610,8 @@ index 7796951..b399cfe 100644
 +	.bus_bs_valid(bus_bs_valid), .bus_bs_data(bus_bs_data),
 +	.save_req(save_req), .save_wr(save_wr), .save_addr(save_addr),
 +	.save_wdata(save_wdata), .save_be(save_be), .save_ready(save_ready),
-+	.vram_req(eng_req), .vram_wr(1'b0), .vram_addr(eng_addr),
-+	.vram_wdata(16'd0), .vram_be(2'b11),
++	.vram_req(eng_req), .vram_wr(eng_wr), .vram_addr(eng_addr),
++	.vram_wdata(eng_wdata), .vram_be(2'b11),
 +	.vram_bst(1'b1), .vram_len(eng_len), .vram_step(2'd1),
 +	.vram_ready(eng_ready),
  	.sdram_req(arb_req), .sdram_wr(arb_wr), .sdram_addr(arb_addr),
@@ -625,7 +629,7 @@ index 7796951..b399cfe 100644
  //------------------------------------------------------------------
  // The index carries SDRAM bits 23:22, so the expansion pak region
  // (0xA00000) and main RAM (0x200000) cannot alias inside this small model.
-@@ -256,19 +338,156 @@ wire [11:0] m_idx = {arb_addr[23], arb_addr[22], arb_addr[9:0]};
+@@ -256,19 +342,175 @@ wire [11:0] m_idx = {arb_addr[23], arb_addr[22], arb_addr[9:0]};
  reg [15:0] ram [0:4095];
  reg [15:0] sd_dout = 0;
  reg sd_rd_done = 0, sd_wr_done = 0;
@@ -636,8 +640,9 @@ index 7796951..b399cfe 100644
 +reg  [7:0] bs_left = 0;
 +reg [24:0] bs_addr = 0;
 +reg  [1:0] bs_step = 0;
-+reg        bs_valid_r = 0, bs_done_r = 0;
-+reg [15:0] bs_data_r = 0;
++reg        bs_valid_r = 0, bs_done_r = 0, bs_wr = 0;
++reg [15:0] bs_data_r = 0, bs_wdata = 0;
++reg  [1:0] bs_be = 0;
 +// a granted request's fixed cost: lat_left counts it down, then the access
 +// commits or the burst's first beat streams. sd_lat = 0 short-circuits it.
 +reg        lat_on = 0;
@@ -673,11 +678,14 @@ index 7796951..b399cfe 100644
 +			lat_left <= lat_left - 8'd1;
 +		else begin
 +			lat_on <= 0;
-+			if (lat_bst && !lat_wr) begin
-+				bs_on   <= 1;
-+				bs_left <= lat_len;
-+				bs_addr <= lat_addr;
-+				bs_step <= lat_step;
++			if (lat_bst) begin
++				bs_on    <= 1;
++				bs_left  <= lat_len;
++				bs_addr  <= lat_addr;
++				bs_step  <= lat_step;
++				bs_wr    <= lat_wr;
++				bs_wdata <= lat_wdata;
++				bs_be    <= lat_be;
 +			end else if (lat_wr) begin
 +				t = ram[{lat_addr[23], lat_addr[22], lat_addr[9:0]}];
 +				if (lat_be[0]) t[7:0]  = lat_wdata[7:0];
@@ -692,11 +700,14 @@ index 7796951..b399cfe 100644
 +	end else if (arb_req && sd_lat == 0) begin
 +		// no latency: the answer comes on the cycle after the request, which
 +		// is what the earlier tables were measured with
-+		if (arb_bst && !arb_wr) begin
-+			bs_on   <= 1;
-+			bs_left <= arb_len;
-+			bs_addr <= arb_addr;
-+			bs_step <= arb_step;
++		if (arb_bst) begin
++			bs_on    <= 1;
++			bs_left  <= arb_len;
++			bs_addr  <= arb_addr;
++			bs_step  <= arb_step;
++			bs_wr    <= arb_wr;
++			bs_wdata <= arb_wdata;
++			bs_be    <= arb_be;
 +		end else if (!arb_wr) begin
 +			sd_dout    <= ram[m_idx];
 +			sd_rd_done <= 1;
@@ -720,7 +731,16 @@ index 7796951..b399cfe 100644
 +		lat_be    <= arb_be;
 +	end else if (bs_on) begin
 +		bs_valid_r <= 1;
-+		bs_data_r  <= ram[{bs_addr[23], bs_addr[22], bs_addr[9:0]}];
++		if (bs_wr) begin
++			// the write burst sdram_ctrl does not have: one halfword a cycle and
++			// the same data every beat, so the price is the cadence
++			t = ram[{bs_addr[23], bs_addr[22], bs_addr[9:0]}];
++			if (bs_be[0]) t[7:0]  = bs_wdata[7:0];
++			if (bs_be[1]) t[15:8] = bs_wdata[15:8];
++			ram[{bs_addr[23], bs_addr[22], bs_addr[9:0]}] <= t;
++			bs_data_r <= bs_wdata;
++		end else
++			bs_data_r  <= ram[{bs_addr[23], bs_addr[22], bs_addr[9:0]}];
 +		// one address unit is one halfword: bit 0 of the arbiter address is
 +		// the halfword selector inside a 32-bit word, so a bus burst (step 1)
 +		// walks the line one halfword at a time and a VRAM 16-bit interleave
@@ -752,6 +772,9 @@ index 7796951..b399cfe 100644
 +			eng_req    <= 0;
 +			eng_gap    <= eng_gap_len;
 +			eng_grants <= eng_grants + 1;
++			// a burst moves one halfword an address step, so the next one is
++			// eng_len further on: that is what makes a 1 KB transfer 1 KB
++			eng_addr   <= eng_addr + {17'd0, eng_len};
 +			if (eng_wait > eng_worst) eng_worst <= eng_wait;
 +			// a scanline's fetch is a known number of bursts, and stopping
 +			// there is what makes a back-to-back engine measurable instead
@@ -793,7 +816,7 @@ index 7796951..b399cfe 100644
  	end
  end
  assign arb_rdata = sd_dout;
-@@ -589,6 +808,142 @@ task send_byte;
+@@ -589,6 +831,204 @@ task send_byte;
  	end
  endtask
  
@@ -902,6 +925,68 @@ index 7796951..b399cfe 100644
 +	end
 +endtask
 +
++// 1 KB through the burst channel at `len` halfwords a burst, read or write
++task burst_kb;
++	input [7:0] len;
++	input       wr;
++	integer t0;
++	begin
++		sd_lat = 9;
++		eng_on = 0; eng_wr = wr;
++		eng_addr = 25'h018_0000;
++		eng_len = len; eng_gap_len = 8'd0; eng_left = 512 / len;
++		arb_grants = 0; arb_bursts = 0; eng_grants = 0;
++		repeat (20) @(posedge clk);
++		t0 = $time;
++		eng_on = 1;
++		while (eng_on) @(posedge clk);
++		$display("  1 KB %0s, %0d beats a burst: %0d grants, %0d bursts, %0d clocks",
++		         wr ? "write" : "read ", len, arb_grants, arb_bursts,
++		         ($time - t0) / 20);
++		check("one grant a burst", arb_grants === 512 / len);
++		check("every grant is a burst", arb_bursts === 512 / len);
++		eng_on = 0; eng_wr = 0;
++		repeat (20) @(posedge clk);
++	end
++endtask
++
++// a 256-halfword engine fetch split into `cap`-beat bursts `gap` idle cycles
++// apart, with a CPU read issued inside it: the fetch's time and the read's
++// longest wait
++task capped_fetch;
++	input [7:0] cap;
++	input [7:0] gap;
++	integer t0;
++	begin
++		sd_lat = 9;
++		eng_wr = 0;
++		eng_len = cap; eng_gap_len = gap; eng_left = 256 / cap;
++		eng_addr = 25'h018_0000;
++		m9_write(32'h0200_1000, 32'h55AA_1234, 4'hF);  // drop the collector
++		eng_grants = 0; eng_worst = 0;
++		eng_on = 1;
++		wait (bs_on === 1'b1);
++		repeat (2) @(posedge clk);
++		bus_worst = 0;
++		t0 = $time;
++		fork
++			begin
++				m9_read(32'h0200_1000, r1);
++				readwait = bus_worst;
++			end
++			begin
++				while (eng_on) @(posedge clk);
++				fetchcyc = ($time - t0) / 20;
++			end
++		join
++		$display("  engine cap %0d, %0d idle: fetch %0d clocks, %0d grants; CPU read waited %0d",
++		         cap, gap, fetchcyc, eng_grants, readwait);
++		check("the read survives the fetch", r1 === 32'h55AA_1234);
++		eng_on = 0;
++		repeat (20) @(posedge clk);
++	end
++endtask
++
 +// a save beat: hold the request until the arbiter answers, counting clocks.
 +// The save path has the first priority, but a granted burst holds the port.
 +task save_beat;
@@ -936,7 +1021,7 @@ index 7796951..b399cfe 100644
  reg [31:0] r1, r2;
  reg  [7:0] b1;
  reg [15:0] h1;
-@@ -1055,6 +1410,248 @@ initial begin
+@@ -1055,6 +1495,258 @@ initial begin
  	repeat (4) @(posedge clk);
  	check("a second ARM7 write snoops again", snoop_n === 1);
  
@@ -1120,36 +1205,46 @@ index 7796951..b399cfe 100644
 +	end
 +
 +	//--------------------------------------------------------------
-+	// what giving the DMA the burst channel would be worth
++	// what a burst channel is worth, and what a write burst would be
 +	//--------------------------------------------------------------
 +	// A DMA transfer is one handshake per 32-bit word, two halfword grants:
 +	// 512 grants and 8,704 clocks for 1 KB. The arbiter already carries a
-+	// read burst and it answers main RAM addresses, so the price of handing
-+	// the DMA that channel is measurable without new RTL: the same 1 KB as 32
-+	// sixteen-beat bursts, back to back. Reads only -- sdram_ctrl has no write
-+	// burst, so a copy's write half stays at 512 grants and a copy comes to
-+	// 544 against 1,024.
++	// burst, so the price of the same traffic as bursts is measurable at four
++	// lengths, and in both directions. The write direction is the one the
++	// controller does not have -- sdram_ctrl has no `wr_bst` -- so the device
++	// model here stands in for the controller that would: same cadence, a
++	// halfword a beat. The RTL that would have to come with it is the
++	// write-data stream into the arbiter, which is what this bench cannot
++	// price.
 +	begin : dmaburst
-+		integer t0;
 +		sd_lat = 9;
-+		eng_on = 0;
-+		repeat (30) @(posedge clk);
-+		eng_addr = 25'h018_0000;
-+		eng_len = 8'd16; eng_gap_len = 8'd0; eng_left = 8'd32;
-+		arb_grants = 0; arb_bursts = 0; eng_grants = 0;
-+		t0 = $time;
-+		eng_on = 1;
-+		while (eng_on) @(posedge clk);
-+		$display("  DMA burst, 1 KB read as 32 x 16 beats: %0d grants, %0d bursts, %0d clocks",
-+		         arb_grants, arb_bursts, ($time - t0) / 20);
-+		check("1 KB as 16-beat bursts is 32 arbiter grants",
-+		      arb_grants === 32);
-+		check("every one of them is a burst", arb_bursts === 32);
-+		check("the burst channel reads 1 KB in under 1,000 clocks",
-+		      ($time - t0) / 20 <= 1000);
-+		eng_on = 0;
-+		repeat (20) @(posedge clk);
++		burst_kb(8'd8,  1'b0);
++		burst_kb(8'd16, 1'b0);
++		burst_kb(8'd32, 1'b0);
++		burst_kb(8'd64, 1'b0);
++		burst_kb(8'd16, 1'b1);
++		check("the write burst wrote the whole region",
++		      ram[12'h000] === 16'hA5C3 && ram[12'h100] === 16'hA5C3 &&
++		      ram[12'h1FF] === 16'hA5C3);
++		$display("  a 1 KB copy at 16 beats: %0d grants both ways, against 1,024 today",
++		         2 * (512 / 16));
 +	end
++
++	//--------------------------------------------------------------
++	// capping an engine's grant
++	//--------------------------------------------------------------
++	// The remedy for the zero-gap row is a cap: the engine asks for fewer
++	// beats per grant, so the bus window's longest exclusion is one capped
++	// burst. Two ways of leaving the port are measured -- the cap alone, and
++	// the cap with a one-cycle hole between bursts, which is what the arbiter
++	// needs in order to see a dropped request and pick the bus at all. A
++	// scanline's fetch is 256 halfwords, so 64 beats is four grants, 16 is
++	// sixteen.
++	capped_fetch(8'd64, 8'd0);
++	capped_fetch(8'd16, 8'd0);
++	capped_fetch(8'd64, 8'd1);
++	capped_fetch(8'd16, 8'd1);
++	capped_fetch(8'd8,  8'd1);
 +
 +	//--------------------------------------------------------------
 +	// a save against a DMA transfer
