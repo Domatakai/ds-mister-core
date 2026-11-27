@@ -353,8 +353,15 @@ lacks -- so a copy at that length is 64 grants and 1,922 clocks against
 1,024 and 17,408, with a write-data stream into the arbiter the one piece
 left to build. Capping the engine at 16 beats with one idle cycle between
 bursts puts the bus's worst wait at 42 clocks for a fetch 1.7x longer; the
-cap without that hole helps neither side, because the arbiter has to see a
-dropped request before it will pick the bus at all. The no-collector
+cap without that hole helps neither side unless the arbiter supplies the
+hole itself, which it now can: one fairness bit (after a VRAM grant the bus
+gets the next) reproduces the 90/58/42 clocks with no cooperation from the
+requester and slightly cheaper fetches, and a 32-beat cap lands at 58. The
+write burst's data path costs two halfwords of double buffering (32 flops)
+once the source feeds a halfword a clock -- one register only manages a
+beat every other cycle, and a source at half that rate starves 224 of a
+512-beat burst for 1,185 clocks, 1.23x the burst cost and still 7.3x better
+than word-at-a-time. The no-collector
 columns are one bench built twice, and that recipe is in the bench's
 header. Both shapes are in
 `fpga/docs/line-collector.patch`, with `nds-col-s4` and `nds-c4-s4` in

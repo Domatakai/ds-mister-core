@@ -4125,16 +4125,22 @@ argued from the handshake.
 
 **Capping an engine's grant.** The starvation row's remedy is a cap: the
 engine asks for fewer beats per grant, so the bus window's longest exclusion
-is one capped burst. The engine's stand-in is split at three lengths, with a
-CPU read issued inside a 256-halfword fetch -- one 256-pixel scanline:
+is one capped burst. The engine's stand-in is split at four lengths, with a
+CPU read issued inside a 256-halfword fetch -- one 256-pixel scanline -- and
+then the same caps again with the requester leaving no hole and the arbiter's
+fairness bit doing the work instead:
 
-| cap | idle cycles | fetch clocks | CPU read waited |
-|---|---|---|---|
-| 64 | 0 | 299 | 307 |
-| 16 | 0 | 467 | 475 |
-| 64 | 1 | 328 | 90 |
-| 16 | 1 | 508 | 42 |
-| 8 | 1 | 748 | 34 |
+| cap | idle cycles | fair bit | fetch clocks | CPU read waited |
+|---|---|---|---|---|
+| 64 | 0 | no | 299 | 307 |
+| 16 | 0 | no | 467 | 475 |
+| 64 | 1 | no | 328 | 90 |
+| 32 | 1 | no | 388 | 58 |
+| 16 | 1 | no | 508 | 42 |
+| 8 | 1 | no | 748 | 34 |
+| 64 | 0 | yes | 327 | 90 |
+| 32 | 0 | yes | 383 | 58 |
+| 16 | 0 | yes | 495 | 42 |
 
 The cap alone makes both sides worse, and that is the part worth keeping: a
 shorter burst does drop the request for a cycle, but the arbiter only
@@ -4143,11 +4149,42 @@ engine never gives it one -- so the read waits out the whole fetch (475
 against 307) while the fetch pays sixteen arbitration overheads instead of
 four (467 against 299). With one idle cycle between bursts the arbiter sees
 the dropped request, and then the cap is exactly the bound: the read's wait
-falls to 90, 42 and 34 clocks at 64, 16 and 8 beats, for fetches of 328, 508
-and 748. A 16-beat cap with one hole is the shape -- **42 clocks of
-worst-case bus wait for 1.7x the engine's fetch**, against 279 with nothing
-capped -- and the 8-beat version spends a third more fetch again to save 8
-clocks of wait.
+falls to 90, 58, 42 and 34 clocks at 64, 32, 16 and 8 beats, for fetches of
+328, 388, 508 and 748. 32 beats is where the wait is already under 60 for
+only 8% more fetch than uncapped; 16 buys another 16 clocks for another 31%
+of the fetch; 8 spends a third again to save 8.
+
+**The fairness bit does the requester's job.** `mem_arbiter` now carries one
+bit -- after a VRAM grant, the bus gets the next one if it is asking -- and
+the last three rows are the same caps with the engine's gap set to zero. The
+waits are identical to the gap-one rows to the clock (90, 58, 42), and the
+fetches are slightly *shorter* (327 against 328, 383 against 388, 495
+against 508), because the arbiter re-arbitrates without waiting for the
+engine to drop and re-raise its request. So "cap plus a hole" does not need
+the engine's cooperation, or a change to every requester: one bit in the
+arbiter, and the cap becomes a bound the bus can rely on.
+
+**The write-data path.** `sdram_wdata` carries one halfword at grant, so a
+burst write needs data per beat: staging fed by the master. The model fills
+a FIFO of `wf_depth` halfwords at one per `wf_rate` clocks from the grant,
+and a beat that arrives before its data stalls the burst. 1 KB at 16 beats:
+
+| staging | source | clocks | stalls |
+|---|---|---|---|
+| none | -- | 961 | 0 |
+| 16 deep | one a clock | 961 | 0 |
+| 2 deep | one a clock | 961 | 0 |
+| 1 deep | one a clock | 1,441 | 480 |
+| 16 deep | one every 2 clocks | 1,185 | 224 |
+
+Depth only buys head start, and the grant's own 9-clock latency already
+gives it: two halfwords never stall, so the RTL price is 32 flops of double
+buffering once the source keeps up. A single register cannot be refilled on
+the cycle a beat takes it, so it alternates: 1,441 clocks for 480 stalls,
+1.5x the burst it should be. And a
+source at half the beat rate starves 224 of the 512 beats: depth cannot fix
+a rate, the burst just degrades to 1.23x its cost, still 7.3x better than
+the 8,704 word-at-a-time writes.
 
 
 Verdict unchanged: the bench is the deliverable, the shipped tree is the
