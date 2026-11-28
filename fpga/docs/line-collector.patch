@@ -256,7 +256,7 @@ index 41e7c18..721cd6d 100644
  		midi_wr <= 0; midi_rd <= 0;
  		pal_we <= 0; oam_we <= 0; pal2_we <= 0; oam2_we <= 0;
 diff --git a/fpga/rtl/mem/mem_arbiter.sv b/fpga/rtl/mem/mem_arbiter.sv
-index 8f8ffc1..e31c74c 100644
+index 8f8ffc1..a7791a1 100644
 --- a/fpga/rtl/mem/mem_arbiter.sv
 +++ b/fpga/rtl/mem/mem_arbiter.sv
 @@ -37,7 +37,11 @@ module mem_arbiter (
@@ -277,13 +277,19 @@ index 8f8ffc1..e31c74c 100644
  	// master D: SPU sample fetch (read-only, one halfword per grant)
 +	// after granting VRAM, let the bus have the next grant: the fairness bit
 +	// that turns a requester's polite idle cycle into the arbiter's job. Its
-+	// history is the arbiter's own `owner` register, so it costs no flop of
-+	// its own -- only the comparator on the priority mux.
++	// answer is latched in `fair_win` when the VRAM transaction ends, so the
++	// priority mux compares one bit instead of an owner code and a request.
 +	input            fair_en,
  	input            spu_req,
  	input     [24:0] spu_addr,
  	output reg       spu_ready,
-@@ -96,6 +105,12 @@ reg        last_wr = 0;
+@@ -91,11 +100,18 @@ reg [1:0] owner = OWN_BUS;
+ reg       pending = 0; // waiting for sdram_rd/wr_done
+ reg [24:0] last_addr = 0; // address of the granted op (multi-beat detect)
+ reg        last_wr = 0;
++reg        fair_win = 0;  // the bus's turn, latched off a VRAM grant
+ 
+ // burst beats belong to the VRAM master that is currently being granted
  assign vram_bs_valid = sdram_bs_valid && pending && (owner == OWN_VRAM);
  assign vram_bs_data  = sdram_bs_data;
  
@@ -296,16 +302,29 @@ index 8f8ffc1..e31c74c 100644
  // the SPU's fetched word is simply the controller's read data, valid on its
  // spu_ready pulse
  assign spu_rdata = sdram_rdata;
-@@ -120,7 +135,7 @@ always @(posedge clk) begin
+@@ -108,6 +124,8 @@ always @(posedge clk) begin
+ 
+ 	case (state)
+ 	S_IDLE: begin
++		// a window the bus no longer wants must not hold VRAM off forever
++		if (!bus_req) fair_win <= 0;
+ 		if (save_req) begin
+ 			owner      <= OWN_SAVE;
+ 			sdram_req  <= 1;
+@@ -120,7 +138,7 @@ always @(posedge clk) begin
  			state      <= S_BUSY;
  			last_addr  <= save_addr;
  			last_wr    <= save_wr;
 -		end else if (vram_req) begin
-+		end else if (vram_req && !(fair_en && owner == OWN_VRAM && bus_req)) begin
++		end else if (vram_req && !fair_win) begin
  			owner      <= OWN_VRAM;
  			sdram_req  <= 1;
  			sdram_bst  <= vram_bst;
-@@ -137,7 +152,9 @@ always @(posedge clk) begin
+@@ -134,10 +152,13 @@ always @(posedge clk) begin
+ 			state      <= S_BUSY;
+ 			last_addr  <= vram_addr;
+ 			last_wr    <= vram_wr;
++			fair_win   <= fair_en && bus_req;
  		end else if (bus_req) begin
  			owner      <= OWN_BUS;
  			sdram_req  <= 1;
@@ -316,6 +335,35 @@ index 8f8ffc1..e31c74c 100644
  			sdram_wr   <= bus_wr;
  			sdram_addr <= bus_addr;
  			sdram_wdata<= bus_wdata;
+@@ -146,6 +167,7 @@ always @(posedge clk) begin
+ 			state      <= S_BUSY;
+ 			last_addr  <= bus_addr;
+ 			last_wr    <= bus_wr;
++			fair_win   <= 0;
+ 		end else if (spu_req) begin
+ 			owner      <= OWN_SPU;
+ 			sdram_req  <= 1;
+@@ -167,7 +189,10 @@ always @(posedge clk) begin
+ 			pending <= 0;
+ 			case (owner)
+ 			OWN_SAVE: save_ready <= 1;
+-			OWN_VRAM: vram_ready <= 1;
++			OWN_VRAM: begin
++				vram_ready <= 1;
++				fair_win   <= fair_en && bus_req;
++			end
+ 			OWN_SPU:  spu_ready  <= 1;
+ 			default:  bus_ready  <= 1;
+ 			endcase
+@@ -199,7 +224,7 @@ always @(posedge clk) begin
+ 		state <= S_IDLE;
+ 		sdram_req <= 0; sdram_wr <= 0; sdram_bst <= 0; sdram_step <= 0;
+ 		bus_ready <= 0; save_ready <= 0; vram_ready <= 0; spu_ready <= 0;
+-		pending <= 0; owner <= OWN_BUS;
++		pending <= 0; owner <= OWN_BUS; fair_win <= 0;
+ 	end
+ end
+ 
 diff --git a/fpga/tb/tb_3d_path.sv b/fpga/tb/tb_3d_path.sv
 index 2c79bed..986582b 100644
 --- a/fpga/tb/tb_3d_path.sv

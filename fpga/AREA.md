@@ -4178,7 +4178,7 @@ state. The bench cannot tell the two apart -- 327/383/495/719 fetches and
 | collector (`nds-col-s4`) | 4,171 | 39,045 | 38,449 | -0.302 |
 | fairness, own flop (`nds-fair-s4`) | 4,141 | 38,684 | 38,169 | **-0.678** |
 | fairness, `owner` history (`nds-fairb-s4`) | 4,190 | 41,189 | 38,542 | **-0.200** |
-| shipped (`dsh-hdr-s4`) | 4,191 | 40,283 | 38,144 | +0.038 |
+| shipped (`nds-hdr-s4`) | 4,191 | 40,283 | 38,144 | +0.038 |
 
 The third and fourth rows are the same feature fitted twice, so the flop's
 price is their difference: 0.478 ns for one register in the grant decision.
@@ -4188,6 +4188,33 @@ that fit the worst path is `pll_hdmi`'s own output counter (-0.200, TNS
 clock. The fair arbiter therefore stays in the patch with the burst, and the
 follow-up it needs is not a cheaper bit but a shorter grant path for the bit
 to sit on.
+
+**Shortening the decision instead of the state.** That last result is ambiguous
+about where the 0.200 ns goes: the worst path in the `owner` fit is the
+`pll_hdmi` counter, not the arbiter's mux, so the comparator may be paying
+for placement rather than for depth. The third shape tests the other half of
+the question. A single `fair_win` register takes `fair_en && bus_req` when a
+VRAM grant is taken and again when that transaction ends, so the VRAM branch
+tests one bit -- `vram_req && !fair_win` -- where the old one tested an owner
+code and a request line, and the mux that sells the grant sees a register
+instead of a comparator. It latches a fact the old condition re-derived every
+cycle, which is why the bench cannot tell the shapes apart: 327/383/495/719
+fetches and 90/58/42/34 waits, check for check, in all three buses. The
+window also clears itself when the bus drops `bus_req`, so a latched window
+cannot hold VRAM off after the request it was opened for.
+
+**What the cap costs the renderer, and what the fit said.** The cap is not only
+a bench stand-in: `renderer_2d` fetches the 3D line as `D3_CHUNK`-halfword
+bursts and `D3_CHUNK` is 64, so a 32-beat cap is that constant halved -- eight
+bursts per 256-pixel line where there were four. `tb_renderer_2d` prices it:
+the merge pass goes 284 -> 312 clocks, the line 1,039 -> 1,067, which is four
+more grant latencies and still 213 clocks inside the 1,280-clock line period,
+with `tb_3d_path` and the `PAK_REAL` bus bench green. The fit is what says no:
+4,186 LABs, `emu` setup -4.372, **`pll_hdmi` -0.228** against the shipped
++0.038. A constant inside the renderer is not supposed to cost a quarter of a
+nanosecond of the video domain, and that it does is the sharpest evidence yet
+that the domain answers to placement: the same occupancy, one parameter
+changed, 0.27 ns of margin gone.
 
 **The write-data path.** `sdram_wdata` carries one halfword at grant, so a
 burst write needs data per beat: staging fed by the master. The model fills

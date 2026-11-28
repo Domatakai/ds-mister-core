@@ -359,10 +359,17 @@ gets the next) reproduces the 90/58/42 clocks with no cooperation from the
 requester and slightly cheaper fetches (719 against 748 at 8 beats), and a
 32-beat cap lands at 58. That bit does not fit: -0.678 ns on `pll_hdmi` with
 a register of its own, still -0.200 ns reusing the arbiter's `owner`, so it
-stays in the patch with the rest. A sanity pass against GBATEK's DS data
-found the functional spec intact -- 67.0274 MHz ARM9 with the ARM7 at half,
-4 MB, 656 KB of VRAM in the same nine banks, 2 KB palette and OAM, two
-256x192 screens at 59.8261 Hz, 8 KB/4 KB four-way 32-byte-line caches, 16
+stays in the patch with the rest. A third shape latches the window in one
+register, `fair_win`, so the grant mux tests a bit rather than an owner code
+and the bench cannot tell it from the others. The cap itself is one constant
+in the renderer and it does not fit either: halving `D3_CHUNK` to 32 beats
+costs the merge four grant latencies (284 -> 312 clocks, 1,067 of 1,280) and
+the fitter answers `pll_hdmi` -0.228, so a parameter change alone moves the
+video domain 0.27 ns. A sanity pass against
+GBATEK's DS data found the functional spec intact -- 67.0274 MHz ARM9 with
+the ARM7 at half, 4 MB, 656 KB of VRAM in the same nine banks, 2 KB palette
+and OAM, two 256x192 screens at 59.8261 Hz, 8 KB/4 KB four-way 32-byte-line
+caches, 16
 sound channels -- while the bus model runs three to eight times slower per
 word than the real 16-bit bus at 33.514 MHz, because every halfword pays a
 grant and a hold where the hardware pays a cycle. The write burst's data
