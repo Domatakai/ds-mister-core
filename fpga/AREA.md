@@ -4141,6 +4141,7 @@ fairness bit doing the work instead:
 | 64 | 0 | yes | 327 | 90 |
 | 32 | 0 | yes | 383 | 58 |
 | 16 | 0 | yes | 495 | 42 |
+| 8 | 0 | yes | 719 | 34 |
 
 The cap alone makes both sides worse, and that is the part worth keeping: a
 shorter burst does drop the request for a cycle, but the arbiter only
@@ -4156,13 +4157,37 @@ of the fetch; 8 spends a third again to save 8.
 
 **The fairness bit does the requester's job.** `mem_arbiter` now carries one
 bit -- after a VRAM grant, the bus gets the next one if it is asking -- and
-the last three rows are the same caps with the engine's gap set to zero. The
-waits are identical to the gap-one rows to the clock (90, 58, 42), and the
-fetches are slightly *shorter* (327 against 328, 383 against 388, 495
-against 508), because the arbiter re-arbitrates without waiting for the
-engine to drop and re-raise its request. So "cap plus a hole" does not need
-the engine's cooperation, or a change to every requester: one bit in the
-arbiter, and the cap becomes a bound the bus can rely on.
+the last four rows are the same caps with the engine's gap set to zero. The
+waits are identical to the gap-one rows to the clock (90, 58, 42, 34), and
+the fetches are slightly *shorter* (327 against 328, 383 against 388, 495
+against 508, 719 against 748), because the arbiter re-arbitrates without
+waiting for the engine to drop and re-raise its request. So "cap plus a
+hole" needs no cooperation from the engine and no change to any requester:
+one bit in the arbiter, and the cap becomes a bound the bus can rely on.
+
+The bit's history does not need a register. The first shape kept its own
+`last_vram` flop; the second asks the arbiter's existing `owner` whether the
+last grant went to VRAM, the same fact it already holds for the bus
+protocol, so the feature adds a comparator to the grant decision and no
+state. The bench cannot tell the two apart -- 327/383/495/719 fetches and
+90/58/42/34 waits either way. The fitter can:
+
+| build | LABs | ALMs | registers | `pll_hdmi` |
+|---|---|---|---|---|
+| no collector (`nds-c4-s4`) | 4,186 | 39,977 | 38,428 | -0.074 |
+| collector (`nds-col-s4`) | 4,171 | 39,045 | 38,449 | -0.302 |
+| fairness, own flop (`nds-fair-s4`) | 4,141 | 38,684 | 38,169 | **-0.678** |
+| fairness, `owner` history (`nds-fairb-s4`) | 4,190 | 41,189 | 38,542 | **-0.200** |
+| shipped (`dsh-hdr-s4`) | 4,191 | 40,283 | 38,144 | +0.038 |
+
+The third and fourth rows are the same feature fitted twice, so the flop's
+price is their difference: 0.478 ns for one register in the grant decision.
+Reusing `owner` recovers most of it and still does not clear zero, and in
+that fit the worst path is `pll_hdmi`'s own output counter (-0.200, TNS
+-2.395) rather than a hop inside the arbiter -- what closes late is the whole
+clock. The fair arbiter therefore stays in the patch with the burst, and the
+follow-up it needs is not a cheaper bit but a shorter grant path for the bit
+to sit on.
 
 **The write-data path.** `sdram_wdata` carries one halfword at grant, so a
 burst write needs data per beat: staging fed by the master. The model fills
@@ -4187,5 +4212,57 @@ a rate, the burst just degrades to 1.23x its cost, still 7.3x better than
 the 8,704 word-at-a-time writes.
 
 
-Verdict unchanged: the bench is the deliverable, the shipped tree is the
-one at dca8d3291a78, and both shapes stay in the patch.
+## Sanity check against the DS itself
+
+Before trusting any of the numbers above, the core should be the machine it
+claims to be. Every figure below is from GBATEK's DS technical data and
+memory maps, read against the RTL and the constraints file:
+
+| hardware | this core |
+|---|---|
+| ARM946E-S at 67.027964 MHz | 67.0274 MHz from the `pll` megafunction (`NDS.sdc`) |
+| ARM7TDMI at 33.513982 MHz, exactly half | half-rate CE off the same clock |
+| 4 MB main RAM, 16-bit bus | 4 MB at 0x0200_0000, one halfword a grant |
+| 96 KB WRAM: 64 KB ARM7 + 32 KB shared | both mapped, shared half allocated by WRAMCNT |
+| 656 KB VRAM as nine banks, A and I 128 KB, B..H 64 KB | the same nine banks at the same sizes |
+| 2 KB palette + 2 KB OAM | palette RAM and engine A/B OAM |
+| two 256x192 LCDs at 59.8261 Hz | 256x384 stacked, and every output mode lands on 59.8261 Hz |
+| 263 lines a frame, 15.734 kHz line rate | CRT modes are 263 lines at 15.734 kHz |
+| 8 KB instruction and 4 KB data cache, 32-byte lines, 4-way | 64 and 32 sets of 4 ways, 32-byte lines |
+| 16 sound channels timed off 16.757 MHz | 16 channels, counter in the 16.757 MHz domain |
+| four DMA channels, four timers per CPU | four of each |
+| 3D engine, two 2D engines, capture | geometry + raster, engines A/B, composer |
+
+The functional spec holds. The *timing* is where the model is not the
+machine, and it is worth stating plainly because every clock count in this
+document is in our currency:
+
+- Hardware: a 16-bit bus at 33.514 MHz moves one halfword a cycle, so a
+  32-bit word is two bus cycles, **59.7 ns**, when the controller pipelines
+  consecutive accesses.
+- One-clock model: a fill of 8 words takes 91 clocks at 67.0274 MHz, which is
+  11.4 clocks -- 5.7 bus cycles, **170 ns** -- per word, 2.9x the hardware's
+  best case. Without the collector it is 16 clocks a word, 239 ns, 4x.
+- Nine-clock model: 34 clocks a word, 507 ns, 8.5x.
+
+So the model is between three and eight times slower per word than the bus
+it is standing in for, and the cause is structural: every halfword pays a
+grant, a hold cycle and a strobe slot, where the hardware pays a cycle. Two
+consequences. The absolute times quoted here -- a 1.9 us fill, a 130 us
+kilobyte moved by DMA -- are upper bounds, not predictions. And the
+collector's win is measured against a handshake-heavy model, so if real
+hardware pipelines consecutive halfwords the absolute saving shrinks --
+what survives is the shape: a per-word handshake removed, worth 1.4x to
+2.1x depending on the latency assumption, in the same direction at both
+ends of it.
+
+What the check did *not* find is a functional mismatch: the clocks, cache
+geometry (4 KB data / 8 KB instruction -- the common "8 KB data cache" claim
+is wrong, and the core already had it right), VRAM bank sizes, frame rate
+and line rate all match the hardware, and the audio and I/O counts do too.
+
+
+Verdict: the bench is the deliverable, the shipped tree is still the one at
+dca8d3291a78, and every shape priced this round stays in the patch -- the
+collector at -0.302 ns on `pll_hdmi`, the narrow burst at -0.074, and the
+fairness bit at -0.678 with its own register and -0.200 on the arbiter's.

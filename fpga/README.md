@@ -356,8 +356,17 @@ bursts puts the bus's worst wait at 42 clocks for a fetch 1.7x longer; the
 cap without that hole helps neither side unless the arbiter supplies the
 hole itself, which it now can: one fairness bit (after a VRAM grant the bus
 gets the next) reproduces the 90/58/42 clocks with no cooperation from the
-requester and slightly cheaper fetches, and a 32-beat cap lands at 58. The
-write burst's data path costs two halfwords of double buffering (32 flops)
+requester and slightly cheaper fetches (719 against 748 at 8 beats), and a
+32-beat cap lands at 58. That bit does not fit: -0.678 ns on `pll_hdmi` with
+a register of its own, still -0.200 ns reusing the arbiter's `owner`, so it
+stays in the patch with the rest. A sanity pass against GBATEK's DS data
+found the functional spec intact -- 67.0274 MHz ARM9 with the ARM7 at half,
+4 MB, 656 KB of VRAM in the same nine banks, 2 KB palette and OAM, two
+256x192 screens at 59.8261 Hz, 8 KB/4 KB four-way 32-byte-line caches, 16
+sound channels -- while the bus model runs three to eight times slower per
+word than the real 16-bit bus at 33.514 MHz, because every halfword pays a
+grant and a hold where the hardware pays a cycle. The write burst's data
+path costs two halfwords of double buffering (32 flops)
 once the source feeds a halfword a clock -- one register only manages a
 beat every other cycle, and a source at half that rate starves 224 of a
 512-beat burst for 1,185 clocks, 1.23x the burst cost and still 7.3x better
