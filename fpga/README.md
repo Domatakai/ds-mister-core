@@ -365,8 +365,13 @@ the bench cannot tell it from the others, and the fit puts it at -0.428, worse
 than the compare. Three shapes, one behaviour and three different numbers is
 the answer to the question the bit kept raising -- the video domain loses a
 quarter of a nanosecond wherever the fitter moves logic, not where the logic
-is. The cap itself is one constant
-in the renderer and it does not fit either: halving `D3_CHUNK` to 32 beats
+is. Timing the domain's worst path says the same thing in more detail: it is
+`ascal`'s interpolator (`o_shift[17]` -> `o_hpixs.b[1]`, 5 ns of it
+interconnect), and the two red trees fail on different paths inside it. The
+shipped tree's own seeds span 0.564 ns -- -0.526 at seed 2, +0.038 at 4,
+-0.066 at 5 -- so which seed was fitted decides whether it passes. The cap
+itself is one constant in the renderer and it does not fit either:
+halving `D3_CHUNK` to 32 beats
 costs the merge four grant latencies (284 -> 312 clocks, 1,067 of 1,280) and
 the fitter answers `pll_hdmi` -0.228, so a parameter change alone moves the
 video domain 0.27 ns. A sanity pass against

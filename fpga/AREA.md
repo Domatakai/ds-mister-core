@@ -3789,6 +3789,11 @@ ascal's counter enable whichever way the fitter lands the flops. Seeds 5
 and 6 were not run -- at 50 minutes each they were buying a different
 sample of the same 0.15 ns.
 
+That answer holds for `nds-smwb` and not for the shipped tree: three seeds of
+`dca8d3291a78` span 0.564 ns and two of them fail the slack rule, so the seed
+is a release variable after all. See *What actually fails in the video
+domain*.
+
 The adaptive filter has a supported off switch: the framework's
 `MISTER_DISABLE_ADAPTIVE`, which sets `video_freak`'s `.ADAPTIVE` generic
 false and clears the low bit of the menu's 0x2B read. On the shipped tree:
@@ -4208,11 +4213,12 @@ It also answers the question, and the answer is no: the latched shape fits
 4,183 LABs, `emu` setup -5.120 and **`pll_hdmi` -0.428**, worse than the
 comparator it was meant to replace. Three shapes of one feature now read
 -0.678, -0.200 and -0.428 while the bench sees a single behaviour, and in
-every one of those fits the failing paths are `pll_hdmi`'s own output counter
--- a handful of them, 1.9 to 2.4 ns of total negative slack where the `emu`
-domain carries 30,000. So the quarter-nanosecond is not the arbiter and not
-the bit: it is where the fitter put whatever it moved, and no cheaper decision
-logic buys it back. That is the strongest of the four independent results --
+every one of those fits the failing paths sit inside `ascal`'s interpolator,
+in the `pll_hdmi` domain -- a handful of them, 1.9 to 2.4 ns of total negative
+slack where the `emu` domain carries 30,000. So the quarter-nanosecond is
+not the arbiter and not the bit: it is where the fitter put whatever it moved,
+and no cheaper decision logic buys it back. That is the strongest of the four
+independent results --
 the burst, the two fairness shapes and the renderer constant -- all pointing
 the same way.
 
@@ -4302,6 +4308,64 @@ is wrong, and the core already had it right), VRAM bank sizes, frame rate
 and line rate all match the hardware, and the audio and I/O counts do too.
 
 
+## What actually fails in the video domain (2026-11-28)
+
+Four fitted trees, timed path by path instead of by their summary slack and
+filtered to the `pll_hdmi` clock:
+
+| tree | seed | worst path | slack | skew | data delay |
+|---|---|---|---|---|---|
+| `nds-hdr-s4` (shipped) | 4 | shadowmask `sm_d1` RAM -> `vga_out` RAM | +0.038 | -0.592 | 5.902 |
+| `nds-ship-s2` | 2 | `ascal` `o_poly_phase1.t1[0]` -> `o_h_poly_phase.t1[0]` | -0.526 | -0.452 | 6.606 |
+| `nds-fairw-s4` | 4 | `ascal` `o_shift[17]` -> `o_hpixs.b[1]` | -0.428 | -0.139 | 6.821 |
+| `nds-cap32-s4` | 4 | `ascal` `o_vpix_inner[1].g[5]` -> `o_poly_lum[7]` | -0.228 | -0.103 | 6.657 |
+| `nds-ship-s5` | 5 | `osd` `osd_de[2]` -> `osd_mux` | -0.066 | -0.581 | 6.017 |
+
+Four fits, four different worst paths, and not one of them starts or ends in
+the PLL. TimeQuest names a generated clock after the register that gates it,
+which is where the document's "binds on `pll_hdmi`'s counter" came from -- the
+clock's name, not the logic on the path.
+
+What the four rows share is the skew column: -0.10 to -0.59 ns of clock
+arrival difference between the launch and latch register, against a 6.732 ns
+relationship. At seed 2 the data path is the shortest of the four (6.606) and
+the fit still fails by 0.526, all of it skew; on the shipped seed-4 tree the
+skew is worse still (-0.592) and a 5.902 ns data path survives it by 0.038. So
+this domain's margin is not logic depth, area or the arbiter: it is where two
+144.93 MHz flip-flops land relative to one another, inside `ascal`'s
+interpolator or the shadowmask path. That is why five bus candidates moved the
+number by 0.1 to 0.7 ns without touching a single cell in the domain.
+
+Where the delay is wire there is a second lesson. On `nds-fairw-s4`, 3.331 of
+the 6.821 ns is interconnect from `o_shift[17]` to its first mux cell and
+1.318 ns more to the second; the logic is three `Mux` cells. That is the
+pipeline `MISTER_DISABLE_ADAPTIVE` deletes for 2,097 ALMs and still 0.188 ns
+worse -- freeing area here buys nothing; shortening wires, or the skew,
+would.
+
+**The shipped tree's own seed spread.** Same tree (`dca8d3291a78`), three
+seeds, everything else equal:
+
+| seed | LABs | ALMs | regs | `emu` setup | `pll_hdmi` | worst domain path |
+|---|---|---|---|---|---|---|
+| 2 (`nds-ship-s2`) | 4,191 | 40,325 | 38,185 | -4.969 | **-0.526** | `ascal` poly phase |
+| 4 (`nds-hdr-s4`) | 4,191 | 40,283 | 38,144 | -5.300 | **+0.038** | shadowmask RAM -> RAM |
+| 5 (`nds-ship-s5`) | 4,190 | 40,200 | 38,258 | -4.764 | **-0.066** | `osd` mux |
+
+Two of the three seeds fail the slack rule, and the spread is **0.564 ns** --
+nearly four times the 0.145 ns this document quoted from `nds-smwb`'s sweep,
+and larger than any logic change priced here. For this tree the seed is the
+knob. The shipped row is a seed-4 fit; a build of the same tree at seed 2 or
+5 would not ship, which makes "which seed" a release decision rather than a
+detail, and saying so is the cheapest change in this document.
+
+The seed-2 figures were re-measured from a fresh copy of the tree today and
+reproduced exactly (40,325 ALMs, 38,185 registers, a 4,079,660-byte rbf and
+the same slacks), so that row is a measurement and not a stale one. The fresh
+capture is `nds-ship-s2`; the older `nds-sh2` row carries the same figures
+under a tree fingerprint that does not match this tree, which is why both are
+kept rather than one rewritten.
+
 Verdict: the bench is the deliverable, the shipped tree is still the one at
 dca8d3291a78, and every shape priced this round stays in the patch -- the
 collector at -0.302 ns on `pll_hdmi`, the narrow burst at -0.074, the
@@ -4310,12 +4374,10 @@ fairness bit at -0.678, -0.200 and -0.428 in its three shapes, and the halved
 conclusion: nothing bus-side or engine-side lands until that domain has
 margin.
 
-**What is left to try, in order.** First, the domain's failing path, measured
-rather than assumed: every red fit above fails on `pll_hdmi`'s output counter
-with 1.9 to 2.4 ns of TNS, so the question is where that counter's clock and
-data land, not what the arbiter does -- a `report_timing` on the counter's own
-path across two seeds of one tree would say whether the skew is placement
-noise or a fixable structure. Second, a seed sweep as release procedure: the
+**What is left to try, in order.** First, the domain's failing path, now
+measured rather than assumed: it is ascal's interpolator, and what it needs is
+margin, not an arbiter that moves out of its way -- see *What actually fails
+in the video domain* below. Second, a seed sweep as release procedure: the
 three fairness shapes span 0.478 ns on identical bench behaviour, which is
 more than the 0.145 ns a seed sweep was said to span, so a green seed now
 needs a policy (two seeds, recorded in `fits.csv`, or none) before anyone
