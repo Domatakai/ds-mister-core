@@ -360,8 +360,12 @@ requester and slightly cheaper fetches (719 against 748 at 8 beats), and a
 32-beat cap lands at 58. That bit does not fit: -0.678 ns on `pll_hdmi` with
 a register of its own, still -0.200 ns reusing the arbiter's `owner`, so it
 stays in the patch with the rest. A third shape latches the window in one
-register, `fair_win`, so the grant mux tests a bit rather than an owner code
-and the bench cannot tell it from the others. The cap itself is one constant
+register, `fair_win`, so the grant mux tests a bit rather than an owner code:
+the bench cannot tell it from the others, and the fit puts it at -0.428, worse
+than the compare. Three shapes, one behaviour and three different numbers is
+the answer to the question the bit kept raising -- the video domain loses a
+quarter of a nanosecond wherever the fitter moves logic, not where the logic
+is. The cap itself is one constant
 in the renderer and it does not fit either: halving `D3_CHUNK` to 32 beats
 costs the merge four grant latencies (284 -> 312 clocks, 1,067 of 1,280) and
 the fitter answers `pll_hdmi` -0.228, so a parameter change alone moves the

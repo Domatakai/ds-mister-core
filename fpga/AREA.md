@@ -4178,6 +4178,7 @@ state. The bench cannot tell the two apart -- 327/383/495/719 fetches and
 | collector (`nds-col-s4`) | 4,171 | 39,045 | 38,449 | -0.302 |
 | fairness, own flop (`nds-fair-s4`) | 4,141 | 38,684 | 38,169 | **-0.678** |
 | fairness, `owner` history (`nds-fairb-s4`) | 4,190 | 41,189 | 38,542 | **-0.200** |
+| fairness, latched window (`nds-fairw-s4`) | 4,183 | 40,166 | 38,670 | **-0.428** |
 | shipped (`nds-hdr-s4`) | 4,191 | 40,283 | 38,144 | +0.038 |
 
 The third and fourth rows are the same feature fitted twice, so the flop's
@@ -4202,6 +4203,18 @@ cycle, which is why the bench cannot tell the shapes apart: 327/383/495/719
 fetches and 90/58/42/34 waits, check for check, in all three buses. The
 window also clears itself when the bus drops `bus_req`, so a latched window
 cannot hold VRAM off after the request it was opened for.
+
+It also answers the question, and the answer is no: the latched shape fits
+4,183 LABs, `emu` setup -5.120 and **`pll_hdmi` -0.428**, worse than the
+comparator it was meant to replace. Three shapes of one feature now read
+-0.678, -0.200 and -0.428 while the bench sees a single behaviour, and in
+every one of those fits the failing paths are `pll_hdmi`'s own output counter
+-- a handful of them, 1.9 to 2.4 ns of total negative slack where the `emu`
+domain carries 30,000. So the quarter-nanosecond is not the arbiter and not
+the bit: it is where the fitter put whatever it moved, and no cheaper decision
+logic buys it back. That is the strongest of the four independent results --
+the burst, the two fairness shapes and the renderer constant -- all pointing
+the same way.
 
 **What the cap costs the renderer, and what the fit said.** The cap is not only
 a bench stand-in: `renderer_2d` fetches the 3D line as `D3_CHUNK`-halfword
@@ -4291,5 +4304,23 @@ and line rate all match the hardware, and the audio and I/O counts do too.
 
 Verdict: the bench is the deliverable, the shipped tree is still the one at
 dca8d3291a78, and every shape priced this round stays in the patch -- the
-collector at -0.302 ns on `pll_hdmi`, the narrow burst at -0.074, and the
-fairness bit at -0.678 with its own register and -0.200 on the arbiter's.
+collector at -0.302 ns on `pll_hdmi`, the narrow burst at -0.074, the
+fairness bit at -0.678, -0.200 and -0.428 in its three shapes, and the halved
+3D fetch burst at -0.228. Five candidates, five video-domain losses and one
+conclusion: nothing bus-side or engine-side lands until that domain has
+margin.
+
+**What is left to try, in order.** First, the domain's failing path, measured
+rather than assumed: every red fit above fails on `pll_hdmi`'s output counter
+with 1.9 to 2.4 ns of TNS, so the question is where that counter's clock and
+data land, not what the arbiter does -- a `report_timing` on the counter's own
+path across two seeds of one tree would say whether the skew is placement
+noise or a fixable structure. Second, a seed sweep as release procedure: the
+three fairness shapes span 0.478 ns on identical bench behaviour, which is
+more than the 0.145 ns a seed sweep was said to span, so a green seed now
+needs a policy (two seeds, recorded in `fits.csv`, or none) before anyone
+quotes one. Third, `ascal`'s counter enable, which is where the shipped tree's
+0.48 ns of skew sits and which this licence cannot constrain. Fourth, once
+margin exists, the two changes worth taking are the 32-beat cap (one constant,
+28 clocks a line, already fitted red) and the collector, in that order, each
+on its own fit.
